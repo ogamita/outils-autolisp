@@ -1,0 +1,27 @@
+(defun draw-grid (rows cols size pitch xoffset yoffset / i j x y)
+  (setq i 0)
+  (while (< i rows)
+    (setq j 0)
+    (while (< j cols)
+      (setq x (* i pitch))
+      (setq y (* j pitch))
+      (command "RECTANG"
+               (list (+ xoffset x)      (+ yoffset y))
+               (list (+ xoffset x size) (+ yoffset y size)))
+      (setq j (1+ j)))
+    (setq i (1+ i))))
+
+(defun c:draw-grid (/ rows cols size pitch xoffset yoffset)
+  (setq rows  (getint  "\nRows: "))
+  (setq cols  (getint  "\nColumns: "))
+  (setq size  (getreal "\nSquare size: "))
+  (setq pitch (getreal "\nSpacing: "))
+  (setq xoffset  (getreal "\nX offset: "))
+  (setq yoffset (getreal "\nY offset: "))
+  (draw-grid rows cols size pitch xoffset yoffset)
+  (princ))
+
+
+(defun test:draw-grid ()
+  (draw-grid 7 14 8 10 80 60)
+  ())

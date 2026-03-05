@@ -1,0 +1,23 @@
+# -*- mode:makefile -*-
+# Makefile on MS-Windows
+# Usage:
+#   make pdf
+#   make clean
+
+PANDOC ?= pandoc
+SRC    ?= doc.md
+PDF    ?= doc.pdf
+
+PANDOC_PDF_FLAGS ?= --pdf-engine=xelatex
+
+.PHONY: all pdf clean
+
+all: pdf
+
+pdf: $(PDF)
+
+$(PDF): $(SRC)
+	$(PANDOC) "$(SRC)" -o "$(PDF)" $(PANDOC_PDF_FLAGS)
+
+clean:
+	-del /Q "$(PDF)" 2>NUL || exit 0

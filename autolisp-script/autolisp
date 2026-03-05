@@ -1,0 +1,312 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage:
+  autolisp [--autocad|--bricscad] source.lsp [--dwg file.dwg] [--main C:MAIN]
+
+Outputs:
+  stdout  -> contenu de OUTFILE (par défaut écrit par ton LISP)
+  stderr  -> contenu de ERRFILE
+  exit    -> code lu dans STATUSFILE (écrit par ton LISP)
+
+Environment overrides:
+  AUTOCAD_ACCORECONSOLE   Path to accoreconsole.exe (Windows)
+  BRICSCAD_EXE            Path to bricscad.exe      (Windows)
+  AUTOLISP_DWG            Default DWG for AutoCAD Core Console if --dwg not provided
+
+Notes:
+  - AutoCAD Core Console (accoreconsole.exe) est Windows-only dans la pratique.
+  - BricsCAD /B est documenté côté Windows. Sur macOS, ce script tente un fallback (non garanti).
+EOF
+}
+
+ENGINE=""
+SRC=""
+DWG=""
+MAIN="C:MAIN"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --autocad)  ENGINE="autocad"; shift ;;
+    --bricscad) ENGINE="bricscad"; shift ;;
+    --dwg)      DWG="${2:-}"; shift 2 ;;
+    --main)     MAIN="${2:-}"; shift 2 ;;
+    -h|--help)  usage; exit 0 ;;
+    --)         shift; break ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      usage; exit 2
+      ;;
+    *)
+      SRC="$1"; shift ;;
+  esac
+done
+
+if [[ -z "${SRC}" ]]; then
+  echo "Missing source.lsp" >&2
+  usage
+  exit 2
+fi
+if [[ ! -f "${SRC}" ]]; then
+  echo "Not found: ${SRC}" >&2
+  exit 2
+fi
+
+OS="$(uname -s || true)"
+IS_WINDOWS=0
+case "$OS" in
+  MINGW*|MSYS*|CYGWIN*) IS_WINDOWS=1 ;;
+esac
+
+# Default engine: prefer AutoCAD core console on Windows, otherwise BricsCAD on Windows,
+# otherwise BricsCAD on macOS (fallback), otherwise error.
+if [[ -z "${ENGINE}" ]]; then
+  if [[ $IS_WINDOWS -eq 1 ]]; then
+    if [[ -n "${AUTOCAD_ACCORECONSOLE:-}" ]] || compgen -G "/c/Program Files/Autodesk/*/accoreconsole.exe" >/dev/null; then
+      ENGINE="autocad"
+    elif [[ -n "${BRICSCAD_EXE:-}" ]] || compgen -G "/c/Program Files*/Bricsys/*/bricscad.exe" >/dev/null; then
+      ENGINE="bricscad"
+    else
+      echo "No engine found. Use --autocad or --bricscad and set AUTOCAD_ACCORECONSOLE / BRICSCAD_EXE." >&2
+      exit 3
+    fi
+  else
+    ENGINE="bricscad"
+  fi
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DEFAULT_AUTOLISP_WORKDIR="$SCRIPT_DIR/.autolisp-runs"
+BASE_WORKDIR="${AUTOLISP_WORKDIR:-$DEFAULT_AUTOLISP_WORKDIR}"
+mkdir -p "$BASE_WORKDIR"
+WORKDIR="$(mktemp -d "$BASE_WORKDIR/autolisp.XXXXXX")"
+
+CLEANUP_WORKDIR="${AUTOLISP_KEEP_WORKDIR:-0}"
+AUTOLISP_VERBOSE="${AUTOLISP_VERBOSE:-0}"
+INTERRUPTED=0
+
+on_interrupt() {
+  INTERRUPTED=1
+  CLEANUP_WORKDIR="1"
+  echo "autolisp: interrupt requested; keeping workdir and finishing current BricsCAD handshake..." >&2
+}
+
+cleanup_workdir() {
+  if [[ "${CLEANUP_WORKDIR}" != "1" ]]; then
+    rm -rf "$WORKDIR"
+  else
+    if [[ "$AUTOLISP_VERBOSE" == "1" || "$INTERRUPTED" == "1" ]]; then
+      echo "autolisp: keeping workdir: $WORKDIR" >&2
+    fi
+  fi
+}
+trap cleanup_workdir EXIT
+trap on_interrupt INT TERM
+
+ABS_SRC="$(cd "$(dirname "$SRC")" && pwd)/$(basename "$SRC")"
+ABS_SRCDIR="$(cd "$(dirname "$SRC")" && pwd)"
+
+OUTFILE="$WORKDIR/output.txt"
+ERRFILE="$WORKDIR/errors.txt"
+STATUSFILE="$WORKDIR/status.txt"
+: >"$OUTFILE"
+: >"$ERRFILE"
+echo "__PENDING__" >"$STATUSFILE"
+
+MACOS_ASYNC=0
+
+# A .scr that loads the LISP, calls MAIN, and quits.
+# Important: we pass absolute path and use forward slashes where possible.
+SCRFILE="$WORKDIR/run.scr"
+cat >"$SCRFILE" <<EOF
+(setq _autolisp_old_srchpath (getvar "SRCHPATH"))
+(setvar "SRCHPATH" (strcat "${ABS_SRCDIR};" _autolisp_old_srchpath))
+(setq *AUTOLISP_OUTFILE* "${OUTFILE}")
+(setq *AUTOLISP_ERRFILE* "${ERRFILE}")
+(setq *AUTOLISP_STATUSFILE* "${STATUSFILE}")
+(load "${ABS_SRC}")
+(${MAIN})
+(quit)
+EOF
+
+# A .lsp runner for macOS UI fallback (avoids SCRIPT file dialog parsing).
+RUNLSPFILE="$WORKDIR/run-macos.lsp"
+cat >"$RUNLSPFILE" <<EOF
+(setq _autolisp_old_srchpath (getvar "SRCHPATH"))
+(setvar "SRCHPATH" (strcat "${ABS_SRCDIR};" _autolisp_old_srchpath))
+(setq *AUTOLISP_OUTFILE* "${OUTFILE}")
+(setq *AUTOLISP_ERRFILE* "${ERRFILE}")
+(setq *AUTOLISP_STATUSFILE* "${STATUSFILE}")
+(load "${ABS_SRC}")
+(${MAIN})
+(quit)
+EOF
+
+export OUTFILE ERRFILE STATUSFILE
+
+run_windows_autocad() {
+  local acc="${AUTOCAD_ACCORECONSOLE:-}"
+  if [[ -z "$acc" ]]; then
+    # pick the newest-ish by simple glob preference
+    acc="$(ls -1 "/c/Program Files/Autodesk"/*/accoreconsole.exe 2>/dev/null | head -n 1 || true)"
+  fi
+  if [[ -z "$acc" || ! -f "$acc" ]]; then
+    echo "accoreconsole.exe not found. Set AUTOCAD_ACCORECONSOLE." >&2
+    return 3
+  fi
+
+  local dwg="${DWG:-${AUTOLISP_DWG:-}}"
+  if [[ -z "$dwg" || ! -f "$dwg" ]]; then
+    echo "AutoCAD Core Console needs a DWG. Provide --dwg file.dwg or set AUTOLISP_DWG." >&2
+    return 2
+  fi
+
+  # accoreconsole: /i input dwg, /s script
+  # Some installations also accept /l for locale; omit by default.
+  "$acc" /i "$dwg" /s "$SCRFILE" >"$WORKDIR/autocad-stdout.txt" 2>"$WORKDIR/autocad-stderr.txt" || true
+}
+
+run_windows_bricscad() {
+  local exe="${BRICSCAD_EXE:-}"
+  if [[ -z "$exe" ]]; then
+    exe="$(ls -1 "/c/Program Files"*/Bricsys/*/bricscad.exe 2>/dev/null | head -n 1 || true)"
+  fi
+  if [[ -z "$exe" || ! -f "$exe" ]]; then
+    echo "bricscad.exe not found. Set BRICSCAD_EXE." >&2
+    return 3
+  fi
+
+  # BricsCAD: /B runs a .scr or .lsp at startup :contentReference[oaicite:3]{index=3}
+  "$exe" /B "$SCRFILE" >"$WORKDIR/bricscad-stdout.txt" 2>"$WORKDIR/bricscad-stderr.txt" || true
+}
+
+run_macos_bricscad_fallback() {
+  # Fallback best-effort: open the app + feed a Lisp load expression.
+  # This is inherently brittle (UI focus, localization, etc.).
+  # We still rely on OUTFILE/ERRFILE/STATUSFILE written by LISP.
+  local app=""
+  app="$(ls -1d /Applications/BricsCAD*.app 2>/dev/null | head -n 1 || true)"
+  if [[ -z "$app" ]]; then
+    echo "BricsCAD.app not found in /Applications (macOS fallback)." >&2
+    return 3
+  fi
+  local appname=$(basename "$app" .app)
+  MACOS_ASYNC=1
+  local lisp_cmd
+  lisp_cmd="(load \"${RUNLSPFILE}\")"
+  export AUTOLISP_LISP_CMD="$lisp_cmd"
+  export AUTOLISP_APPNAME="$appname"
+  # AppleScript UI scripting:
+  # 1) reset any pending command with Esc
+  # 2) type a single Lisp load expression
+  # 3) execute with Enter
+  /usr/bin/osascript <<'OSA' || true
+set appName to system attribute "AUTOLISP_APPNAME"
+tell application appName to activate
+delay 1
+tell application "System Events"
+  key code 53
+  key code 53
+  delay 0.15
+  set lispCmd to system attribute "AUTOLISP_LISP_CMD"
+  keystroke lispCmd
+  key code 36
+end tell
+OSA
+}
+
+run_macos_autocad_fallback() {
+  # Similar best-effort for AutoCAD on Mac (no accoreconsole).
+  local app=""
+  app="$(ls -1d /Applications/Autodesk*/AutoCAD*.app 2>/dev/null | head -n 1 || true)"
+  if [[ -z "$app" ]]; then
+    echo "AutoCAD.app not found in /Applications (macOS fallback)." >&2
+    return 3
+  fi
+
+  MACOS_ASYNC=1
+  local lisp_cmd
+  lisp_cmd="(load \"${RUNLSPFILE}\")"
+  export AUTOLISP_LISP_CMD="$lisp_cmd"
+
+  /usr/bin/osascript <<'OSA' || true
+tell application "AutoCAD" to activate
+delay 1
+tell application "System Events"
+  key code 53
+  key code 53
+  delay 0.15
+  set lispCmd to system attribute "AUTOLISP_LISP_CMD"
+  keystroke lispCmd
+  key code 36
+end tell
+OSA
+}
+
+wait_for_macos_async() {
+  local timeout="${AUTOLISP_WAIT_SECS:-180}"
+  while [[ "$timeout" -gt 0 ]]; do
+    local s
+    s="$(tr -d '[:space:]' <"$STATUSFILE" 2>/dev/null || true)"
+    if [[ -n "$s" && "$s" != "__PENDING__" ]]; then
+      return 0
+    fi
+    sleep 1
+    timeout=$((timeout - 1))
+  done
+  return 0
+}
+
+case "$ENGINE" in
+  autocad)
+    if [[ $IS_WINDOWS -eq 1 ]]; then
+      run_windows_autocad || true
+    else
+      run_macos_autocad_fallback || true
+    fi
+    ;;
+  bricscad)
+    if [[ $IS_WINDOWS -eq 1 ]]; then
+      run_windows_bricscad || true
+    else
+      run_macos_bricscad_fallback || true
+    fi
+    ;;
+  *)
+    echo "Unknown engine: $ENGINE" >&2
+    exit 2
+    ;;
+esac
+
+if [[ "$MACOS_ASYNC" -eq 1 ]]; then
+  # macOS fallback is UI-driven and asynchronous; keep working files by default.
+  if [[ -z "${AUTOLISP_KEEP_WORKDIR:-}" ]]; then
+    CLEANUP_WORKDIR="1"
+  fi
+  wait_for_macos_async
+fi
+
+if [[ "$INTERRUPTED" -eq 1 ]]; then
+  exit 130
+fi
+
+# Emit OUT/ERR as requested
+cat "$OUTFILE" || true
+cat "$ERRFILE" >&2 || true
+
+STATUS="1"
+if [[ -s "$STATUSFILE" ]]; then
+  STATUS="$(awk 'NF{line=$0} END{print line}' "$STATUSFILE" | tr -d '[:space:]')"
+fi
+if ! [[ "$STATUS" =~ ^[0-9]+$ ]]; then
+  # Fallback for macOS async mode: infer status from summary line if present.
+  summary="$(awk '/^TOTAL=/{line=$0} END{print line}' "$OUTFILE" 2>/dev/null || true)"
+  if [[ -n "$summary" && "$summary" =~ FAIL=0[[:space:]]+ERROR=0$ ]]; then
+    STATUS=0
+  else
+    STATUS=1
+  fi
+fi
+exit "$STATUS"

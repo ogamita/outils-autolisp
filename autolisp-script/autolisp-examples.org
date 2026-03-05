@@ -1,0 +1,15 @@
+On macOS:
+
+#+begin_src bash
+./autolisp --bricscad ./source.lsp >output.txt 2>errors.txt ; echo $?
+#+end_src
+
+On MS-Windows:
+
+#+begin_src bash
+export AUTOCAD_ACCORECONSOLE="C:/Program Files/Autodesk/AutoCAD 2025/accoreconsole.exe"
+./autolisp --autocad ./source.lsp --dwg ./tests/blank.dwg >output.txt 2>errors.txt ; echo $?
+
+export BRICSCAD_EXE="C:/Program Files/Bricsys/BricsCAD V26 en_US/bricscad.exe"
+./autolisp --bricscad ./source.lsp >output.txt 2>errors.txt ; echo $?
+#+end_src
