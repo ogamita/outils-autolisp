@@ -15,22 +15,27 @@ Examples:
 Semantics:
   - Les éléments { source.lsp | -x expression } sont traités dans l'ordre.
   - Chaque source.lsp est chargé avec (load "...").
-  - Chaque -x expression est évalué dans le contexte AutoLISP.
-  - Si au moins un fichier source.lsp est fourni, (${MAIN:-C:MAIN}) est appelé à la fin,
-    sauf si --main '' est explicitement utilisé pour le désactiver.
+  - Chaque -x expression est évalué comme une forme AutoLISP.
+  - Si au moins un fichier source.lsp est fourni, (${MAIN:-C:MAIN}) est appelé à la fin.
 
 Outputs:
-  stdout  -> résultats et résumé produits par le runner
-  stderr  -> erreurs AutoLISP capturées par le runner
+  stdout  -> contenu de OUTFILE
+  stderr  -> contenu de ERRFILE
   exit    -> code lu dans STATUSFILE
 
 Environment overrides:
   AUTOCAD_ACCORECONSOLE   Path to accoreconsole.exe (Windows)
   BRICSCAD_EXE            Path to bricscad.exe      (Windows)
   AUTOLISP_DWG            Default DWG for AutoCAD Core Console if --dwg not provided
-  AUTOLISP_WAIT_SECS      Timeout for macOS UI fallback (default: 180)
-  AUTOLISP_KEEP_WORKDIR   Set to 1 to keep temp workdir
-  AUTOLISP_VERBOSE        Set to 1 for diagnostics
+  BRICSCAD_COM_MODE       auto | attach | launch | off   (Windows + BricsCAD only)
+  AUTOLISP_WAIT_SECS      wait timeout for async modes / COM bridge (default: 180)
+  AUTOLISP_KEEP_WORKDIR   1 to keep temporary workdir
+  AUTOLISP_VERBOSE        1 for extra diagnostics
+
+Notes:
+  - AutoCAD Core Console (accoreconsole.exe) est Windows-only dans la pratique.
+  - Sous Windows + BricsCAD, le script peut utiliser un pont COM autonome généré dans le workdir.
+  - Sous macOS, le fallback reste piloté par UI scripting et dépend des autorisations Accessibilité.
 EOU
 }
 
@@ -38,13 +43,8 @@ ENGINE=""
 DWG=""
 MAIN="C:MAIN"
 
-# Internal action encoding: LOAD:<abs-path> | EVAL:<raw-expression>
-declare -a ACTIONS=()
-
-die() {
-  echo "$*" >&2
-  exit 2
-}
+declare -a ACTION_KINDS=()
+declare -a ACTION_VALUES=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -57,18 +57,21 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --dwg)
-      [[ $# -ge 2 ]] || die "Missing argument after --dwg"
-      DWG="$2"
+      DWG="${2:-}"
       shift 2
       ;;
     --main)
-      [[ $# -ge 2 ]] || die "Missing argument after --main"
-      MAIN="$2"
+      MAIN="${2:-}"
       shift 2
       ;;
     -x)
-      [[ $# -ge 2 ]] || die "Missing expression after -x"
-      ACTIONS+=("EVAL:$2")
+      if [[ $# -lt 2 ]]; then
+        echo "Missing expression after -x" >&2
+        usage
+        exit 2
+      fi
+      ACTION_KINDS+=("eval")
+      ACTION_VALUES+=("$2")
       shift 2
       ;;
     -h|--help)
@@ -78,22 +81,30 @@ while [[ $# -gt 0 ]]; do
     --)
       shift
       while [[ $# -gt 0 ]]; do
-        ACTIONS+=("LOAD:$1")
+        ACTION_KINDS+=("load")
+        ACTION_VALUES+=("$1")
         shift
       done
       break
       ;;
     -*)
-      die "Unknown option: $1"
+      echo "Unknown option: $1" >&2
+      usage
+      exit 2
       ;;
     *)
-      ACTIONS+=("LOAD:$1")
+      ACTION_KINDS+=("load")
+      ACTION_VALUES+=("$1")
       shift
       ;;
   esac
 done
 
-[[ ${#ACTIONS[@]} -gt 0 ]] || die "Missing input: provide at least one source.lsp or -x expression"
+if [[ ${#ACTION_KINDS[@]} -eq 0 ]]; then
+  echo "Missing input: provide at least one source.lsp or -x expression" >&2
+  usage
+  exit 2
+fi
 
 OS="$(uname -s || true)"
 IS_WINDOWS=0
@@ -101,7 +112,7 @@ case "$OS" in
   MINGW*|MSYS*|CYGWIN*) IS_WINDOWS=1 ;;
 esac
 
-if [[ -z "$ENGINE" ]]; then
+if [[ -z "${ENGINE}" ]]; then
   if [[ $IS_WINDOWS -eq 1 ]]; then
     if [[ -n "${AUTOCAD_ACCORECONSOLE:-}" ]] || compgen -G "/c/Program Files/Autodesk/*/accoreconsole.exe" >/dev/null; then
       ENGINE="autocad"
@@ -126,18 +137,24 @@ CLEANUP_WORKDIR="${AUTOLISP_KEEP_WORKDIR:-0}"
 AUTOLISP_VERBOSE="${AUTOLISP_VERBOSE:-0}"
 INTERRUPTED=0
 MACOS_ASYNC=0
+BRICSCAD_BRIDGE_MODE="direct"
+BRICSCAD_COM_ATTACHED=0
+BRICSCAD_COM_CREATED=0
+BRICSCAD_COM_MODE="${BRICSCAD_COM_MODE:-auto}"
 
 on_interrupt() {
   INTERRUPTED=1
-  CLEANUP_WORKDIR=1
-  echo "autolisp: interrupt requested; keeping workdir: $WORKDIR" >&2
+  CLEANUP_WORKDIR="1"
+  echo "autolisp: interrupt requested; keeping workdir and finishing current handshake..." >&2
 }
 
 cleanup_workdir() {
-  if [[ "$CLEANUP_WORKDIR" != "1" ]]; then
+  if [[ "${CLEANUP_WORKDIR}" != "1" ]]; then
     rm -rf "$WORKDIR"
-  elif [[ "$AUTOLISP_VERBOSE" == "1" || "$INTERRUPTED" == "1" ]]; then
-    echo "autolisp: keeping workdir: $WORKDIR" >&2
+  else
+    if [[ "$AUTOLISP_VERBOSE" == "1" || "$INTERRUPTED" == "1" ]]; then
+      echo "autolisp: keeping workdir: $WORKDIR" >&2
+    fi
   fi
 }
 trap cleanup_workdir EXIT
@@ -171,38 +188,57 @@ to_lisp_path() {
   printf '%s' "$p"
 }
 
-# Resolve loads now and build search path list.
+to_windows_path() {
+  local p="$1"
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -w "$p"
+  else
+    printf '%s' "$p"
+  fi
+}
+
 declare -a SEARCH_DIRS=()
-declare -a RESOLVED_ACTIONS=()
+declare -a LOAD_PATHS=()
 HAS_LOAD_ACTION=0
 
-for action in "${ACTIONS[@]}"; do
-  kind="${action%%:*}"
-  value="${action#*:}"
-  if [[ "$kind" == "LOAD" ]]; then
-    [[ -f "$value" ]] || die "Not found: $value"
+for i in "${!ACTION_KINDS[@]}"; do
+  kind="${ACTION_KINDS[$i]}"
+  value="${ACTION_VALUES[$i]}"
+  if [[ "$kind" == "load" ]]; then
+    if [[ ! -f "$value" ]]; then
+      echo "Not found: $value" >&2
+      exit 2
+    fi
     abs_src="$(to_abs_path "$value")"
     abs_src="$(to_lisp_path "$abs_src")"
-    RESOLVED_ACTIONS+=("LOAD:$abs_src")
     abs_dir="$(dirname "$abs_src")"
+    LOAD_PATHS+=("$abs_src")
     HAS_LOAD_ACTION=1
 
-    present=0
+    already_present=0
     for existing in "${SEARCH_DIRS[@]:-}"; do
       if [[ "$existing" == "$abs_dir" ]]; then
-        present=1
+        already_present=1
         break
       fi
     done
-    [[ $present -eq 1 ]] || SEARCH_DIRS+=("$abs_dir")
+    if [[ $already_present -eq 0 ]]; then
+      SEARCH_DIRS+=("$abs_dir")
+    fi
   else
-    RESOLVED_ACTIONS+=("$action")
+    LOAD_PATHS+=("")
   fi
 done
 
+QUIT_ON_FINISH=1
+if [[ "$ENGINE" == "bricscad" && $IS_WINDOWS -eq 1 && "$BRICSCAD_COM_MODE" != "off" ]]; then
+  if [[ "$BRICSCAD_COM_MODE" == "attach" ]]; then
+    QUIT_ON_FINISH=0
+  fi
+fi
+
 RUNLSPFILE="$WORKDIR/run-common.lsp"
 {
-  echo ";;; Auto-generated by autolisp-improved-bricscad25"
   echo '(setq _autolisp_old_srchpath (getvar "SRCHPATH"))'
   if [[ ${#SEARCH_DIRS[@]} -gt 0 ]]; then
     srch_prefix=""
@@ -214,131 +250,129 @@ RUNLSPFILE="$WORKDIR/run-common.lsp"
   printf '(setq *AUTOLISP_OUTFILE* "%s")\n' "$(escape_lisp_string "$OUTFILE")"
   printf '(setq *AUTOLISP_ERRFILE* "%s")\n' "$(escape_lisp_string "$ERRFILE")"
   printf '(setq *AUTOLISP_STATUSFILE* "%s")\n' "$(escape_lisp_string "$STATUSFILE")"
-  printf '(setq *AUTOLISP_HAS_LOAD_ACTION* %s)\n' "$HAS_LOAD_ACTION"
-  printf '(setq *AUTOLISP_MAIN_SYMBOL* "%s")\n' "$(escape_lisp_string "$MAIN")"
-
+  printf '(setq *AUTOLISP_QUIT_ON_FINISH* %s)\n' "$QUIT_ON_FINISH"
   cat <<'EOLISP'
-(defun autolisp--write-line (path text / f)
+(defun autolisp-write-line (path text / f)
   (setq f (open path "a"))
   (if f
     (progn
       (write-line text f)
-      (close f)
-      T)
-    nil))
+      (close f))))
 
-(defun autolisp--stringify (x)
-  (cond
-    ((= (type x) 'STR) x)
-    (T (vl-princ-to-string x))))
+(defun autolisp-reset-file (path / f)
+  (setq f (open path "w"))
+  (if f (close f)))
 
-(defun autolisp-out (x)
-  (autolisp--write-line *AUTOLISP_OUTFILE* (autolisp--stringify x)))
-
-(defun autolisp-err (x)
-  (autolisp--write-line *AUTOLISP_ERRFILE* (autolisp--stringify x)))
+(defun autolisp-str (obj)
+  (vl-princ-to-string obj))
 
 (defun autolisp-set-status (code / f)
   (setq f (open *AUTOLISP_STATUSFILE* "w"))
   (if f
     (progn
       (write-line (itoa code) f)
-      (close f)
-      T)
-    nil))
+      (close f)))
+  code)
 
-(defun autolisp-finalize (code)
+(defun autolisp-log-out (text)
+  (autolisp-write-line *AUTOLISP_OUTFILE* text))
+
+(defun autolisp-log-err (text)
+  (autolisp-write-line *AUTOLISP_ERRFILE* text))
+
+(defun autolisp-finish (code)
   (if _autolisp_old_srchpath
     (setvar "SRCHPATH" _autolisp_old_srchpath))
   (autolisp-set-status code)
-  (quit))
+  (if *AUTOLISP_QUIT_ON_FINISH*
+    (quit))
+  code)
+
+(defun autolisp-run-load (path / r)
+  (autolisp-log-out (strcat "LOAD " path))
+  (setq r (vl-catch-all-apply 'load (list path)))
+  (if (vl-catch-all-error-p r)
+    (progn
+      (autolisp-log-err (strcat "ERROR load " path ": " (vl-catch-all-error-message r)))
+      nil)
+    (progn
+      (autolisp-log-out (strcat "LOADED " path))
+      T)))
+
+(defun autolisp-run-eval (form-text / form r)
+  (autolisp-log-out (strcat "EVAL " form-text))
+  (setq form (read form-text))
+  (setq r (vl-catch-all-apply 'eval (list form)))
+  (if (vl-catch-all-error-p r)
+    (progn
+      (autolisp-log-err (strcat "ERROR eval " form-text ": " (vl-catch-all-error-message r)))
+      nil)
+    (progn
+      (autolisp-log-out (strcat "RESULT " (autolisp-str r)))
+      T)))
+
+(defun autolisp-run-main (main-name / sym r)
+  (autolisp-log-out (strcat "MAIN " main-name))
+  (setq sym (read main-name))
+  (setq r (vl-catch-all-apply sym '()))
+  (if (vl-catch-all-error-p r)
+    (progn
+      (autolisp-log-err (strcat "ERROR main " main-name ": " (vl-catch-all-error-message r)))
+      nil)
+    (progn
+      (autolisp-log-out (strcat "MAIN-RESULT " (autolisp-str r)))
+      T)))
 
 (setq *AUTOLISP_TOTAL* 0)
 (setq *AUTOLISP_OK* 0)
 (setq *AUTOLISP_FAIL* 0)
 (setq *AUTOLISP_ERROR* 0)
 
-(defun autolisp-run-expr (expr-text / form result)
+(defun autolisp-note-ok ()
   (setq *AUTOLISP_TOTAL* (+ *AUTOLISP_TOTAL* 1))
-  (autolisp-out (strcat "EVAL " expr-text))
-  (setq form (read expr-text))
-  ;; Correct BricsCAD/Visual LISP calling convention:
-  ;;   (vl-catch-all-apply 'function (list args...))
-  (setq result (vl-catch-all-apply 'eval (list form)))
-  (if (vl-catch-all-error-p result)
-    (progn
-      (setq *AUTOLISP_ERROR* (+ *AUTOLISP_ERROR* 1))
-      (autolisp-err (strcat "ERROR " (vl-catch-all-error-message result)))
-      nil)
-    (progn
-      (setq *AUTOLISP_OK* (+ *AUTOLISP_OK* 1))
-      (autolisp-out (strcat "RESULT " (vl-princ-to-string result)))
-      T)))
+  (setq *AUTOLISP_OK* (+ *AUTOLISP_OK* 1)))
 
-(defun autolisp-run-load (path / result)
+(defun autolisp-note-fail ()
   (setq *AUTOLISP_TOTAL* (+ *AUTOLISP_TOTAL* 1))
-  (autolisp-out (strcat "LOAD " path))
-  (setq result (vl-catch-all-apply 'load (list path)))
-  (if (vl-catch-all-error-p result)
-    (progn
-      (setq *AUTOLISP_ERROR* (+ *AUTOLISP_ERROR* 1))
-      (autolisp-err (strcat "ERROR load " path ": " (vl-catch-all-error-message result)))
-      nil)
-    (progn
-      (setq *AUTOLISP_OK* (+ *AUTOLISP_OK* 1))
-      T)))
+  (setq *AUTOLISP_FAIL* (+ *AUTOLISP_FAIL* 1)))
 
-(defun autolisp-call-main (main-name / sym result)
-  (if (or (null main-name) (= main-name ""))
-    T
-    (progn
-      (setq *AUTOLISP_TOTAL* (+ *AUTOLISP_TOTAL* 1))
-      (autolisp-out (strcat "CALL " main-name))
-      (setq sym (read main-name))
-      (setq result (vl-catch-all-apply sym '()))
-      (if (vl-catch-all-error-p result)
-        (progn
-          (setq *AUTOLISP_ERROR* (+ *AUTOLISP_ERROR* 1))
-          (autolisp-err (strcat "ERROR call " main-name ": " (vl-catch-all-error-message result)))
-          nil)
-        (progn
-          (setq *AUTOLISP_OK* (+ *AUTOLISP_OK* 1))
-          (autolisp-out (strcat "RESULT " (vl-princ-to-string result)))
-          T)))))
+(defun autolisp-summary-line ()
+  (strcat "TOTAL=" (itoa *AUTOLISP_TOTAL*)
+          " OK=" (itoa *AUTOLISP_OK*)
+          " FAIL=" (itoa *AUTOLISP_FAIL*)
+          " ERROR=" (itoa *AUTOLISP_ERROR*)))
 
-(setq *AUTOLISP_STOP* nil)
+(autolisp-reset-file *AUTOLISP_OUTFILE*)
+(autolisp-reset-file *AUTOLISP_ERRFILE*)
+(autolisp-set-status 99)
+(setq *AUTOLISP_ABORT* nil)
 EOLISP
 
-  for action in "${RESOLVED_ACTIONS[@]}"; do
-    kind="${action%%:*}"
-    value="${action#*:}"
-    if [[ "$kind" == "LOAD" ]]; then
-      printf '(if (not *AUTOLISP_STOP*) (if (not (autolisp-run-load "%s")) (setq *AUTOLISP_STOP* T)))\n' "$(escape_lisp_string "$value")"
+  for i in "${!ACTION_KINDS[@]}"; do
+    kind="${ACTION_KINDS[$i]}"
+    value="${ACTION_VALUES[$i]}"
+    if [[ "$kind" == "load" ]]; then
+      abs_src="${LOAD_PATHS[$i]}"
+      printf '(if (not *AUTOLISP_ABORT*) (if (autolisp-run-load "%s") (autolisp-note-ok) (progn (autolisp-note-fail) (setq *AUTOLISP_ABORT* T))))\n' "$(escape_lisp_string "$abs_src")"
     else
-      printf '(if (not *AUTOLISP_STOP*) (if (not (autolisp-run-expr "%s")) (setq *AUTOLISP_STOP* T)))\n' "$(escape_lisp_string "$value")"
+      printf '(if (not *AUTOLISP_ABORT*) (if (autolisp-run-eval "%s") (autolisp-note-ok) (progn (autolisp-note-fail) (setq *AUTOLISP_ABORT* T))))\n' "$(escape_lisp_string "$value")"
     fi
   done
 
+  if [[ "$HAS_LOAD_ACTION" -eq 1 ]]; then
+    printf '(if (not *AUTOLISP_ABORT*) (if (autolisp-run-main "%s") (autolisp-note-ok) (progn (autolisp-note-fail) (setq *AUTOLISP_ABORT* T))))\n' "$(escape_lisp_string "$MAIN")"
+  fi
+
   cat <<'EOLISP'
-(if (and (not *AUTOLISP_STOP*) (= *AUTOLISP_HAS_LOAD_ACTION* 1))
-  (if (not (autolisp-call-main *AUTOLISP_MAIN_SYMBOL*))
-    (setq *AUTOLISP_STOP* T)))
-
-(autolisp-out
-  (strcat
-    "TOTAL=" (itoa *AUTOLISP_TOTAL*)
-    " OK=" (itoa *AUTOLISP_OK*)
-    " FAIL=" (itoa *AUTOLISP_FAIL*)
-    " ERROR=" (itoa *AUTOLISP_ERROR*)))
-
-(if *AUTOLISP_STOP*
-  (autolisp-finalize 1)
-  (autolisp-finalize 0))
+(autolisp-log-out (autolisp-summary-line))
+(if *AUTOLISP_ABORT*
+  (autolisp-finish 1)
+  (autolisp-finish 0))
 EOLISP
-} > "$RUNLSPFILE"
+} >"$RUNLSPFILE"
 
 SCRFILE="$WORKDIR/run.scr"
-cat > "$SCRFILE" <<EOF2
+cat >"$SCRFILE" <<EOF2
 (load "$(escape_lisp_string "$RUNLSPFILE")")
 EOF2
 
@@ -363,16 +397,186 @@ run_windows_autocad() {
   "$acc" /i "$dwg" /s "$SCRFILE" >"$WORKDIR/autocad-stdout.txt" 2>"$WORKDIR/autocad-stderr.txt" || true
 }
 
+write_windows_bricscad_vbs() {
+  local vbs="$WORKDIR/bridge-bricscad.vbs"
+  local win_runlsp win_status win_out win_err win_exe mode
+  win_runlsp="$(to_windows_path "$RUNLSPFILE")"
+  win_status="$(to_windows_path "$STATUSFILE")"
+  win_out="$(to_windows_path "$OUTFILE")"
+  win_err="$(to_windows_path "$ERRFILE")"
+  mode="$BRICSCAD_COM_MODE"
+  win_exe="${BRICSCAD_EXE:-}"
+  if [[ -n "$win_exe" ]]; then
+    win_exe="$(to_windows_path "$win_exe")"
+  fi
+
+  cat >"$vbs" <<EOFVBS
+Option Explicit
+Dim fso, shell, mode, exePath, runLsp, statusFile, outFile, errFile
+Dim app, doc, cmd, created, attached, rc
+Set fso = CreateObject("Scripting.FileSystemObject")
+Set shell = CreateObject("WScript.Shell")
+mode = "${mode}"
+exePath = "${win_exe//"/""}"
+runLsp = "${win_runlsp//"/""}"
+statusFile = "${win_status//"/""}"
+outFile = "${win_out//"/""}"
+errFile = "${win_err//"/""}"
+created = False
+attached = False
+rc = 0
+
+Sub AppendLine(path, text)
+  Dim f
+  Set f = fso.OpenTextFile(path, 8, True)
+  f.WriteLine text
+  f.Close
+End Sub
+
+Function TryGetApp()
+  On Error Resume Next
+  Set TryGetApp = GetObject(, "BricscadApp.AcadApplication")
+  If Err.Number <> 0 Then
+    Err.Clear
+    Set TryGetApp = Nothing
+  End If
+  On Error GoTo 0
+End Function
+
+Function TryCreateApp()
+  On Error Resume Next
+  If exePath <> "" Then
+    shell.Environment("PROCESS")("BRICSCAD_LOCATION") = exePath
+  End If
+  Set TryCreateApp = CreateObject("BricscadApp.AcadApplication")
+  If Err.Number <> 0 Then
+    Err.Clear
+    Set TryCreateApp = Nothing
+  End If
+  On Error GoTo 0
+End Function
+
+Set app = Nothing
+If mode = "attach" Or mode = "auto" Then
+  Set app = TryGetApp()
+  If Not app Is Nothing Then attached = True
+End If
+
+If app Is Nothing Then
+  If mode = "attach" Then
+    AppendLine errFile, "ERROR COM attach: no running BricsCAD instance found."
+    rc = 2
+    WScript.Echo "ATTACHED=0"
+    WScript.Echo "CREATED=0"
+    WScript.Quit rc
+  End If
+  If mode = "launch" Or mode = "auto" Then
+    Set app = TryCreateApp()
+    If app Is Nothing Then
+      AppendLine errFile, "ERROR COM launch: unable to create BricsCAD COM application."
+      rc = 3
+      WScript.Echo "ATTACHED=0"
+      WScript.Echo "CREATED=0"
+      WScript.Quit rc
+    End If
+    created = True
+  End If
+End If
+
+If app Is Nothing Then
+  AppendLine errFile, "ERROR COM bridge: unsupported mode or COM unavailable."
+  rc = 4
+  WScript.Echo "ATTACHED=0"
+  WScript.Echo "CREATED=0"
+  WScript.Quit rc
+End If
+
+On Error Resume Next
+app.Visible = True
+If Err.Number <> 0 Then Err.Clear
+Set doc = app.ActiveDocument
+If Err.Number <> 0 Then
+  Err.Clear
+  Set doc = Nothing
+End If
+If doc Is Nothing Then
+  Set doc = app.Documents.Add
+  If Err.Number <> 0 Then
+    AppendLine errFile, "ERROR COM bridge: unable to get or create ActiveDocument."
+    Err.Clear
+    rc = 5
+    WScript.Echo "ATTACHED=" & CInt(attached)
+    WScript.Echo "CREATED=" & CInt(created)
+    WScript.Quit rc
+  End If
+End If
+cmd = "(load """ & Replace(runLsp, "\", "/") & """) " & vbCr
+Err.Clear
+Call doc.SendCommand(cmd)
+If Err.Number <> 0 Then
+  AppendLine errFile, "ERROR COM bridge: SendCommand failed: " & Err.Description
+  Err.Clear
+  rc = 6
+Else
+  rc = 0
+End If
+On Error GoTo 0
+WScript.Echo "ATTACHED=" & CInt(attached)
+WScript.Echo "CREATED=" & CInt(created)
+WScript.Quit rc
+EOFVBS
+  printf '%s' "$vbs"
+}
+
+wait_for_status() {
+  local timeout="${AUTOLISP_WAIT_SECS:-180}"
+  while [[ "$timeout" -gt 0 ]]; do
+    local s
+    s="$(tr -d '[:space:]' <"$STATUSFILE" 2>/dev/null || true)"
+    if [[ -n "$s" && "$s" != "__PENDING__" && "$s" != "99" ]]; then
+      return 0
+    fi
+    sleep 1
+    timeout=$((timeout - 1))
+  done
+  return 0
+}
+
 run_windows_bricscad() {
   local exe="${BRICSCAD_EXE:-}"
   if [[ -z "$exe" ]]; then
     exe="$(ls -1 "/c/Program Files"*/Bricsys/*/bricscad.exe 2>/dev/null | head -n 1 || true)"
   fi
+  if [[ "$BRICSCAD_COM_MODE" != "off" ]]; then
+    local cscript=""
+    if command -v cscript >/dev/null 2>&1; then
+      cscript="$(command -v cscript)"
+    elif [[ -x /c/Windows/System32/cscript.exe ]]; then
+      cscript="/c/Windows/System32/cscript.exe"
+    fi
+    if [[ -n "$cscript" ]]; then
+      BRICSCAD_BRIDGE_MODE="com"
+      [[ -n "$exe" ]] && export BRICSCAD_EXE="$exe"
+      local vbs
+      vbs="$(write_windows_bricscad_vbs)"
+      "$cscript" //nologo "$vbs" >"$WORKDIR/bricscad-com-stdout.txt" 2>"$WORKDIR/bricscad-com-stderr.txt" || true
+      if grep -q '^ATTACHED=1$' "$WORKDIR/bricscad-com-stdout.txt" 2>/dev/null; then
+        BRICSCAD_COM_ATTACHED=1
+      fi
+      if grep -q '^CREATED=1$' "$WORKDIR/bricscad-com-stdout.txt" 2>/dev/null; then
+        BRICSCAD_COM_CREATED=1
+      fi
+      wait_for_status
+      return 0
+    fi
+    echo "cscript.exe not found; falling back to direct BricsCAD launch." >&2
+  fi
+
+  BRICSCAD_BRIDGE_MODE="direct"
   if [[ -z "$exe" || ! -f "$exe" ]]; then
     echo "bricscad.exe not found. Set BRICSCAD_EXE." >&2
     return 3
   fi
-
   "$exe" /B "$SCRFILE" >"$WORKDIR/bricscad-stdout.txt" 2>"$WORKDIR/bricscad-stderr.txt" || true
 }
 
@@ -384,7 +588,7 @@ run_macos_bricscad_fallback() {
     return 3
   fi
   local appname
-  appname="$(basename "$app" .app)"
+  appname=$(basename "$app" .app)
   MACOS_ASYNC=1
   local lisp_cmd
   lisp_cmd="(load \"${RUNLSPFILE}\")"
@@ -412,12 +616,10 @@ run_macos_autocad_fallback() {
     echo "AutoCAD.app not found in /Applications (macOS fallback)." >&2
     return 3
   fi
-
   MACOS_ASYNC=1
   local lisp_cmd
   lisp_cmd="(load \"${RUNLSPFILE}\")"
   export AUTOLISP_LISP_CMD="$lisp_cmd"
-
   /usr/bin/osascript <<'OSA' || true
 tell application "AutoCAD" to activate
 delay 1
@@ -430,20 +632,6 @@ tell application "System Events"
   key code 36
 end tell
 OSA
-}
-
-wait_for_macos_async() {
-  local timeout="${AUTOLISP_WAIT_SECS:-180}"
-  while [[ "$timeout" -gt 0 ]]; do
-    local s
-    s="$(tr -d '[:space:]' <"$STATUSFILE" 2>/dev/null || true)"
-    if [[ -n "$s" && "$s" != "__PENDING__" ]]; then
-      return 0
-    fi
-    sleep 1
-    timeout=$((timeout - 1))
-  done
-  return 0
 }
 
 case "$ENGINE" in
@@ -469,9 +657,9 @@ esac
 
 if [[ "$MACOS_ASYNC" -eq 1 ]]; then
   if [[ -z "${AUTOLISP_KEEP_WORKDIR:-}" ]]; then
-    CLEANUP_WORKDIR=1
+    CLEANUP_WORKDIR="1"
   fi
-  wait_for_macos_async
+  wait_for_status
 fi
 
 if [[ "$INTERRUPTED" -eq 1 ]]; then
@@ -493,4 +681,5 @@ if ! [[ "$STATUS" =~ ^[0-9]+$ ]]; then
     STATUS=1
   fi
 fi
+
 exit "$STATUS"
