@@ -15,23 +15,22 @@ Examples:
 Semantics:
   - Les éléments { source.lsp | -x expression } sont traités dans l'ordre.
   - Chaque source.lsp est chargé avec (load "...").
-  - Chaque -x expression est évalué tel quel dans le contexte AutoLISP.
+  - Chaque -x expression est évalué dans le contexte AutoLISP.
   - Si au moins un fichier source.lsp est fourni, (${MAIN:-C:MAIN}) est appelé à la fin,
-    comme dans la version précédente.
+    sauf si --main '' est explicitement utilisé pour le désactiver.
 
 Outputs:
-  stdout  -> contenu de OUTFILE (par défaut écrit par ton LISP)
-  stderr  -> contenu de ERRFILE
-  exit    -> code lu dans STATUSFILE (écrit par ton LISP)
+  stdout  -> résultats et résumé produits par le runner
+  stderr  -> erreurs AutoLISP capturées par le runner
+  exit    -> code lu dans STATUSFILE
 
 Environment overrides:
   AUTOCAD_ACCORECONSOLE   Path to accoreconsole.exe (Windows)
   BRICSCAD_EXE            Path to bricscad.exe      (Windows)
   AUTOLISP_DWG            Default DWG for AutoCAD Core Console if --dwg not provided
-
-Notes:
-  - AutoCAD Core Console (accoreconsole.exe) est Windows-only dans la pratique.
-  - BricsCAD /B est documenté côté Windows. Sur macOS, ce script tente un fallback (non garanti).
+  AUTOLISP_WAIT_SECS      Timeout for macOS UI fallback (default: 180)
+  AUTOLISP_KEEP_WORKDIR   Set to 1 to keep temp workdir
+  AUTOLISP_VERBOSE        Set to 1 for diagnostics
 EOU
 }
 
@@ -39,8 +38,13 @@ ENGINE=""
 DWG=""
 MAIN="C:MAIN"
 
-declare -a ACTION_KINDS=()
-declare -a ACTION_VALUES=()
+# Internal action encoding: LOAD:<abs-path> | EVAL:<raw-expression>
+declare -a ACTIONS=()
+
+die() {
+  echo "$*" >&2
+  exit 2
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -53,21 +57,18 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --dwg)
-      DWG="${2:-}"
+      [[ $# -ge 2 ]] || die "Missing argument after --dwg"
+      DWG="$2"
       shift 2
       ;;
     --main)
-      MAIN="${2:-}"
+      [[ $# -ge 2 ]] || die "Missing argument after --main"
+      MAIN="$2"
       shift 2
       ;;
     -x)
-      if [[ $# -lt 2 ]]; then
-        echo "Missing expression after -x" >&2
-        usage
-        exit 2
-      fi
-      ACTION_KINDS+=("eval")
-      ACTION_VALUES+=("$2")
+      [[ $# -ge 2 ]] || die "Missing expression after -x"
+      ACTIONS+=("EVAL:$2")
       shift 2
       ;;
     -h|--help)
@@ -77,30 +78,22 @@ while [[ $# -gt 0 ]]; do
     --)
       shift
       while [[ $# -gt 0 ]]; do
-        ACTION_KINDS+=("load")
-        ACTION_VALUES+=("$1")
+        ACTIONS+=("LOAD:$1")
         shift
       done
       break
       ;;
     -*)
-      echo "Unknown option: $1" >&2
-      usage
-      exit 2
+      die "Unknown option: $1"
       ;;
     *)
-      ACTION_KINDS+=("load")
-      ACTION_VALUES+=("$1")
+      ACTIONS+=("LOAD:$1")
       shift
       ;;
   esac
 done
 
-if [[ ${#ACTION_KINDS[@]} -eq 0 ]]; then
-  echo "Missing input: provide at least one source.lsp or -x expression" >&2
-  usage
-  exit 2
-fi
+[[ ${#ACTIONS[@]} -gt 0 ]] || die "Missing input: provide at least one source.lsp or -x expression"
 
 OS="$(uname -s || true)"
 IS_WINDOWS=0
@@ -108,9 +101,7 @@ case "$OS" in
   MINGW*|MSYS*|CYGWIN*) IS_WINDOWS=1 ;;
 esac
 
-# Default engine: prefer AutoCAD core console on Windows, otherwise BricsCAD on Windows,
-# otherwise BricsCAD on macOS (fallback), otherwise error.
-if [[ -z "${ENGINE}" ]]; then
+if [[ -z "$ENGINE" ]]; then
   if [[ $IS_WINDOWS -eq 1 ]]; then
     if [[ -n "${AUTOCAD_ACCORECONSOLE:-}" ]] || compgen -G "/c/Program Files/Autodesk/*/accoreconsole.exe" >/dev/null; then
       ENGINE="autocad"
@@ -134,20 +125,19 @@ WORKDIR="$(mktemp -d "$BASE_WORKDIR/autolisp.XXXXXX")"
 CLEANUP_WORKDIR="${AUTOLISP_KEEP_WORKDIR:-0}"
 AUTOLISP_VERBOSE="${AUTOLISP_VERBOSE:-0}"
 INTERRUPTED=0
+MACOS_ASYNC=0
 
 on_interrupt() {
   INTERRUPTED=1
-  CLEANUP_WORKDIR="1"
-  echo "autolisp: interrupt requested; keeping workdir and finishing current BricsCAD handshake..." >&2
+  CLEANUP_WORKDIR=1
+  echo "autolisp: interrupt requested; keeping workdir: $WORKDIR" >&2
 }
 
 cleanup_workdir() {
-  if [[ "${CLEANUP_WORKDIR}" != "1" ]]; then
+  if [[ "$CLEANUP_WORKDIR" != "1" ]]; then
     rm -rf "$WORKDIR"
-  else
-    if [[ "$AUTOLISP_VERBOSE" == "1" || "$INTERRUPTED" == "1" ]]; then
-      echo "autolisp: keeping workdir: $WORKDIR" >&2
-    fi
+  elif [[ "$AUTOLISP_VERBOSE" == "1" || "$INTERRUPTED" == "1" ]]; then
+    echo "autolisp: keeping workdir: $WORKDIR" >&2
   fi
 }
 trap cleanup_workdir EXIT
@@ -159,8 +149,6 @@ STATUSFILE="$WORKDIR/status.txt"
 : >"$OUTFILE"
 : >"$ERRFILE"
 echo "__PENDING__" >"$STATUSFILE"
-
-MACOS_ASYNC=0
 
 escape_lisp_string() {
   local s="$1"
@@ -183,41 +171,38 @@ to_lisp_path() {
   printf '%s' "$p"
 }
 
+# Resolve loads now and build search path list.
 declare -a SEARCH_DIRS=()
-declare -a LOAD_PATHS=()
+declare -a RESOLVED_ACTIONS=()
 HAS_LOAD_ACTION=0
 
-for i in "${!ACTION_KINDS[@]}"; do
-  kind="${ACTION_KINDS[$i]}"
-  value="${ACTION_VALUES[$i]}"
-  if [[ "$kind" == "load" ]]; then
-    if [[ ! -f "$value" ]]; then
-      echo "Not found: $value" >&2
-      exit 2
-    fi
+for action in "${ACTIONS[@]}"; do
+  kind="${action%%:*}"
+  value="${action#*:}"
+  if [[ "$kind" == "LOAD" ]]; then
+    [[ -f "$value" ]] || die "Not found: $value"
     abs_src="$(to_abs_path "$value")"
     abs_src="$(to_lisp_path "$abs_src")"
+    RESOLVED_ACTIONS+=("LOAD:$abs_src")
     abs_dir="$(dirname "$abs_src")"
-    LOAD_PATHS+=("$abs_src")
     HAS_LOAD_ACTION=1
 
-    already_present=0
+    present=0
     for existing in "${SEARCH_DIRS[@]:-}"; do
       if [[ "$existing" == "$abs_dir" ]]; then
-        already_present=1
+        present=1
         break
       fi
     done
-    if [[ $already_present -eq 0 ]]; then
-      SEARCH_DIRS+=("$abs_dir")
-    fi
+    [[ $present -eq 1 ]] || SEARCH_DIRS+=("$abs_dir")
   else
-    LOAD_PATHS+=("")
+    RESOLVED_ACTIONS+=("$action")
   fi
 done
 
 RUNLSPFILE="$WORKDIR/run-common.lsp"
 {
+  echo ";;; Auto-generated by autolisp-improved-bricscad25"
   echo '(setq _autolisp_old_srchpath (getvar "SRCHPATH"))'
   if [[ ${#SEARCH_DIRS[@]} -gt 0 ]]; then
     srch_prefix=""
@@ -229,27 +214,131 @@ RUNLSPFILE="$WORKDIR/run-common.lsp"
   printf '(setq *AUTOLISP_OUTFILE* "%s")\n' "$(escape_lisp_string "$OUTFILE")"
   printf '(setq *AUTOLISP_ERRFILE* "%s")\n' "$(escape_lisp_string "$ERRFILE")"
   printf '(setq *AUTOLISP_STATUSFILE* "%s")\n' "$(escape_lisp_string "$STATUSFILE")"
+  printf '(setq *AUTOLISP_HAS_LOAD_ACTION* %s)\n' "$HAS_LOAD_ACTION"
+  printf '(setq *AUTOLISP_MAIN_SYMBOL* "%s")\n' "$(escape_lisp_string "$MAIN")"
 
-  for i in "${!ACTION_KINDS[@]}"; do
-    kind="${ACTION_KINDS[$i]}"
-    value="${ACTION_VALUES[$i]}"
-    if [[ "$kind" == "load" ]]; then
-      abs_src="${LOAD_PATHS[$i]}"
-      printf '(load "%s")\n' "$(escape_lisp_string "$abs_src")"
+  cat <<'EOLISP'
+(defun autolisp--write-line (path text / f)
+  (setq f (open path "a"))
+  (if f
+    (progn
+      (write-line text f)
+      (close f)
+      T)
+    nil))
+
+(defun autolisp--stringify (x)
+  (cond
+    ((= (type x) 'STR) x)
+    (T (vl-princ-to-string x))))
+
+(defun autolisp-out (x)
+  (autolisp--write-line *AUTOLISP_OUTFILE* (autolisp--stringify x)))
+
+(defun autolisp-err (x)
+  (autolisp--write-line *AUTOLISP_ERRFILE* (autolisp--stringify x)))
+
+(defun autolisp-set-status (code / f)
+  (setq f (open *AUTOLISP_STATUSFILE* "w"))
+  (if f
+    (progn
+      (write-line (itoa code) f)
+      (close f)
+      T)
+    nil))
+
+(defun autolisp-finalize (code)
+  (if _autolisp_old_srchpath
+    (setvar "SRCHPATH" _autolisp_old_srchpath))
+  (autolisp-set-status code)
+  (quit))
+
+(setq *AUTOLISP_TOTAL* 0)
+(setq *AUTOLISP_OK* 0)
+(setq *AUTOLISP_FAIL* 0)
+(setq *AUTOLISP_ERROR* 0)
+
+(defun autolisp-run-expr (expr-text / form result)
+  (setq *AUTOLISP_TOTAL* (+ *AUTOLISP_TOTAL* 1))
+  (autolisp-out (strcat "EVAL " expr-text))
+  (setq form (read expr-text))
+  ;; Correct BricsCAD/Visual LISP calling convention:
+  ;;   (vl-catch-all-apply 'function (list args...))
+  (setq result (vl-catch-all-apply 'eval (list form)))
+  (if (vl-catch-all-error-p result)
+    (progn
+      (setq *AUTOLISP_ERROR* (+ *AUTOLISP_ERROR* 1))
+      (autolisp-err (strcat "ERROR " (vl-catch-all-error-message result)))
+      nil)
+    (progn
+      (setq *AUTOLISP_OK* (+ *AUTOLISP_OK* 1))
+      (autolisp-out (strcat "RESULT " (vl-princ-to-string result)))
+      T)))
+
+(defun autolisp-run-load (path / result)
+  (setq *AUTOLISP_TOTAL* (+ *AUTOLISP_TOTAL* 1))
+  (autolisp-out (strcat "LOAD " path))
+  (setq result (vl-catch-all-apply 'load (list path)))
+  (if (vl-catch-all-error-p result)
+    (progn
+      (setq *AUTOLISP_ERROR* (+ *AUTOLISP_ERROR* 1))
+      (autolisp-err (strcat "ERROR load " path ": " (vl-catch-all-error-message result)))
+      nil)
+    (progn
+      (setq *AUTOLISP_OK* (+ *AUTOLISP_OK* 1))
+      T)))
+
+(defun autolisp-call-main (main-name / sym result)
+  (if (or (null main-name) (= main-name ""))
+    T
+    (progn
+      (setq *AUTOLISP_TOTAL* (+ *AUTOLISP_TOTAL* 1))
+      (autolisp-out (strcat "CALL " main-name))
+      (setq sym (read main-name))
+      (setq result (vl-catch-all-apply sym '()))
+      (if (vl-catch-all-error-p result)
+        (progn
+          (setq *AUTOLISP_ERROR* (+ *AUTOLISP_ERROR* 1))
+          (autolisp-err (strcat "ERROR call " main-name ": " (vl-catch-all-error-message result)))
+          nil)
+        (progn
+          (setq *AUTOLISP_OK* (+ *AUTOLISP_OK* 1))
+          (autolisp-out (strcat "RESULT " (vl-princ-to-string result)))
+          T)))))
+
+(setq *AUTOLISP_STOP* nil)
+EOLISP
+
+  for action in "${RESOLVED_ACTIONS[@]}"; do
+    kind="${action%%:*}"
+    value="${action#*:}"
+    if [[ "$kind" == "LOAD" ]]; then
+      printf '(if (not *AUTOLISP_STOP*) (if (not (autolisp-run-load "%s")) (setq *AUTOLISP_STOP* T)))\n' "$(escape_lisp_string "$value")"
     else
-      printf '%s\n' "$value"
+      printf '(if (not *AUTOLISP_STOP*) (if (not (autolisp-run-expr "%s")) (setq *AUTOLISP_STOP* T)))\n' "$(escape_lisp_string "$value")"
     fi
   done
 
-  if [[ "$HAS_LOAD_ACTION" -eq 1 ]]; then
-    printf '(%s)\n' "$MAIN"
-  fi
-  echo '(quit)'
-} >"$RUNLSPFILE"
+  cat <<'EOLISP'
+(if (and (not *AUTOLISP_STOP*) (= *AUTOLISP_HAS_LOAD_ACTION* 1))
+  (if (not (autolisp-call-main *AUTOLISP_MAIN_SYMBOL*))
+    (setq *AUTOLISP_STOP* T)))
 
-# A .scr that just loads the common runner.
+(autolisp-out
+  (strcat
+    "TOTAL=" (itoa *AUTOLISP_TOTAL*)
+    " OK=" (itoa *AUTOLISP_OK*)
+    " FAIL=" (itoa *AUTOLISP_FAIL*)
+    " ERROR=" (itoa *AUTOLISP_ERROR*)))
+
+(if *AUTOLISP_STOP*
+  (autolisp-finalize 1)
+  (autolisp-finalize 0))
+EOLISP
+} > "$RUNLSPFILE"
+
 SCRFILE="$WORKDIR/run.scr"
-cat >"$SCRFILE" <<EOF2
+cat > "$SCRFILE" <<EOF2
 (load "$(escape_lisp_string "$RUNLSPFILE")")
 EOF2
 
@@ -258,7 +347,6 @@ export OUTFILE ERRFILE STATUSFILE
 run_windows_autocad() {
   local acc="${AUTOCAD_ACCORECONSOLE:-}"
   if [[ -z "$acc" ]]; then
-    # pick the newest-ish by simple glob preference
     acc="$(ls -1 "/c/Program Files/Autodesk"/*/accoreconsole.exe 2>/dev/null | head -n 1 || true)"
   fi
   if [[ -z "$acc" || ! -f "$acc" ]]; then
@@ -272,8 +360,6 @@ run_windows_autocad() {
     return 2
   fi
 
-  # accoreconsole: /i input dwg, /s script
-  # Some installations also accept /l for locale; omit by default.
   "$acc" /i "$dwg" /s "$SCRFILE" >"$WORKDIR/autocad-stdout.txt" 2>"$WORKDIR/autocad-stderr.txt" || true
 }
 
@@ -287,14 +373,10 @@ run_windows_bricscad() {
     return 3
   fi
 
-  # BricsCAD: /B runs a .scr or .lsp at startup.
   "$exe" /B "$SCRFILE" >"$WORKDIR/bricscad-stdout.txt" 2>"$WORKDIR/bricscad-stderr.txt" || true
 }
 
 run_macos_bricscad_fallback() {
-  # Fallback best-effort: open the app + feed a Lisp load expression.
-  # This is inherently brittle (UI focus, localization, etc.).
-  # We still rely on OUTFILE/ERRFILE/STATUSFILE written by LISP.
   local app=""
   app="$(ls -1d /Applications/BricsCAD*.app 2>/dev/null | head -n 1 || true)"
   if [[ -z "$app" ]]; then
@@ -302,7 +384,7 @@ run_macos_bricscad_fallback() {
     return 3
   fi
   local appname
-  appname=$(basename "$app" .app)
+  appname="$(basename "$app" .app)"
   MACOS_ASYNC=1
   local lisp_cmd
   lisp_cmd="(load \"${RUNLSPFILE}\")"
@@ -324,7 +406,6 @@ OSA
 }
 
 run_macos_autocad_fallback() {
-  # Similar best-effort for AutoCAD on Mac (no accoreconsole).
   local app=""
   app="$(ls -1d /Applications/Autodesk*/AutoCAD*.app 2>/dev/null | head -n 1 || true)"
   if [[ -z "$app" ]]; then
@@ -387,9 +468,8 @@ case "$ENGINE" in
 esac
 
 if [[ "$MACOS_ASYNC" -eq 1 ]]; then
-  # macOS fallback is UI-driven and asynchronous; keep working files by default.
   if [[ -z "${AUTOLISP_KEEP_WORKDIR:-}" ]]; then
-    CLEANUP_WORKDIR="1"
+    CLEANUP_WORKDIR=1
   fi
   wait_for_macos_async
 fi
@@ -398,7 +478,6 @@ if [[ "$INTERRUPTED" -eq 1 ]]; then
   exit 130
 fi
 
-# Emit OUT/ERR as requested
 cat "$OUTFILE" || true
 cat "$ERRFILE" >&2 || true
 
@@ -407,7 +486,6 @@ if [[ -s "$STATUSFILE" ]]; then
   STATUS="$(awk 'NF{line=$0} END{print line}' "$STATUSFILE" | tr -d '[:space:]')"
 fi
 if ! [[ "$STATUS" =~ ^[0-9]+$ ]]; then
-  # Fallback for macOS async mode: infer status from summary line if present.
   summary="$(awk '/^TOTAL=/{line=$0} END{print line}' "$OUTFILE" 2>/dev/null || true)"
   if [[ -n "$summary" && "$summary" =~ FAIL=0[[:space:]]+ERROR=0$ ]]; then
     STATUS=0
