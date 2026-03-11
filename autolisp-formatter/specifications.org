@@ -496,3 +496,72 @@ Le projet sera considéré comme acceptable si :
 - il est déterministe et idempotent ;
 - il passe les jeux de tests définis ;
 - il est utilisable par l'équipe sur un corpus réel sans corruption du code.
+
+
+* Additional parenthesis style: stacked-closing nail-clipping
+There exists a particularly undesirable variant of nail-clipping where several
+closing parentheses are stacked on a single line. Example:
+
+#+begin_src lisp
+(defun foo (x)
+  (if (> x 0)
+    (progn
+      (bar x)
+      (baz x)
+) ) )
+#+end_src
+
+This style creates a visual illusion that closing parentheses correspond
+vertically to the opening parentheses above them, whereas their order is in fact
+reversed when read left-to-right. In this specification, this style shall be
+named:
+
+- *stacked-closing nail-clipping*
+
+Alternative informal aliases that may be mentioned in documentation:
+- *collapsed nail-clipping*
+- *run-on nail-clipping*
+- *same-line stacked closers*
+
+The formatter shall support explicit handling of this style as follows:
+
+- It shall detect it.
+- It shall never emit it unless an explicit compatibility mode is requested.
+- By default, when encountered, it shall normalize it to the selected target
+  parenthesis style (typically classic Common Lisp style or regular
+  nail-clipping with one closing parenthesis per line as needed).
+- A diagnostic/check mode should be able to report occurrences of this style.
+
+** Parenthesis-style enumeration update
+The formatter parenthesis style option shall support at least:
+
+- =:cl=
+- =:nail=
+- =:stacked-nail= (compatibility / legacy input-output mode only)
+
+Semantics:
+
+- =:cl=: close as late as possible, on the final logical line.
+- =:nail=: nail-clipping style, but with structurally separated closing
+  parentheses, never misleadingly stacked on one line.
+- =:stacked-nail=: preserve or emit the legacy stacked-closing nail-clipping
+  style. This mode exists only for transitional compatibility and should be
+  discouraged in team usage.
+
+** Validation rule
+Unless =:paren-style :stacked-nail= is explicitly selected, the formatter output
+must not contain any line whose only non-whitespace content is a mixed sequence
+of multiple closing parentheses separated only by spaces, such as:
+
+#+begin_src text
+) ) )
+#+end_src
+
+or equivalent variants.
+
+** Naming rationale
+The chosen name emphasizes the actual phenomenon:
+- it is derived from nail-clipping style,
+- its closers are stacked on the same physical line,
+- and it is visually misleading.
+
