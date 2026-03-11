@@ -104,6 +104,7 @@ run_case() {
   declare -a cmd_env=(
     "AUTOLISP_WORKDIR=$case_dir/workdir"
     "AUTOLISP_KEEP_WORKDIR=1"
+    "AUTOLISP_VERBOSE=0"
   )
 
   if [[ -n "$DETECTED_ENGINE_EXE" ]]; then

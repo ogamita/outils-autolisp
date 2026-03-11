@@ -302,6 +302,9 @@ render_stdout() {
   local sessionfile="${2:-}"
 
   awk -v sessionfile="$sessionfile" '
+  function append_output_line(line) {
+    pending_output = pending_output line "\n"
+  }
   function flush_output(    n, arr, i) {
     if (pending_output == "") return
     print "OUTPUT"
@@ -356,6 +359,10 @@ render_stdout() {
     action_idx++
     pending_output = block_lines["MAIN:" action_idx]
     print
+    next
+  }
+  /^<<<AUTOLISP-STDOUT>>>/ {
+    append_output_line(substr($0, 22))
     next
   }
   /^LOADED / || /^RESULT / || /^MAIN-RESULT / {
@@ -457,15 +464,26 @@ RUNLSPFILE="$WORKDIR/run-common.lsp"
 (defun autolisp-log-err (text)
   (autolisp-write-line *AUTOLISP_ERRFILE* text))
 
-(defun autolisp-emit (s)
-  (princ s)
-  (princ))
+(defun autolisp-stdout-prefix ()
+  "<<<AUTOLISP-STDOUT>>>")
+
+(defun autolisp-stdout-text (obj)
+  (if (= (type obj) 'STR)
+    (strcat "\"" obj "\"")
+    (vl-princ-to-string obj)))
+
+(defun autolisp-emit-user-out (obj)
+  (if *AUTOLISP_CAPTURE_STDOUT*
+    (autolisp-write-line *AUTOLISP_OUTFILE*
+                         (strcat (autolisp-stdout-prefix)
+                                 (autolisp-stdout-text obj))))
+  obj)
 
 (defun autolisp-mark-begin (kind idx)
-  (autolisp-emit (strcat "\n<<<AUTOLISP-BEGIN:" kind ":" (itoa idx) ">>>\n")))
+  nil)
 
 (defun autolisp-mark-end (kind idx rc)
-  (autolisp-emit (strcat "\n<<<AUTOLISP-END:" kind ":" (itoa idx) ":" (itoa rc) ">>>\n")))
+  nil)
 
 (defun autolisp-safe-getvar (name / r)
   (setq r (vl-catch-all-apply 'getvar (list name)))
@@ -508,7 +526,9 @@ RUNLSPFILE="$WORKDIR/run-common.lsp"
 (defun autolisp-run-load (idx path / r)
   (autolisp-mark-begin "LOAD" idx)
   (autolisp-log-out (strcat "LOAD " path))
+  (setq *AUTOLISP_CAPTURE_STDOUT* T)
   (setq r (vl-catch-all-apply 'load (list path)))
+  (setq *AUTOLISP_CAPTURE_STDOUT* nil)
   (if (vl-catch-all-error-p r)
     (progn
       (autolisp-log-err (strcat "ERROR load " path ": " (vl-catch-all-error-message r)))
@@ -529,7 +549,9 @@ RUNLSPFILE="$WORKDIR/run-common.lsp"
       (autolisp-mark-end "EXPR" idx 1)
       nil)
     (progn
+      (setq *AUTOLISP_CAPTURE_STDOUT* T)
       (setq r (vl-catch-all-apply 'eval (list form-read)))
+      (setq *AUTOLISP_CAPTURE_STDOUT* nil)
       (if (vl-catch-all-error-p r)
         (progn
           (autolisp-log-err (strcat "ERROR eval " form-text ": " (vl-catch-all-error-message r)))
@@ -550,7 +572,9 @@ RUNLSPFILE="$WORKDIR/run-common.lsp"
       (autolisp-mark-end "MAIN" idx 1)
       nil)
     (progn
+      (setq *AUTOLISP_CAPTURE_STDOUT* T)
       (setq r (vl-catch-all-apply sym-read '()))
+      (setq *AUTOLISP_CAPTURE_STDOUT* nil)
       (if (vl-catch-all-error-p r)
         (progn
           (autolisp-log-err (strcat "ERROR main " main-name ": " (vl-catch-all-error-message r)))
@@ -565,6 +589,24 @@ RUNLSPFILE="$WORKDIR/run-common.lsp"
 (setq *AUTOLISP_OK* 0)
 (setq *AUTOLISP_FAIL* 0)
 (setq *AUTOLISP_ERROR* 0)
+(setq *AUTOLISP_CAPTURE_STDOUT* nil)
+
+;; Mirror interactive output to OUTFILE so results do not depend on CAD session logs.
+(defun print (obj)
+  (autolisp-emit-user-out obj))
+
+(defun princ (obj)
+  (if obj
+    (autolisp-emit-user-out obj)
+    obj))
+
+(defun prin1 (obj)
+  (autolisp-emit-user-out obj))
+
+(defun prompt (msg)
+  (if msg
+    (autolisp-emit-user-out msg)
+    msg))
 
 (defun autolisp-note-ok ()
   (setq *AUTOLISP_TOTAL* (+ *AUTOLISP_TOTAL* 1))
