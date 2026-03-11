@@ -235,33 +235,134 @@ replay_from_log() {
   [[ -n "$logf" && -f "$logf" ]] || return 0
 
   awk '
-  BEGIN { inblock = 0 }
-  /^<<<AUTOLISP-(BEGIN|END):/ {
-    if ($0 ~ /^<<<AUTOLISP-BEGIN:/) { inblock = 1; print $0; next }
-    if ($0 ~ /^<<<AUTOLISP-END:/)   { print $0; inblock = 0; next }
+  BEGIN { inblock = 0; saw_output = 0 }
+  /^<<<AUTOLISP-BEGIN:/ {
+    kind = $0
+    sub(/^<<<AUTOLISP-BEGIN:/, "", kind)
+    sub(/>>>$/, "", kind)
+    split(kind, a, ":")
+    printf("> [%s %s]\n", a[1], a[2])
+    inblock = 1
+    saw_output = 0
+    next
   }
-  { if (inblock) print $0 }
-  ' "$logf" \
-    | sed '/^[[:space:]]*$/N;/^\n$/D' \
-    | awk '
-      /^<<<AUTOLISP-BEGIN:/ {
-        kind = $0
-        sub(/^<<<AUTOLISP-BEGIN:/, "", kind)
-        sub(/>>>$/, "", kind)
-        split(kind, a, ":")
-        printf("> [%s %s]\n", a[1], a[2])
-        next
+  /^<<<AUTOLISP-END:/ {
+    kind = $0
+    sub(/^<<<AUTOLISP-END:/, "", kind)
+    sub(/>>>$/, "", kind)
+    split(kind, a, ":")
+    printf("=> rc=%s\n", a[3])
+    inblock = 0
+    next
+  }
+  {
+    if (!inblock) next
+    if ($0 ~ /^[[:space:]]*$/) next
+    if (!saw_output) {
+      print "OUTPUT"
+      saw_output = 1
+    }
+    print
+  }
+  ' "$logf"
+}
+
+find_session_output_file() {
+  local candidate
+
+  candidate="$(find_log_file)"
+  if [[ -n "$candidate" && -f "$candidate" ]] && grep -q '^<<<AUTOLISP-BEGIN:' "$candidate" 2>/dev/null; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  for candidate in \
+    "$WORKDIR/direct-stdout.txt" \
+    "$WORKDIR/bricscad-stdout.txt" \
+    "$WORKDIR/autocad-stdout.txt"
+  do
+    if [[ -f "$candidate" ]] && grep -q '^<<<AUTOLISP-BEGIN:' "$candidate" 2>/dev/null; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+render_stdout() {
+  local outfile="$1"
+  local sessionfile="${2:-}"
+
+  awk -v sessionfile="$sessionfile" '
+  function flush_output(    n, arr, i) {
+    if (pending_output == "") return
+    print "OUTPUT:"
+    n = split(pending_output, arr, "\n")
+    for (i = 1; i <= n; i++) {
+      if (arr[i] != "") print arr[i]
+    }
+    pending_output = ""
+  }
+  BEGIN {
+    action_idx = 0
+    pending_output = ""
+
+    if (sessionfile != "") {
+      inblock = 0
+      while ((getline line < sessionfile) > 0) {
+        if (line ~ /^<<<AUTOLISP-BEGIN:/) {
+          kind = line
+          sub(/^<<<AUTOLISP-BEGIN:/, "", kind)
+          sub(/>>>$/, "", kind)
+          split(kind, a, ":")
+          block_key = a[1] ":" a[2]
+          block_lines[block_key] = ""
+          inblock = 1
+          continue
+        }
+        if (line ~ /^<<<AUTOLISP-END:/) {
+          inblock = 0
+          block_key = ""
+          continue
+        }
+        if (!inblock) continue
+        if (line ~ /^[[:space:]]*$/) continue
+        block_lines[block_key] = block_lines[block_key] line "\n"
       }
-      /^<<<AUTOLISP-END:/ {
-        kind = $0
-        sub(/^<<<AUTOLISP-END:/, "", kind)
-        sub(/>>>$/, "", kind)
-        split(kind, a, ":")
-        printf("=> rc=%s\n", a[3])
-        next
-      }
-      { print }
-    '
+      close(sessionfile)
+    }
+  }
+  /^LOAD / {
+    action_idx++
+    pending_output = block_lines["LOAD:" action_idx]
+    print
+    next
+  }
+  /^EVAL / {
+    action_idx++
+    pending_output = block_lines["EXPR:" action_idx]
+    print
+    next
+  }
+  /^MAIN / {
+    action_idx++
+    pending_output = block_lines["MAIN:" action_idx]
+    print
+    next
+  }
+  /^LOADED / || /^RESULT / || /^MAIN-RESULT / {
+    flush_output()
+    print
+    next
+  }
+  {
+    print
+  }
+  END {
+    flush_output()
+  }
+  ' "$outfile"
 }
 
 declare -a SEARCH_DIRS=()
@@ -318,6 +419,7 @@ RUNLSPFILE="$WORKDIR/run-common.lsp"
   printf '(setq *AUTOLISP_ERRFILE* "%s")\n' "$(escape_lisp_string "$ERRFILE")"
   printf '(setq *AUTOLISP_STATUSFILE* "%s")\n' "$(escape_lisp_string "$STATUSFILE")"
   printf '(setq *AUTOLISP_LOGDIR* "%s")\n' "$(escape_lisp_string "$LOGDIR")"
+  printf '(setq *AUTOLISP_LOGNAME* "%s")\n' "autolisp-session.log"
   printf '(setq *AUTOLISP_QUIT_ON_FINISH* %s)\n' "$QUIT_ON_FINISH"
   cat <<'EOLISP'
 (defun autolisp-write-line (path text / f)
@@ -371,15 +473,19 @@ RUNLSPFILE="$WORKDIR/run-common.lsp"
   (setq old-path (autolisp-safe-getvar "LOGFILEPATH"))
   (setq old-name (autolisp-safe-getvar "LOGFILENAME"))
   (autolisp-safe-setvar "LOGFILEPATH" *AUTOLISP_LOGDIR*)
+  (if *AUTOLISP_LOGNAME*
+    (autolisp-safe-setvar "LOGFILENAME" *AUTOLISP_LOGNAME*))
   (autolisp-safe-setvar "LOGFILEMODE" 1)
   (list old-mode old-path old-name))
 
-(defun autolisp-log-restore (state / old-mode old-path)
+(defun autolisp-log-restore (state / old-mode old-path old-name)
   (if state
     (progn
       (setq old-mode (nth 0 state))
       (setq old-path (nth 1 state))
+      (setq old-name (nth 2 state))
       (if old-path (autolisp-safe-setvar "LOGFILEPATH" old-path))
+      (if old-name (autolisp-safe-setvar "LOGFILENAME" old-name))
       (if old-mode (autolisp-safe-setvar "LOGFILEMODE" old-mode)))))
 
 (defun autolisp-finish (code)
@@ -943,11 +1049,8 @@ if [[ "$INTERRUPTED" -eq 1 ]]; then
 fi
 
 LOGFILE_FOUND="$(find_log_file)"
-if [[ -n "$LOGFILE_FOUND" && -f "$LOGFILE_FOUND" ]]; then
-  replay_from_log "$LOGFILE_FOUND"
-fi
-
-cat "$OUTFILE" || true
+SESSION_OUTPUT_FILE="$(find_session_output_file || true)"
+render_stdout "$OUTFILE" "$SESSION_OUTPUT_FILE" || cat "$OUTFILE" || true
 cat "$ERRFILE" >&2 || true
 
 if [[ "$wait_rc" -eq 124 ]]; then

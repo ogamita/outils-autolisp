@@ -1,74 +1,212 @@
 # autolisp-script
 
 ## Objectif
-`autolisp-script/autolisp` est un wrapper en ligne de commande pour exécuter un fichier AutoLISP dans AutoCAD ou BricsCAD, puis renvoyer :
-- la sortie de test/log sur `stdout`
-- les erreurs sur `stderr`
-- le code de retour lu depuis un fichier d’état
+`autolisp` est un wrapper shell qui prépare une exécution AutoLISP dans AutoCAD ou BricsCAD, collecte les sorties dans des fichiers temporaires, puis restitue:
 
-C’est l’outil utilisé par `make test` dans ce dépôt.
+- le journal fonctionnel sur `stdout`
+- les erreurs sur `stderr`
+- un code de sortie final compatible shell
+
+Le script fabrique à la volée un fichier `run-common.lsp` qui:
+
+- configure les chemins de recherche LISP
+- charge et/ou évalue les actions demandées
+- appelle éventuellement une commande principale
+- écrit un résumé final et un code de statut
 
 ## Emplacement
-- Script : `outils/autolisp-script/autolisp`
-- Exemples : `outils/autolisp-script/autolisp-examples.org`
+- Wrapper CLI: `autolisp-script/autolisp`
+- Exemple de script LISP: `autolisp-script/autolisp.lsp`
+- Exemples d'appel: `autolisp-script/autolisp-examples.org`
 
 ## Utilisation
 ```bash
-outils/autolisp-script/autolisp [--autocad|--bricscad] source.lsp [--dwg fichier.dwg] [--main C:MAIN]
+autolisp [--autocad|--bricscad] [--timeout N] {source.lsp | -x expression}... [--dwg fichier.dwg] [--main C:MAIN]
 ```
 
-## Contrat attendu côté LISP
-Votre script doit exposer une commande principale (par défaut `C:MAIN`).
+## Sémantique d'exécution
+- Les entrées `{source.lsp | -x expression}` sont traitées strictement dans l'ordre.
+- Chaque `source.lsp` est exécuté via `(load "...")`.
+- Chaque `-x expression` est lu puis évalué comme une forme AutoLISP.
+- Si au moins un fichier `.lsp` a été fourni, le wrapper appelle ensuite `C:MAIN` par défaut, ou la commande passée avec `--main`.
+- Si une action échoue, le script continue à construire le résumé, puis renvoie `1`.
 
-Le wrapper injecte :
+Exemples:
+
+```bash
+./autolisp test.lsp
+./autolisp lib1.lsp lib2.lsp --main C:RUN
+./autolisp -x '(princ (+ 1 2))'
+./autolisp init.lsp -x '(setq *x* 42)' test.lsp
+```
+
+## Sélection du moteur
+- `--autocad` force AutoCAD.
+- `--bricscad` force BricsCAD.
+- Sans option:
+  - sous Windows, le script tente AutoCAD puis BricsCAD selon les exécutables détectés
+  - hors Windows, le moteur par défaut est BricsCAD
+
+Codes d'erreur de sélection:
+
+- `2`: argument invalide, fichier introuvable ou option incomplète
+- `3`: moteur introuvable ou exécutable manquant
+
+## Contrat côté AutoLISP
+Le wrapper injecte les variables globales suivantes dans l'environnement LISP:
+
 - `*AUTOLISP_OUTFILE*`
 - `*AUTOLISP_ERRFILE*`
 - `*AUTOLISP_STATUSFILE*`
+- `*AUTOLISP_LOGDIR*`
+- `*AUTOLISP_LOGNAME*`
+- `*AUTOLISP_QUIT_ON_FINISH*`
 
-Votre code LISP doit écrire le statut final (`0` si succès, non-zéro sinon) dans `*AUTOLISP_STATUSFILE*`.
+Il définit aussi des helpers dans `run-common.lsp`, notamment:
 
-## Commandes courantes
-Exécution standard (`C:MAIN`) :
-```bash
-outils/autolisp-script/autolisp --bricscad schms/test-unitaire.lsp
+- `autolisp-log-out`
+- `autolisp-log-err`
+- `autolisp-set-status`
+
+Le cas standard consiste à exposer une commande `C:MAIN`, par exemple:
+
+```lisp
+(defun C:MAIN ( / )
+  (autolisp-log-out "Hello from AutoLISP.")
+  (autolisp-set-status 0)
+  (princ))
 ```
 
-Point d’entrée personnalisé :
+Le wrapper initialise lui-même le statut à `99`, exécute les actions demandées, puis force un statut final:
+
+- `0` si toutes les actions et l'appel à `MAIN` réussissent
+- `1` dès qu'un `load`, un `eval` ou `MAIN` échoue
+
+Autrement dit, un script LISP peut écrire son propre statut intermédiaire, mais le code de sortie final est gouverné par le wrapper.
+
+## Format de sortie
+Le `stdout` restitué par le wrapper est structuré à partir du fichier `output.txt`, enrichi au besoin par les journaux de session CAD.
+
+On retrouve en général:
+
+- `LOAD <chemin>`
+- `LOADED <chemin>`
+- `EVAL <expression>`
+- `RESULT <valeur>`
+- `MAIN <commande>`
+- `MAIN-RESULT <valeur>`
+- `OUTPUT:` suivi de la sortie capturée entre marqueurs `<<<AUTOLISP-BEGIN...>>>`
+- `TOTAL=<n> OK=<n> FAIL=<n> ERROR=<n>`
+
+Le `stderr` contient les messages écrits dans `errors.txt`, par exemple:
+
+- `ERROR load ...`
+- `ERROR eval ...`
+- `ERROR main ...`
+- erreurs de lancement du moteur CAD
+- timeout d'attente
+
+## Répertoire de travail
+Chaque exécution crée un répertoire temporaire sous:
+
+- `AUTOLISP_WORKDIR`, si défini
+- sinon `autolisp-script/.autolisp-runs`
+
+Ce répertoire contient notamment:
+
+- `run-common.lsp`
+- `run.scr`
+- `output.txt`
+- `errors.txt`
+- `status.txt`
+- `logs/`
+
+Par défaut il est supprimé en fin d'exécution.
+
+## Variables d'environnement
+- `AUTOCAD_ACCORECONSOLE`: chemin vers `accoreconsole.exe`
+- `AUTOCAD_COM_MODE`: `auto`, `attach`, `launch`, `off`
+- `AUTOCAD_EXE`: chemin vers `acad.exe` ou `acadlt.exe`
+- `BRICSCAD_EXE`: chemin vers `bricscad.exe`
+- `BRICSCAD_COM_MODE`: `auto`, `attach`, `launch`, `off`
+- `AUTOLISP_DWG`: DWG par défaut pour AutoCAD Core Console
+- `AUTOLISP_TIMEOUT`: ancien nom de timeout, encore accepté
+- `AUTOLISP_WAIT_SECS`: timeout d'attente global, défaut `180`
+- `AUTOLISP_WORKDIR`: racine des exécutions temporaires
+- `AUTOLISP_KEEP_WORKDIR=1`: conserve le workdir
+- `AUTOLISP_VERBOSE=1`: affiche le workdir conservé
+
+## Comportement par plateforme
+
+### Windows
+- AutoCAD:
+  - tente d'abord un pont COM via `cscript`
+  - sinon lance `AUTOCAD_EXE /b`
+  - sinon bascule sur `accoreconsole.exe` avec `/i <dwg> /s <script>`
+- BricsCAD:
+  - tente un pont COM via `cscript`
+  - sinon lance `bricscad.exe /B`
+- En mode COM `attach`, le wrapper n'ordonne pas la fermeture de BricsCAD à la fin.
+
+### macOS
+- Le fallback principal repose sur `osascript` et du pilotage UI.
+- Le script active l'application CAD, injecte `(load "...")`, puis attend la mise à jour du fichier de statut.
+- Ce mode dépend des autorisations Accessibilité et reste plus fragile qu'un lancement direct.
+
+### Unix hors Windows
+- Si `AUTOCAD_EXE` ou `BRICSCAD_EXE` est fourni, le wrapper tente un lancement direct avec `/b`.
+- Sinon, pour AutoCAD ou BricsCAD sur macOS, il bascule sur le fallback UI si disponible.
+
+## Exemples courants
+
+BricsCAD avec la commande par défaut:
+
 ```bash
-outils/autolisp-script/autolisp --bricscad schms/test-unitaire.lsp --main C:RUN_TESTS
+./autolisp --bricscad ./autolisp.lsp
 ```
 
-AutoCAD Core Console sous Windows (DWG obligatoire) :
+BricsCAD avec chargement multiple puis `C:RUN`:
+
 ```bash
-set AUTOCAD_ACCORECONSOLE=C:/Program Files/Autodesk/AutoCAD 2025/accoreconsole.exe
-outils/autolisp-script/autolisp --autocad schms/test-unitaire.lsp --dwg path/to/blank.dwg
+./autolisp lib/setup.lsp tests/test-suite.lsp --main C:RUN
 ```
 
-## Variables d’environnement
-- `AUTOCAD_ACCORECONSOLE` : chemin vers `accoreconsole.exe` (Windows)
-- `BRICSCAD_EXE` : chemin vers `bricscad.exe` (Windows)
-- `AUTOLISP_DWG` : DWG par défaut en mode AutoCAD
-- `AUTOLISP_WORKDIR` : répertoire parent des exécutions temporaires
-- `AUTOLISP_KEEP_WORKDIR=1` : conserver le répertoire temporaire (debug)
-- `AUTOLISP_VERBOSE=1` : afficher le chemin du répertoire conservé
-- `AUTOLISP_WAIT_SECS` : timeout d’attente du fallback macOS
+Évaluation directe sans fichier:
 
-## Notes par plateforme
-- Windows :
-  - AutoCAD passe par `accoreconsole.exe`.
-  - BricsCAD passe par `/B`.
-- macOS :
-  - Le script utilise un fallback UI via `osascript` (plus fragile).
-  - Pour diagnostiquer, relancer avec `AUTOLISP_KEEP_WORKDIR=1`.
+```bash
+./autolisp -x '(princ "bonjour")'
+```
+
+AutoCAD Core Console sous Windows:
+
+```bash
+export AUTOCAD_ACCORECONSOLE="C:/Program Files/Autodesk/AutoCAD 2025/accoreconsole.exe"
+./autolisp --autocad ./autolisp.lsp --dwg ./tests/blank.dwg
+```
+
+BricsCAD sous Windows:
+
+```bash
+export BRICSCAD_EXE="C:/Program Files/Bricsys/BricsCAD V26 en_US/bricscad.exe"
+./autolisp --bricscad ./autolisp.lsp
+```
 
 ## Dépannage
-- `Missing source.lsp` ou `Not found` :
-  - vérifier le chemin passé à `autolisp`.
-- Erreur AutoCAD liée au DWG :
-  - fournir `--dwg` ou définir `AUTOLISP_DWG`.
-- Pas de sortie et code non-zéro :
-  - conserver le workdir puis inspecter `output.txt`, `errors.txt`, `status.txt`.
-  - exemple :
-  ```bash
-  AUTOLISP_KEEP_WORKDIR=1 AUTOLISP_VERBOSE=1 outils/autolisp-script/autolisp --bricscad schms/test-unitaire.lsp
-  ```
+- `Missing input: provide at least one source.lsp or -x expression`
+  - fournir au moins un fichier `.lsp` ou une expression `-x`
+- `Not found: ...`
+  - vérifier le chemin d'un fichier `.lsp`
+- `No engine found...`
+  - forcer `--autocad` ou `--bricscad`, puis définir l'exécutable correspondant
+- `AutoCAD Core Console needs a DWG`
+  - fournir `--dwg` ou définir `AUTOLISP_DWG`
+- `ERROR: timeout waiting for CAD runner completion`
+  - augmenter `AUTOLISP_WAIT_SECS`
+  - relancer avec `AUTOLISP_KEEP_WORKDIR=1 AUTOLISP_VERBOSE=1`
+  - inspecter ensuite `output.txt`, `errors.txt`, `status.txt` et `logs/`
+
+Commande de debug typique:
+
+```bash
+AUTOLISP_KEEP_WORKDIR=1 AUTOLISP_VERBOSE=1 ./autolisp --bricscad ./autolisp.lsp
+```
