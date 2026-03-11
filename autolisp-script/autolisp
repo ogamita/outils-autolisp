@@ -297,7 +297,7 @@ render_stdout() {
   awk -v sessionfile="$sessionfile" '
   function flush_output(    n, arr, i) {
     if (pending_output == "") return
-    print "OUTPUT:"
+    print "OUTPUT"
     n = split(pending_output, arr, "\n")
     for (i = 1; i <= n; i++) {
       if (arr[i] != "") print arr[i]
