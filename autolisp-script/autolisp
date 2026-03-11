@@ -152,6 +152,7 @@ WORKDIR="$(mktemp -d "$BASE_WORKDIR/autolisp.XXXXXX")"
 CLEANUP_WORKDIR="${AUTOLISP_KEEP_WORKDIR:-0}"
 AUTOLISP_VERBOSE="${AUTOLISP_VERBOSE:-0}"
 INTERRUPTED=0
+INTERRUPT_COUNT=0
 MACOS_ASYNC=0
 BRICSCAD_BRIDGE_MODE="direct"
 BRICSCAD_COM_ATTACHED=0
@@ -159,6 +160,12 @@ BRICSCAD_COM_CREATED=0
 BRICSCAD_COM_MODE="${BRICSCAD_COM_MODE:-auto}"
 
 on_interrupt() {
+  INTERRUPT_COUNT=$((INTERRUPT_COUNT + 1))
+  if [[ "$INTERRUPT_COUNT" -ge 2 ]]; then
+    CLEANUP_WORKDIR="1"
+    echo "autolisp: second interrupt received; aborting now." >&2
+    exit 130
+  fi
   INTERRUPTED=1
   CLEANUP_WORKDIR="1"
   echo "autolisp: interrupt requested; keeping workdir and finishing current handshake..." >&2
@@ -894,6 +901,9 @@ EOFVBS
 wait_for_status() {
   local timeout="$TIMEOUT_SECS"
   while [[ "$timeout" -gt 0 ]]; do
+    if [[ "$INTERRUPTED" -eq 1 ]]; then
+      return 130
+    fi
     local s
     s="$(tr -d '[:space:]' <"$STATUSFILE" 2>/dev/null || true)"
     if [[ -n "$s" && "$s" != "__PENDING__" && "$s" != "99" ]]; then
