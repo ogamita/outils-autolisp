@@ -498,7 +498,7 @@ Le projet sera considéré comme acceptable si :
 - il est utilisable par l'équipe sur un corpus réel sans corruption du code.
 
 
-* Additional parenthesis style: stacked-closing nail-clipping
+* Style supplémentaire de parenthèses : nail-clipping à fermetures empilées
 There exists a particularly undesirable variant of nail-clipping where several
 closing parentheses are stacked on a single line. Example:
 
@@ -516,12 +516,12 @@ vertically to the opening parentheses above them, whereas their order is in fact
 reversed when read left-to-right. In this specification, this style shall be
 named:
 
-- *stacked-closing nail-clipping*
+- *nail-clipping à fermetures empilées*
 
 Alternative informal aliases that may be mentioned in documentation:
-- *collapsed nail-clipping*
-- *run-on nail-clipping*
-- *same-line stacked closers*
+- *nail-clipping compacté*
+- *nail-clipping en chaîne*
+- *fermetures empilées sur une même ligne*
 
 The formatter shall support explicit handling of this style as follows:
 
@@ -564,4 +564,174 @@ The chosen name emphasizes the actual phenomenon:
 - it is derived from nail-clipping style,
 - its closers are stacked on the same physical line,
 - and it is visually misleading.
+
+
+* Exceptions de casse par fichier de symboles
+Dans certains projets, un petit ensemble de symboles doit conserver une
+capitalisation précise pour de bonnes raisons pratiques, par exemple :
+
+- interface avec des bibliothèques externes ;
+- noms de variables d'environnement ;
+- étiquettes destinées à être lues par des humains ;
+- conventions historiques du projet ;
+- compatibilité avec des données ou des API externes.
+
+Le formateur doit donc permettre l'usage d'un *fichier d'exceptions de
+capitalisation*.
+
+** Format du fichier d'exceptions
+Le fichier contient un symbole par ligne, exactement tel qu'il doit être
+réécrit dans la sortie.
+
+Exemple :
+
+#+begin_src text
+PATH
+CreateFileW
+LabelCourte
+MaConventionLocale
+#+end_src
+
+Les lignes vides sont autorisées et doivent être ignorées.
+Une extension future pourra autoriser des commentaires dans ce fichier, mais ce
+n'est pas requis pour la première version.
+
+** Sémantique
+Lorsque ce fichier est fourni :
+
+- chaque occurrence d'un symbole du source doit être comparée aux entrées du
+  fichier de manière insensible à la casse ;
+- si un symbole du source correspond à une entrée du fichier, il doit être
+  réécrit exactement comme dans le fichier ;
+- cette réécriture est prioritaire sur la politique générale de casse des
+  symboles.
+
+Exemple :
+
+si le fichier contient :
+
+#+begin_src text
+PATH
+CreateFileW
+#+end_src
+
+alors les occurrences suivantes :
+
+#+begin_src lisp
+path
+Path
+createfilew
+CREATEFILEW
+#+end_src
+
+doivent être réécrites en :
+
+#+begin_src lisp
+PATH
+PATH
+CreateFileW
+CreateFileW
+#+end_src
+
+** Priorité des règles de casse
+L'ordre de priorité doit être le suivant :
+
+1. exceptions de capitalisation fournies par fichier ;
+2. politique générale de casse (=préserver=, =minuscules=, =majuscules=) ;
+3. texte source d'origine si aucune autre règle ne s'applique.
+
+** Options associées
+Les spécifications doivent prévoir au moins les options suivantes :
+
+- chemin du fichier d'exceptions de capitalisation ;
+- activation ou désactivation explicite de cette fonctionnalité ;
+- mode de diagnostic permettant de signaler les symboles présents dans le
+  fichier d'exceptions mais jamais rencontrés dans le source.
+
+* Fichier de configuration du formateur
+Toutes les options du programme doivent pouvoir être fournies soit directement,
+soit au moyen d'un *fichier de configuration* passé comme seul argument au
+programme ou à la fonction principale de formatage.
+
+** Objectif
+Cette fonctionnalité permet :
+
+- d'éviter des lignes de commande trop longues ;
+- de versionner une politique de formatage commune à l'équipe ;
+- de partager facilement les mêmes réglages entre l'outil en ligne de commande
+  et l'API AutoLISP ;
+- d'inclure les chemins de fichiers auxiliaires, notamment le fichier
+  d'exceptions de capitalisation.
+
+** Formes acceptées
+Le fichier de configuration peut contenir soit :
+
+1. une seule s-expression représentant la liste complète des options et
+   arguments ;
+2. ou bien directement les options et arguments, tels quels, sans liste
+   englobante.
+
+Exemples acceptés :
+
+#+begin_src lisp
+(:style-parentheses :cl
+ :casse-symboles :minuscules
+ :fichier-exceptions-casse "capitalisation.txt"
+ :colonne-commentaires-en-ligne 40
+ "entree.lsp" "sortie.lsp")
+#+end_src
+
+#+begin_src lisp
+:style-parentheses :cl
+:casse-symboles :minuscules
+:fichier-exceptions-casse "capitalisation.txt"
+:colonne-commentaires-en-ligne 40
+"entree.lsp" "sortie.lsp"
+#+end_src
+
+Dans le second cas, l'implémentation peut lire tout le contenu et l'encapsuler
+logiquement dans une liste avant analyse.
+
+** Correspondance programme / API
+Le même schéma d'options doit être accepté :
+
+- par le programme appelé en ligne de commande ;
+- par la fonction AutoLISP de formatage ;
+- par le fichier de configuration.
+
+L'objectif est d'avoir une source unique de vérité pour l'interprétation des
+options.
+
+** Résolution des conflits
+Si plusieurs modes de fourniture des options coexistent, la priorité recommandée
+est :
+
+1. options explicitement passées à l'appel courant ;
+2. options lues dans le fichier de configuration ;
+3. valeurs par défaut.
+
+Toute implémentation doit documenter clairement cette règle et l'appliquer de
+manière déterministe.
+
+** Options minimales à prévoir
+Les spécifications doivent désormais inclure, en plus des options déjà prévues :
+
+- option pour charger un fichier de configuration ;
+- option pour charger un fichier d'exceptions de capitalisation ;
+- option pour choisir le mode de casse générale des symboles ;
+- option pour activer un contrôle de cohérence des exceptions de
+  capitalisation ;
+- option permettant de faire traiter un contenu de configuration comme une seule
+  s-expression ou comme une suite d'éléments à regrouper implicitement.
+
+** Recommandation de mise en oeuvre
+L'analyse des options doit être factorisée dans un module unique, utilisé à la
+fois par :
+
+- l'interface de ligne de commande ;
+- le lecteur de fichier de configuration ;
+- l'appel programmatique depuis AutoLISP.
+
+Ainsi, toutes les variantes d'entrée produisent la même structure interne
+d'options normalisées.
 
