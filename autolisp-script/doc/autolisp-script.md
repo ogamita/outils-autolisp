@@ -85,7 +85,9 @@ Le wrapper initialise lui-même le statut à `99`, exécute les actions demandé
 Autrement dit, un script LISP peut écrire son propre statut intermédiaire, mais le code de sortie final est gouverné par le wrapper.
 
 ## Format de sortie
-Le `stdout` restitué par le wrapper est structuré à partir du fichier `output.txt`, enrichi au besoin par les journaux de session CAD.
+Le `stdout` restitué par le wrapper est structuré à partir du fichier `output.txt`.
+
+En particulier, la sortie utilisateur visible (`print`, `princ`, `prin1`, `prompt`) est maintenant miroirée directement dans `output.txt` pendant les phases `load`, `eval` et `main`. Le wrapper n'a donc plus besoin de dépendre uniquement des journaux de session du CAD pour reconstruire `OUTPUT`.
 
 On retrouve en général:
 
@@ -95,7 +97,7 @@ On retrouve en général:
 - `RESULT <valeur>`
 - `MAIN <commande>`
 - `MAIN-RESULT <valeur>`
-- `OUTPUT:` suivi de la sortie capturée entre marqueurs `<<<AUTOLISP-BEGIN...>>>`
+- `OUTPUT` suivi des lignes écrites par `print` / `princ` / `prin1` / `prompt`
 - `TOTAL=<n> OK=<n> FAIL=<n> ERROR=<n>`
 
 Le `stderr` contient les messages écrits dans `errors.txt`, par exemple:
@@ -152,6 +154,8 @@ Par défaut il est supprimé en fin d'exécution.
 - Le fallback principal repose sur `osascript` et du pilotage UI.
 - Le script active l'application CAD, injecte `(load "...")`, puis attend la mise à jour du fichier de statut.
 - Ce mode dépend des autorisations Accessibilité et reste plus fragile qu'un lancement direct.
+- Sous BricsCAD, le workspace doit être `2D Drafting`. Le workspace `2D Drafting (Modern)` peut empêcher l'injection de la commande et provoquer un timeout avec `status.txt` restant à `__PENDING__`.
+- En cas de timeout sans aucune sortie ni erreur, le wrapper affiche un hint spécifique pour ce cas.
 
 ### Unix hors Windows
 - Si `AUTOCAD_EXE` ou `BRICSCAD_EXE` est fourni, le wrapper tente un lancement direct avec `/b`.
@@ -163,6 +167,12 @@ BricsCAD avec la commande par défaut:
 
 ```bash
 ./autolisp --bricscad ./autolisp.lsp
+```
+
+BricsCAD avec expression inline:
+
+```bash
+./autolisp --bricscad -x '(progn (print (quote "Hello World")) (print "Hiya!"))'
 ```
 
 BricsCAD avec chargement multiple puis `C:RUN`:
@@ -191,6 +201,29 @@ export BRICSCAD_EXE="C:/Program Files/Bricsys/BricsCAD V26 en_US/bricscad.exe"
 ./autolisp --bricscad ./autolisp.lsp
 ```
 
+## Tests
+
+Depuis `autolisp-script`:
+
+```bash
+make test
+```
+
+Variables utiles:
+
+- `CAD=--bricscad` ou `CAD=--autocad`
+- `TEST_TIMEOUT=<secondes>`
+- `TEST_BACKEND=fake` pour exécuter la suite contre le faux moteur de test
+- `TEST_RUN_ARGS=--verbose` pour afficher plus de détails en cas d'échec
+
+La suite couvre actuellement:
+
+- `-x` avec sortie visible
+- `-x` sans sortie visible
+- chargement d'un fichier `.lsp`
+- `--main` avec point d'entrée personnalisé
+- sortie produite pendant le `load` d'un fichier
+
 ## Dépannage
 - `Missing input: provide at least one source.lsp or -x expression`
   - fournir au moins un fichier `.lsp` ou une expression `-x`
@@ -204,6 +237,9 @@ export BRICSCAD_EXE="C:/Program Files/Bricsys/BricsCAD V26 en_US/bricscad.exe"
   - augmenter `AUTOLISP_WAIT_SECS`
   - relancer avec `AUTOLISP_KEEP_WORKDIR=1 AUTOLISP_VERBOSE=1`
   - inspecter ensuite `output.txt`, `errors.txt`, `status.txt` et `logs/`
+- Timeout BricsCAD macOS avec `status.txt=__PENDING__` et fichiers de sortie vides
+  - vérifier que le workspace actif est `2D Drafting`
+  - éviter `2D Drafting (Modern)`
 
 Commande de debug typique:
 

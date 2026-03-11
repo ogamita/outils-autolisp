@@ -85,6 +85,14 @@ fi
 
 failures=0
 
+materialize_expected() {
+  local src="$1"
+  local dst="$2"
+  sed \
+    -e "s|@ROOT_DIR@|$ROOT_DIR|g" \
+    "$src" >"$dst"
+}
+
 run_case() {
   local name="$1"
   local scenario="$2"
@@ -94,10 +102,16 @@ run_case() {
   shift 5
 
   local case_dir stdout_file stderr_file rc_file actual_rc
+  local expected_stdout_file expected_stderr_file
   case_dir="$(mktemp -d "$TMP_DIR/${name}.XXXXXX")"
   stdout_file="$case_dir/stdout.txt"
   stderr_file="$case_dir/stderr.txt"
   rc_file="$case_dir/rc.txt"
+  expected_stdout_file="$case_dir/expected.stdout"
+  expected_stderr_file="$case_dir/expected.stderr"
+
+  materialize_expected "$expected_stdout" "$expected_stdout_file"
+  materialize_expected "$expected_stderr" "$expected_stderr_file"
 
   echo "$name RUN engine=$ENGINE_FLAG exe=${DETECTED_ENGINE_EXE:-fallback-ui} timeout=${RUN_TIMEOUT}s"
 
@@ -142,26 +156,26 @@ run_case() {
     return
   fi
 
-  if ! diff -u "$expected_stdout" "$stdout_file"; then
+  if ! diff -u "$expected_stdout_file" "$stdout_file"; then
     echo "$name KO" >&2
     echo "FAIL $name: stdout mismatch" >&2
     failures=$((failures + 1))
     echo "workdir: $case_dir/workdir" >&2
     if [[ "$VERBOSE" -eq 1 ]]; then
-      echo "expected stdout: $expected_stdout" >&2
+      echo "expected stdout: $expected_stdout_file" >&2
       echo "actual stdout: $stdout_file" >&2
       [[ -s "$stderr_file" ]] && echo "--- stderr ---" >&2 && cat "$stderr_file" >&2
     fi
     return
   fi
 
-  if ! diff -u "$expected_stderr" "$stderr_file"; then
+  if ! diff -u "$expected_stderr_file" "$stderr_file"; then
     echo "$name KO" >&2
     echo "FAIL $name: stderr mismatch" >&2
     failures=$((failures + 1))
     echo "workdir: $case_dir/workdir" >&2
     if [[ "$VERBOSE" -eq 1 ]]; then
-      echo "expected stderr: $expected_stderr" >&2
+      echo "expected stderr: $expected_stderr_file" >&2
       echo "actual stderr: $stderr_file" >&2
     fi
     return
@@ -185,6 +199,31 @@ run_case \
   "$SCRIPT_DIR/expected/empty.stderr" \
   0 \
   -x '(+ 1 2)'
+
+run_case \
+  "load_main_default" \
+  "load_main_default" \
+  "$SCRIPT_DIR/expected/load_main_default.stdout" \
+  "$SCRIPT_DIR/expected/empty.stderr" \
+  0 \
+  "$SCRIPT_DIR/fixtures/main-default.lsp"
+
+run_case \
+  "load_main_custom" \
+  "load_main_custom" \
+  "$SCRIPT_DIR/expected/load_main_custom.stdout" \
+  "$SCRIPT_DIR/expected/empty.stderr" \
+  0 \
+  "$SCRIPT_DIR/fixtures/main-custom.lsp" \
+  --main C:RUN_BASIC
+
+run_case \
+  "load_side_effect" \
+  "load_side_effect" \
+  "$SCRIPT_DIR/expected/load_side_effect.stdout" \
+  "$SCRIPT_DIR/expected/empty.stderr" \
+  0 \
+  "$SCRIPT_DIR/fixtures/load-side-effect.lsp"
 
 if [[ "$failures" -ne 0 ]]; then
   echo "Tests failed: $failures" >&2

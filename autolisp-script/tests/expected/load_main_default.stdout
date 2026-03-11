@@ -1,0 +1,7 @@
+LOAD @ROOT_DIR@/tests/fixtures/main-default.lsp
+LOADED @ROOT_DIR@/tests/fixtures/main-default.lsp
+MAIN C:MAIN
+OUTPUT
+"From MAIN"
+MAIN-RESULT Done
+TOTAL=2 OK=2 FAIL=0 ERROR=0
