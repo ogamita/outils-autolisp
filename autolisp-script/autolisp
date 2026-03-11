@@ -913,6 +913,17 @@ wait_for_status() {
     timeout=$((timeout - 1))
   done
   echo "ERROR: timeout waiting for CAD runner completion after ${TIMEOUT_SECS}s" >&2
+  if [[ "$ENGINE" == "bricscad" && $IS_WINDOWS -eq 0 && "$MACOS_ASYNC" -eq 1 ]]; then
+    local status_trimmed has_output has_errors
+    status_trimmed="$(tr -d '[:space:]' <"$STATUSFILE" 2>/dev/null || true)"
+    has_output=0
+    has_errors=0
+    [[ -s "$OUTFILE" ]] && has_output=1
+    [[ -s "$ERRFILE" ]] && has_errors=1
+    if [[ "${status_trimmed:-}" == "__PENDING__" && "$has_output" -eq 0 && "$has_errors" -eq 0 ]]; then
+      echo "HINT: on macOS + BricsCAD, select the \"2D Drafting\" workspace, not \"2D Drafting (Modern)\", then retry." >&2
+    fi
+  fi
   return 124
 }
 
@@ -966,20 +977,23 @@ run_macos_bricscad_fallback() {
   MACOS_ASYNC=1
   local lisp_cmd
   lisp_cmd="(load \"${RUNLSPFILE}\")"
-  export AUTOLISP_LISP_CMD="$lisp_cmd"
-  export AUTOLISP_APPNAME="$appname"
-  /usr/bin/osascript <<'OSA' || true
-set appName to system attribute "AUTOLISP_APPNAME"
-tell application appName to activate
-delay 1
-tell application "System Events"
-  key code 53
-  key code 53
-  delay 0.15
-  set lispCmd to system attribute "AUTOLISP_LISP_CMD"
-  keystroke lispCmd
-  key code 36
-end tell
+  /usr/bin/open -a "$app" >/dev/null 2>&1 || true
+  /usr/bin/osascript - "$appname" "$lisp_cmd" <<'OSA' || true
+on run argv
+  set appName to item 1 of argv
+  set lispCmd to item 2 of argv
+  delay 1
+  tell application "System Events"
+    tell process appName
+      set frontmost to true
+    end tell
+    key code 53
+    key code 53
+    delay 0.15
+    keystroke lispCmd
+    key code 36
+  end tell
+end run
 OSA
 }
 
@@ -993,18 +1007,22 @@ run_macos_autocad_fallback() {
   MACOS_ASYNC=1
   local lisp_cmd
   lisp_cmd="(load \"${RUNLSPFILE}\")"
-  export AUTOLISP_LISP_CMD="$lisp_cmd"
-  /usr/bin/osascript <<'OSA' || true
-tell application "AutoCAD" to activate
-delay 1
-tell application "System Events"
-  key code 53
-  key code 53
-  delay 0.15
-  set lispCmd to system attribute "AUTOLISP_LISP_CMD"
-  keystroke lispCmd
-  key code 36
-end tell
+  /usr/bin/open -a "$app" >/dev/null 2>&1 || true
+  /usr/bin/osascript - "$lisp_cmd" <<'OSA' || true
+on run argv
+  set lispCmd to item 1 of argv
+  delay 1
+  tell application "System Events"
+    tell process "AutoCAD"
+      set frontmost to true
+    end tell
+    key code 53
+    key code 53
+    delay 0.15
+    keystroke lispCmd
+    key code 36
+  end tell
+end run
 OSA
 }
 
