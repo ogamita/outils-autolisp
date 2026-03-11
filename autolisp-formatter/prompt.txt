@@ -1,0 +1,213 @@
+You are Codex. Build the complete AutoLISP formatter described below. Do the implementation work end to end, generate the source files, tests, and basic documentation. Do not stop at analysis. Produce the actual program.
+
+PROJECT GOAL
+Create a deterministic AutoLISP source formatter / pretty-printer written in AutoLISP itself.
+
+HIGH LEVEL REQUIREMENTS
+- Implementation language: AutoLISP.
+- It must parse AutoLISP source text without evaluating it.
+- It must preserve semantics and avoid corrupting code.
+- It must support two parenthesis styles:
+  1. CL style: close parens on the last possible line.
+  2. Nail-clipping style: closing parens may appear on separate lines in a consistent historical AutoLISP style.
+- It must support symbol case modes:
+  1. preserve
+  2. downcase
+  3. upcase
+- It must support comment policies:
+  1. preserve
+  2. CL-inspired normalization using ;;;;, ;;;, ;;, ;
+- It must understand AutoLISP block comments of the form ;| ... |;.
+- It must optionally convert block comments ;| ... |; into semicolon-prefixed line comments.
+- It must support check mode and in-place mode.
+- It must be deterministic and idempotent.
+
+IMPORTANT LANGUAGE NOTES
+- In this project, :foo and :bar are ordinary AutoLISP symbols, not Common Lisp keywords.
+- / in a defun parameter list is also just a symbol lexically.
+- The formatter must distinguish symbols from strings and comments. Never alter string contents. Never alter comment text except when explicitly converting block comments.
+- The parser is syntactic only. No evaluation.
+
+MANDATORY ARCHITECTURE
+Implement the project with clearly separated modules:
+1. file I/O
+2. scanner/tokenizer
+3. CST or equivalent syntax tree
+4. parser
+5. printer
+6. style rules
+7. symbol-case transformation
+8. comment transformation
+9. CLI/options layer
+10. tests
+
+RECOMMENDED FILE LAYOUT
+src/
+  fmt-main.lsp
+  fmt-options.lsp
+  fmt-io.lsp
+  fmt-scanner.lsp
+  fmt-parser.lsp
+  fmt-cst.lsp
+  fmt-printer.lsp
+  fmt-rules.lsp
+  fmt-comments.lsp
+  fmt-case.lsp
+  fmt-errors.lsp
+  fmt-util.lsp
+tests/
+  scanner/
+  parser/
+  printer/
+  golden/
+  corpus/
+README.md
+
+SCANNER REQUIREMENTS
+Tokenize at least the following:
+- lparen
+- rparen
+- quote
+- string
+- atom
+- line-comment
+- block-comment ;| ... |;
+- whitespace
+- newline
+
+Scanner must correctly ignore parentheses inside strings and comments.
+Scanner must detect unterminated strings and unterminated block comments.
+Scanner must accept symbols such as:
+- pk!
+- vl-catch-all-apply
+- *debug*
+- :foo
+- /
+
+PARSER REQUIREMENTS
+Implement a lightweight parser that builds a CST or equivalent tree preserving enough surface syntax for pretty-printing.
+It must support:
+- top-level forms
+- nested lists
+- quote
+- atoms
+- strings
+- comments attached as trivia or equivalent
+- dotted pair forms without breaking them
+
+FORMATTING REQUIREMENTS
+Support at least these forms with better indentation rules:
+- defun
+- lambda
+- if
+- cond
+- setq
+- progn
+- while
+- repeat
+- foreach
+- quote
+
+PAREN STYLE REQUIREMENTS
+- style=cl
+- style=nail
+Make the output deterministic in both styles.
+
+CASE REQUIREMENTS
+Modes:
+- preserve
+- downcase
+- upcase
+Apply only to symbol tokens.
+Do not alter strings, numbers, whitespace, or comment bodies.
+
+COMMENT REQUIREMENTS
+Modes:
+- comment-style=preserve
+- comment-style=cl
+Support optional conversion:
+- block-comments=preserve
+- block-comments=to-semicolons
+Support optional contextual comment conversion heuristics:
+- top-level isolated comments -> ;;;; or ;;;
+- local block comments -> ;;
+- inline comments -> ;
+Support optional inline comment alignment column.
+
+CLI / ENTRYPOINT REQUIREMENTS
+Provide an entry function and a command interface equivalent in behavior to supporting:
+- --style cl|nail
+- --symbol-case preserve|downcase|upcase
+- --comment-style preserve|cl
+- --block-comments preserve|to-semicolons
+- --contextual-comments yes|no
+- --inline-comment-column N
+- --in-place
+- --check
+- --output FILE
+
+QUALITY REQUIREMENTS
+- deterministic output
+- idempotent output
+- explicit error reporting on malformed input
+- no silent corruption
+
+ERRORS TO DETECT
+- unbalanced parentheses
+- unterminated string
+- unterminated block comment
+- orphan quote at end of file if parsing cannot continue
+
+TEST REQUIREMENTS
+Build a real test suite.
+At minimum include:
+1. scanner unit tests
+2. parser unit tests
+3. printer golden tests
+4. style conversion tests
+5. case transformation tests
+6. comment conversion tests
+7. idempotence tests
+8. small real-world corpus tests
+
+EXAMPLES TO COVER IN TESTS
+- :foo as ordinary symbol
+- / in defun local variable separator
+- ;| ... |; block comments spanning multiple lines
+- strings containing parentheses and semicolons
+- nail-clipping input reformatted into CL style
+- CL style input reformatted into nail style
+- symbols with !, -, *, :
+- dotted pair (a . b)
+
+IMPLEMENTATION STRATEGY
+Proceed incrementally but do not stop after planning. Actually generate all code files.
+Suggested order:
+1. utilities and errors
+2. scanner
+3. CST
+4. parser
+5. minimal printer
+6. parenthesis styles
+7. symbol case transform
+8. comment policies
+9. CLI/options
+10. tests
+11. README
+
+DELIVERABLES
+Generate:
+- complete AutoLISP source code
+- tests
+- README with usage and limitations
+- a small sample corpus
+
+CODING STYLE
+- Keep functions small and named clearly.
+- Prefer explicit data structures over clever tricks.
+- Separate pure transformation logic from file I/O.
+- Add comments where the algorithm is subtle.
+- Make the code maintainable for a team.
+
+DEFINITION OF DONE
+The work is done only when the repository contains a usable AutoLISP formatter implementation, with tests and documentation, not just a design.

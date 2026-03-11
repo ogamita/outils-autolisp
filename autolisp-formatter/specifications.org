@@ -1,0 +1,498 @@
+#+TITLE: Spécifications du formateur AutoLISP
+#+AUTHOR: OpenAI
+#+LANGUAGE: fr
+#+OPTIONS: toc:3 num:t
+
+* Objet du projet
+
+Ce projet vise à réaliser un *formateur / pretty-printer AutoLISP* écrit en *AutoLISP*, destiné à un usage d'équipe sur des bases de code existantes et nouvelles.
+
+Objectifs principaux :
+
+- reformater le code AutoLISP de manière *déterministe* ;
+- corriger automatiquement l'indentation et le placement des parenthèses ;
+- préserver ou normaliser les commentaires selon la politique choisie ;
+- proposer plusieurs styles configurables pour faciliter l'adoption progressive ;
+- fonctionner sans dépendance externe autre que l'environnement AutoLISP / VisualLISP disponible côté équipe.
+
+Le projet ne vise pas à implémenter un compilateur, un évaluateur, ni un lecteur sémantique complet d'AutoLISP. Il vise un *lecteur syntaxique source-à-source* capable de lire, restructurer et réémettre du code sans le dénaturer inutilement.
+
+* Périmètre fonctionnel
+
+** Fonction principale
+
+Le programme prend en entrée un ou plusieurs fichiers source AutoLISP et produit une version reformattée selon un jeu d'options.
+
+Modes d'utilisation minimaux attendus :
+
+- formater un fichier vers la sortie standard ou un fichier de sortie ;
+- formater un fichier *in place* ;
+- vérifier si un fichier est déjà au bon format sans le modifier ;
+- choisir une politique de style par options explicites.
+
+** Hors périmètre initial
+
+Les fonctions suivantes ne sont pas requises en version 1 :
+
+- reflow automatique du texte en prose dans les commentaires ;
+- compréhension sémantique profonde des macros utilisateur ;
+- refactoring de noms ;
+- analyse de portée avancée ;
+- intégration IDE sophistiquée ;
+- conversion complète de styles de commentaires avec compréhension éditoriale parfaite ;
+- conservation pixel-perfect de toute la mise en page d'origine.
+
+* Contraintes majeures
+
+** Langage d'implémentation
+
+Le formateur doit être écrit en *AutoLISP*.
+
+** Fidélité source
+
+Le système doit préserver la structure sémantique du source. Les chaînes de caractères et le texte interne des commentaires ne doivent pas être modifiés sauf option explicite de conversion de commentaires.
+
+** Déterminisme
+
+À options égales, le même fichier d'entrée doit toujours produire exactement la même sortie.
+
+** Idempotence
+
+Le programme doit être idempotent : reformater un fichier déjà formaté ne doit pas produire une nouvelle différence.
+
+** Tolérance au code existant
+
+Le programme doit accepter du code historiquement mal indenté, notamment le style dit /nail-clipping/ où les parenthèses fermantes sont placées sur des lignes séparées.
+
+* Architecture générale
+
+Le système doit être structuré en passes distinctes.
+
+** Passe 1 : lecture brute du fichier
+
+- lecture du fichier en texte brut ;
+- conservation de l'ordre exact des caractères.
+
+** Passe 2 : scanner / tokenizer
+
+Le scanner transforme le texte en une séquence de tokens, en distinguant au minimum :
+
+- parenthèse ouvrante ;
+- parenthèse fermante ;
+- quote ;
+- chaîne ;
+- atome / symbole / nombre ;
+- commentaire de ligne ;
+- commentaire bloc =;| ... |;= ;
+- espaces / tabulations ;
+- fin de ligne.
+
+Le scanner doit reconnaître les commentaires bloc AutoLISP de forme =;| ... |;=. Ceci diffère du Common Lisp qui utilise =#| ... |#=.
+
+** Passe 3 : parseur syntaxique léger
+
+Le parseur reconstruit une représentation structurée du programme permettant le pretty-printing. Il n'a pas besoin d'évaluer les formes.
+
+Cette représentation sera de préférence un *CST* (Concrete Syntax Tree) ou une structure équivalente préservant mieux la surface syntaxique qu'un AST purement sémantique.
+
+** Passe 4 : normalisations optionnelles
+
+Passes configurables pour :
+
+- changement de style de parenthèses ;
+- normalisation de casse des symboles ;
+- normalisation ou conversion de commentaires.
+
+** Passe 5 : pretty-printer
+
+Réémission textuelle déterministe du programme selon les options choisies.
+
+* Modèle syntaxique minimal à supporter
+
+** Éléments lexicaux
+
+Le scanner doit supporter correctement les éléments suivants.
+
+*** Parenthèses
+
+- =(=
+- =)=
+
+*** Quote
+
+- ='=
+
+*** Chaînes
+
+Chaînes délimitées par doubles guillemets, avec leur contenu préservé. Les parenthèses apparaissant dans les chaînes ne doivent pas affecter le comptage des parenthèses.
+
+*** Commentaires de ligne
+
+Tout ce qui suit =;= jusqu'à la fin de ligne est un commentaire de ligne, sauf dans le cas particulier de l'ouverture d'un commentaire bloc =;|=.
+
+*** Commentaires de bloc
+
+- ouverture : =;|=
+- fermeture : =|;=
+
+Les parenthèses contenues dans un commentaire bloc ne doivent pas affecter l'analyse structurale.
+
+*** Atomes
+
+Le formateur doit accepter des symboles AutoLISP comportant notamment :
+
+- lettres ;
+- chiffres ;
+- tirets ;
+- astérisques ;
+- points d'exclamation ;
+- slash ;
+- deux-points ;
+- préfixes =vl-=, =vlax-=, =vla-=, etc.
+
+Exemples légitimes à supporter :
+
+- =pk!=
+- =vl-catch-all-apply=
+- =*debug*=
+- =:foo=
+- =/=
+
+*** Dotted pairs
+
+Le parseur doit au minimum ne pas casser les formes contenant un point de paire pointée, par exemple =(a . b)=.
+
+** S-expressions à supporter
+
+Le programme doit savoir structurer correctement au minimum :
+
+- listes ordinaires ;
+- atomes ;
+- quote simple ;
+- listes imbriquées ;
+- formes top-level successives ;
+- commentaires intercalés.
+
+** Formes connues à mieux indenter
+
+La v1 doit prévoir des règles de style dédiées au moins pour :
+
+- =defun=
+- =lambda=
+- =if=
+- =cond=
+- =setq=
+- =progn=
+- =while=
+- =repeat=
+- =foreach=
+- =quote=
+
+Des règles spécifiques additionnelles pourront être ajoutées ensuite.
+
+* Casse des symboles
+
+** Principe
+
+AutoLISP est traité ici comme *case-insensitive* pour les symboles dans l'usage courant. Le formateur doit proposer une politique de casse configurable.
+
+** Options requises
+
+- =:preserve= :: préserver la casse d'origine ;
+- =:downcase= :: convertir tous les symboles en minuscules ;
+- =:upcase= :: convertir tous les symboles en majuscules.
+
+** Règles de transformation
+
+La transformation de casse ne s'applique qu'aux *tokens symbole*.
+
+Elle ne doit jamais modifier :
+
+- les chaînes ;
+- le texte des commentaires ;
+- les nombres ;
+- les espaces ;
+- la ponctuation structurelle.
+
+** Remarque sur =:foo=
+
+Les formes =:foo=, =:bar=, etc. ne sont pas des /keywords/ au sens Common Lisp ; ce sont des symboles ordinaires dont le nom commence par =:=. Elles doivent donc être traitées comme des symboles normaux.
+
+* Styles de parenthèses
+
+Le formateur doit proposer au moins deux styles.
+
+** Style =cl=
+
+Toutes les parenthèses fermantes sont ramenées sur la dernière ligne possible, selon l'usage Lisp classique.
+
+Exemple :
+
+#+begin_src lisp
+(defun foo (x)
+  (if (> x 0)
+      (progn
+        (bar x)
+        (baz x))))
+#+end_src
+
+** Style =nail=
+
+Le style /nail-clipping/ maintient des parenthèses fermantes sur des lignes séparées, selon une convention compatible avec les habitudes d'équipes AutoLISP historiques.
+
+Exemple :
+
+#+begin_src lisp
+(defun foo (x)
+  (if (> x 0)
+    (progn
+      (bar x)
+      (baz x)
+    )
+  )
+)
+#+end_src
+
+** Contraintes
+
+- les deux styles doivent être déterministes ;
+- le style choisi doit être appliqué de manière cohérente à tout le fichier ;
+- le formateur doit pouvoir reformater d'un style vers l'autre.
+
+* Commentaires
+
+** Modes de gestion
+
+Le formateur doit proposer au moins deux politiques.
+
+*** Mode =preserve=
+
+Les commentaires sont préservés autant que possible tels quels.
+
+Objectif : minimiser les surprises et faciliter l'adoption initiale.
+
+*** Mode =cl=
+
+Normalisation vers la convention inspirée de Common Lisp :
+
+- =;;;;= pour commentaires de fichier / bannière ;
+- =;;;= pour commentaires de section ;
+- =;;= pour commentaires de code sur ligne dédiée ;
+- =;= pour commentaire de fin de ligne.
+
+** Conversion des commentaires bloc
+
+Le formateur doit proposer une option spéciale pour gérer les commentaires =;| ... |;=.
+
+Modes minimaux :
+
+- =preserve= :: conserver les commentaires bloc tels quels ;
+- =to-semicolons= :: convertir un commentaire bloc en série de commentaires préfixés par des points-virgules.
+
+** Conversion contextuelle
+
+Une option contextuelle doit permettre de choisir le préfixe cible selon l'emplacement du commentaire :
+
+- top-level isolé : =;;;;= ou =;;;= ;
+- commentaire de bloc local : =;;= ;
+- commentaire en fin de ligne : =;=.
+
+Il s'agit d'une heuristique. Une perfection éditoriale n'est pas exigée en v1.
+
+** Alignement des commentaires de fin de ligne
+
+Une option doit permettre d'aligner les commentaires de fin de ligne sur une colonne donnée.
+
+Exemples d'options :
+
+- =nil= : ne pas forcer l'alignement ;
+- =40= ;
+- =48=.
+
+Règle :
+
+- si le code avant commentaire dépasse déjà la colonne cible, insérer au moins un espace avant le =;= ;
+- sinon, ajouter le nombre d'espaces nécessaire pour atteindre la colonne.
+
+* Préservation et transformations
+
+** À préserver impérativement
+
+Sauf option contraire explicite, le formateur doit préserver :
+
+- le texte des chaînes ;
+- le texte interne des commentaires ;
+- l'ordre sémantique des formes ;
+- la structure logique du programme.
+
+** Transformations autorisées
+
+Selon les options, il peut :
+
+- modifier l'indentation ;
+- déplacer les parenthèses fermantes ;
+- normaliser la casse des symboles ;
+- convertir les commentaires bloc ;
+- aligner les commentaires de fin de ligne ;
+- compacter ou stabiliser certaines lignes blanches selon la politique retenue.
+
+* Options de ligne de commande / d'appel
+
+La forme exacte dépendra du lanceur retenu, mais l'outil doit exposer les concepts suivants.
+
+** Options fonctionnelles minimales
+
+- =--style cl|nail=
+- =--symbol-case preserve|downcase|upcase=
+- =--comment-style preserve|cl=
+- =--block-comments preserve|to-semicolons=
+- =--contextual-comments yes|no=
+- =--inline-comment-column N=
+- =--in-place=
+- =--check=
+- =--output FILE=
+
+** Sémantique attendue
+
+- =--check= retourne un statut indiquant si le fichier est déjà conforme ;
+- =--in-place= remplace le fichier source par la version formatée ;
+- =--output FILE= écrit vers un autre fichier ;
+- l'absence de =--in-place= implique une sortie externe ou standard.
+
+* Stratégie de représentation interne
+
+Le modèle interne doit séparer autant que possible :
+
+- structure syntaxique ;
+- trivia (espaces, commentaires, sauts de ligne) ;
+- rendu final.
+
+Une représentation raisonnable pour chaque nœud inclut :
+
+- type du nœud ;
+- texte brut éventuel ;
+- enfants ;
+- trivia préfixe ;
+- trivia suffixe ;
+- position source optionnelle.
+
+* Règles de qualité
+
+** Déterminisme
+
+Même entrée + mêmes options = même sortie.
+
+** Idempotence
+
+=fmt(fmt(source)) = fmt(source)=.
+
+** Non-régression syntaxique
+
+Le programme formaté doit rester lisible par AutoLISP.
+
+** Lisibilité
+
+Le rendu doit privilégier :
+
+- indentation stable ;
+- groupement cohérent ;
+- fermeture de parenthèses régulière ;
+- commentaires exploitables par les développeurs.
+
+* Gestion des erreurs
+
+** Erreurs détectables
+
+- parenthèses non équilibrées ;
+- chaîne non terminée ;
+- commentaire bloc non terminé ;
+- quote orpheline en fin de fichier ;
+- token inattendu empêchant la reconstruction structurelle.
+
+** Comportement attendu
+
+Le programme doit :
+
+- signaler l'erreur avec position approximative si possible ;
+- ne pas produire silencieusement une sortie corrompue ;
+- permettre un mode strict et éventuellement un mode tolérant ultérieur.
+
+* Jeux de tests requis
+
+** Tests unitaires scanner
+
+Couvrir au minimum :
+
+- parenthèses simples ;
+- commentaires de ligne ;
+- commentaires bloc =;| ... |;= ;
+- chaînes contenant parenthèses et points-virgules ;
+- symboles avec caractères spéciaux ;
+- =:foo= ;
+- =/= dans listes de paramètres ;
+- dotted pairs.
+
+** Tests unitaires parseur
+
+- listes simples ;
+- listes imbriquées ;
+- formes avec quote ;
+- commentaires entre formes ;
+- détection d'erreurs de structure.
+
+** Golden tests pretty-printer
+
+Pour chaque cas, comparer la sortie exacte attendue :
+
+- style =cl= ;
+- style =nail= ;
+- casse préservée ;
+- casse uniformisée ;
+- commentaires préservés ;
+- conversion de commentaires bloc.
+
+** Tests d'idempotence
+
+Formater deux fois et vérifier l'égalité exacte des sorties.
+
+** Tests de non-régression sur corpus réel
+
+Appliquer le formateur sur un corpus AutoLISP existant d'équipe et conserver des résultats de référence.
+
+* Plan de livraison recommandé
+
+** Version 1
+
+Inclure :
+
+- lecture fichier ;
+- scanner complet ;
+- parseur léger ;
+- pretty-printer ;
+- styles =cl= et =nail= ;
+- options de casse des symboles ;
+- préservation des commentaires ;
+- conversion simple des commentaires bloc ;
+- tests unitaires et golden tests.
+
+** Version 2
+
+Peut inclure :
+
+- heuristiques de commentaires plus fines ;
+- davantage de règles d'indentation spécifiques ;
+- meilleure gestion des lignes blanches ;
+- intégration outil / éditeur / CI.
+
+* Critères d'acceptation
+
+Le projet sera considéré comme acceptable si :
+
+- il est entièrement écrit en AutoLISP ;
+- il reformate correctement les parenthèses selon les deux styles ;
+- il gère correctement =;| ... |;= ;
+- il propose les trois politiques de casse des symboles ;
+- il sait préserver ou normaliser les commentaires selon options ;
+- il est déterministe et idempotent ;
+- il passe les jeux de tests définis ;
+- il est utilisable par l'équipe sur un corpus réel sans corruption du code.
