@@ -224,6 +224,41 @@ La suite couvre actuellement:
 - `--main` avec point d'entrée personnalisé
 - sortie produite pendant le `load` d'un fichier
 
+### Backend `fake-cad`
+
+Le fichier `tests/fake-cad.sh` est un faux moteur CAD utilisé pour les tests unitaires et la CI.
+
+Son rôle est de simuler l'appel du wrapper vers un exécutable CAD sans lancer réellement BricsCAD ou AutoCAD. Concrètement:
+
+- il vérifie que `autolisp` lui passe bien `/b <run-common.lsp>`
+- il inspecte le fichier `run-common.lsp` généré par le wrapper
+- il valide que ce fichier contient les formes attendues pour le scénario testé
+- il écrit directement dans `OUTFILE`, `ERRFILE` et `STATUSFILE`
+- il simule donc le comportement attendu du CAD vu par le wrapper
+
+Ce backend ne teste pas:
+
+- l'intégration réelle avec BricsCAD ou AutoCAD
+- `osascript` sur macOS
+- COM sous Windows
+- les particularités UI ou workspace des applications CAD
+
+En revanche, il teste très bien la logique interne du wrapper:
+
+- génération de `run-common.lsp`
+- gestion des actions `load` et `-x`
+- appel de `MAIN` / `--main`
+- reconstruction de `stdout`
+- comparaison des sorties attendues
+
+Utilisation explicite:
+
+```bash
+make test TEST_BACKEND=fake
+```
+
+En CI GitLab, c'est ce backend qui est utilisé aujourd'hui.
+
 ## Dépannage
 - `Missing input: provide at least one source.lsp or -x expression`
   - fournir au moins un fichier `.lsp` ou une expression `-x`
