@@ -780,7 +780,7 @@ If doc Is Nothing Then
     WScript.Quit 5
   End If
 End If
-cmd = "(load """ & Replace(runLsp, "\", "/") & """) " & vbCr
+cmd = "(load """ & Replace(runLsp, "\", "/") & """)" & vbCr
 Err.Clear
 Call doc.SendCommand(cmd)
 If Err.Number <> 0 Then
@@ -955,7 +955,7 @@ If doc Is Nothing Then
     WScript.Quit rc
   End If
 End If
-cmd = "(load """ & Replace(runLsp, "\", "/") & """) " & vbCr
+cmd = "(load """ & Replace(runLsp, "\", "/") & """)" & vbCr
 Err.Clear
 Call doc.SendCommand(cmd)
 If Err.Number <> 0 Then
