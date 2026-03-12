@@ -222,6 +222,12 @@ to_windows_path() {
   fi
 }
 
+escape_vbs_string() {
+  local s="$1"
+  s=${s//\"/\"\"}
+  printf '%s' "$s"
+}
+
 find_log_file() {
   local f
   f="$(
@@ -675,10 +681,10 @@ Dim fso, shell, mode, exePath, runLsp, errFile
 Dim app, doc, cmd, progid, created, attached, rc
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
-mode = "${AUTOCAD_COM_MODE}"
-exePath = "${win_exe//"/""}"
-runLsp = "${win_runlsp//"/""}"
-errFile = "${win_err//"/""}"
+mode = "$(escape_vbs_string "$AUTOCAD_COM_MODE")"
+exePath = "$(escape_vbs_string "$win_exe")"
+runLsp = "$(escape_vbs_string "$win_runlsp")"
+errFile = "$(escape_vbs_string "$win_err")"
 progid = "AutoCAD.Application"
 created = False
 attached = False
@@ -828,12 +834,12 @@ Dim fso, shell, mode, exePath, runLsp, statusFile, outFile, errFile
 Dim app, doc, cmd, created, attached, rc
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
-mode = "${mode}"
-exePath = "${win_exe//"/""}"
-runLsp = "${win_runlsp//"/""}"
-statusFile = "${win_status//"/""}"
-outFile = "${win_out//"/""}"
-errFile = "${win_err//"/""}"
+mode = "$(escape_vbs_string "$mode")"
+exePath = "$(escape_vbs_string "$win_exe")"
+runLsp = "$(escape_vbs_string "$win_runlsp")"
+statusFile = "$(escape_vbs_string "$win_status")"
+outFile = "$(escape_vbs_string "$win_out")"
+errFile = "$(escape_vbs_string "$win_err")"
 created = False
 attached = False
 rc = 0
