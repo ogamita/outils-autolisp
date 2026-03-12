@@ -148,6 +148,7 @@ Par défaut il est supprimé en fin d'exécution.
 - BricsCAD:
   - tente un pont COM via `cscript`
   - sinon lance `bricscad.exe /B`
+  - en mode COM, le wrapper envoie maintenant exactement `(load ".../run-common.lsp")` suivi d'un retour chariot, sans suffixe parasite
 - En mode COM `attach`, le wrapper n'ordonne pas la fermeture de BricsCAD à la fin.
 
 ### macOS
@@ -209,6 +210,11 @@ Depuis `autolisp-script`:
 make test-ci
 ```
 
+La cible `test-ci` est la cible agrégée prévue pour l'automatisation:
+
+- avec `TEST_BACKEND=fake`, elle exécute uniquement la suite fake (`test-fakecad`)
+- avec `TEST_BACKEND=real`, elle exécute les suites réelles (`test-bricscad` et `test-autocad`)
+
 Sous Windows, si `make` n'est pas disponible, des scripts PowerShell équivalents sont fournis dans `make/`:
 
 ```powershell
@@ -243,6 +249,15 @@ Exemple de workflow Windows:
 1. éditer `make/env.ps1`
 2. décommenter `AUTOLISP_KEEP_WORKDIR=1` et `AUTOLISP_VERBOSE=1`
 3. lancer `.\make\test-bricscad.ps1`
+
+Depuis Git Bash sous Windows, les trampolines bash correspondants sont aussi disponibles:
+
+```bash
+./make/test-ci
+./make/test-fake
+./make/test-bricscad
+./make/test-autocad
+```
 
 La suite couvre actuellement:
 
