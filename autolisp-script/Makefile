@@ -1,4 +1,4 @@
-.PHONY: test 	 test-fakecad test-bricscad test-autocad
+.PHONY: test test-fakecad test-bricscad test-autocad clean
 
 CAD ?= --bricscad
 TEST_TIMEOUT ?= 30
@@ -16,3 +16,8 @@ test-bricscad:
 
 test-autocad:
 	./tests/run.sh $(TEST_BACKEND_FLAG) $(TEST_RUN_ARGS) --timeout $(TEST_TIMEOUT) --autocad
+
+
+clean:
+	- rm -rf tests/tmp .autolisp-runs
+	- mkdir -p tests/tmp .autolisp-runs
