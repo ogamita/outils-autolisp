@@ -7,6 +7,12 @@ AUTOLISP="$ROOT_DIR/autolisp"
 FAKE_CAD="$SCRIPT_DIR/fake-cad.sh"
 TMP_DIR="$SCRIPT_DIR/tmp"
 
+OS="$(uname -s || true)"
+IS_WINDOWS=0
+case "$OS" in
+  MINGW*|MSYS*|CYGWIN*) IS_WINDOWS=1 ;;
+esac
+
 mkdir -p "$TMP_DIR"
 
 VERBOSE=0
@@ -85,11 +91,36 @@ fi
 
 failures=0
 
+to_windows_path() {
+  local p="$1"
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -w "$p"
+  elif [[ "$p" =~ ^/([a-zA-Z])/(.*)$ ]]; then
+    local drive rest
+    drive="${BASH_REMATCH[1]}"
+    rest="${BASH_REMATCH[2]}"
+    rest="${rest//\//\\}"
+    printf '%s:\\%s' "${drive^^}" "$rest"
+  else
+    printf '%s' "$p"
+  fi
+}
+
+to_lisp_path() {
+  local p="$1"
+  p="${p//\\//}"
+  printf '%s' "$p"
+}
+
 materialize_expected() {
   local src="$1"
   local dst="$2"
+  local expected_root="$ROOT_DIR"
+  if [[ "$IS_WINDOWS" -eq 1 ]]; then
+    expected_root="$(to_lisp_path "$(to_windows_path "$ROOT_DIR")")"
+  fi
   sed \
-    -e "s|@ROOT_DIR@|$ROOT_DIR|g" \
+    -e "s|@ROOT_DIR@|$expected_root|g" \
     "$src" >"$dst"
 }
 
