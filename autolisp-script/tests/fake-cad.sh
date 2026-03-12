@@ -1,12 +1,32 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 2 || "$1" != "/b" ]]; then
-  echo "fake-cad: expected '/b <run-common.lsp>'" >&2
+if [[ $# -ne 2 ]]; then
+  echo "fake-cad: expected '/b <run-common.lsp>' or '/B <run.scr>'" >&2
   exit 2
 fi
 
-RUNLSPFILE="$2"
+case "$1" in
+  /b)
+    RUNLSPFILE="$2"
+    ;;
+  /B)
+    SCRFILE="$2"
+    if [[ ! -f "$SCRFILE" ]]; then
+      echo "fake-cad: SCRFILE not found: $SCRFILE" >&2
+      exit 2
+    fi
+    RUNLSPFILE="$(sed -n 's/^(load "\(.*\)")/\1/p' "$SCRFILE" | head -n 1)"
+    if [[ -z "$RUNLSPFILE" || ! -f "$RUNLSPFILE" ]]; then
+      echo "fake-cad: could not resolve run-common.lsp from $SCRFILE" >&2
+      exit 2
+    fi
+    ;;
+  *)
+    echo "fake-cad: expected '/b <run-common.lsp>' or '/B <run.scr>'" >&2
+    exit 2
+    ;;
+esac
 SCENARIO="${AUTOLISP_FAKE_SCENARIO:-}"
 OUTFILE="${OUTFILE:?missing OUTFILE}"
 ERRFILE="${ERRFILE:?missing ERRFILE}"

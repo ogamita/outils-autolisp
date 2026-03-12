@@ -128,7 +128,11 @@ run_case() {
   fi
 
   if [[ "$USE_FAKE_CAD" -eq 1 ]]; then
-    cmd_env+=("AUTOLISP_FAKE_SCENARIO=$scenario")
+    cmd_env+=(
+      "AUTOLISP_FAKE_SCENARIO=$scenario"
+      "BRICSCAD_COM_MODE=off"
+      "AUTOCAD_COM_MODE=off"
+    )
   fi
 
   if env "${cmd_env[@]}" \
