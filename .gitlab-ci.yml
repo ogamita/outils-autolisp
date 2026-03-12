@@ -9,7 +9,7 @@ default:
 autolisp_script_tests:
   stage: test
   script:
-    - make test TEST_BACKEND=fake TEST_TIMEOUT=10
+    - make test-ci TEST_BACKEND=fake TEST_TIMEOUT=10
   rules:
     - changes:
         - .gitlab-ci.yml

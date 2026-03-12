@@ -1,4 +1,4 @@
-.PHONY: test
+.PHONY: test-ci
 
-test:
-	$(MAKE) -C autolisp-script test
+test-ci:
+	$(MAKE) -C autolisp-script test-ci

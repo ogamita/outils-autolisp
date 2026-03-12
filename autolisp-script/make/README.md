@@ -4,7 +4,7 @@ Scripts PowerShell de remplacement pour les cibles `make` sous Windows, quand `m
 
 ## Scripts disponibles
 
-- `test.ps1` : exécute la séquence complète
+- `test-ci.ps1` : exécute la séquence complète prévue pour la CI
 - `test-fake.ps1` : exécute les tests avec le faux backend CAD
 - `test-bricscad.ps1` : exécute les tests BricsCAD
 - `test-autocad.ps1` : exécute les tests AutoCAD

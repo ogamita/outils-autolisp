@@ -206,13 +206,13 @@ export BRICSCAD_EXE="C:/Program Files/Bricsys/BricsCAD V26 en_US/bricscad.exe"
 Depuis `autolisp-script`:
 
 ```bash
-make test
+make test-ci
 ```
 
 Sous Windows, si `make` n'est pas disponible, des scripts PowerShell équivalents sont fournis dans `make/`:
 
 ```powershell
-.\make\test.ps1
+.\make\test-ci.ps1
 .\make\test-fake.ps1
 .\make\test-bricscad.ps1
 .\make\test-autocad.ps1
@@ -282,7 +282,7 @@ En revanche, il teste très bien la logique interne du wrapper:
 Utilisation explicite:
 
 ```bash
-make test TEST_BACKEND=fake
+make test-ci TEST_BACKEND=fake
 ```
 
 En CI GitLab, c'est ce backend qui est utilisé aujourd'hui.

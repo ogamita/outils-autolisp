@@ -51,7 +51,7 @@ Documentation: [scripts/doc/scripts.md](/Users/pjb/works/sncf-reseau/src/outils-
 Depuis la racine:
 
 ```bash
-make test
+make test-ci
 ```
 
 Cette cible délègue actuellement à `autolisp-script`.
