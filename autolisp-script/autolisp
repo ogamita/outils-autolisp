@@ -217,6 +217,12 @@ to_windows_path() {
   local p="$1"
   if command -v cygpath >/dev/null 2>&1; then
     cygpath -w "$p"
+  elif [[ "$p" =~ ^/([a-zA-Z])/(.*)$ ]]; then
+    local drive rest
+    drive="${BASH_REMATCH[1]}"
+    rest="${BASH_REMATCH[2]}"
+    rest="${rest//\//\\}"
+    printf '%s:\\%s' "${drive^^}" "$rest"
   else
     printf '%s' "$p"
   fi
@@ -936,8 +942,16 @@ If doc Is Nothing Then
     AppendLine errFile, "ERROR COM bridge: unable to get or create ActiveDocument."
     Err.Clear
     rc = 5
-    WScript.Echo "ATTACHED=" & CInt(attached)
-    WScript.Echo "CREATED=" & CInt(created)
+    If attached Then
+      WScript.Echo "ATTACHED=1"
+    Else
+      WScript.Echo "ATTACHED=0"
+    End If
+    If created Then
+      WScript.Echo "CREATED=1"
+    Else
+      WScript.Echo "CREATED=0"
+    End If
     WScript.Quit rc
   End If
 End If
@@ -952,8 +966,16 @@ Else
   rc = 0
 End If
 On Error GoTo 0
-WScript.Echo "ATTACHED=" & CInt(attached)
-WScript.Echo "CREATED=" & CInt(created)
+If attached Then
+  WScript.Echo "ATTACHED=1"
+Else
+  WScript.Echo "ATTACHED=0"
+End If
+If created Then
+  WScript.Echo "CREATED=1"
+Else
+  WScript.Echo "CREATED=0"
+End If
 WScript.Quit rc
 EOFVBS
   printf '%s' "$vbs"
