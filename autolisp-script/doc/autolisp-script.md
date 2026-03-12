@@ -209,12 +209,40 @@ Depuis `autolisp-script`:
 make test
 ```
 
+Sous Windows, si `make` n'est pas disponible, des scripts PowerShell équivalents sont fournis dans `make/`:
+
+```powershell
+.\make\test.ps1
+.\make\test-fake.ps1
+.\make\test-bricscad.ps1
+.\make\test-autocad.ps1
+```
+
+Ces scripts chargent automatiquement `make/env.ps1` avant d'exécuter les tests.
+
 Variables utiles:
 
 - `CAD=--bricscad` ou `CAD=--autocad`
 - `TEST_TIMEOUT=<secondes>`
 - `TEST_BACKEND=fake` pour exécuter la suite contre le faux moteur de test
 - `TEST_RUN_ARGS=--verbose` pour afficher plus de détails en cas d'échec
+
+### `make/env.ps1`
+
+Le fichier `make/env.ps1` centralise les variables d'environnement utiles pour le debug sous PowerShell. Il suffit de décommenter ou modifier les lignes voulues, par exemple:
+
+- `AUTOLISP_KEEP_WORKDIR`
+- `AUTOLISP_VERBOSE`
+- `AUTOLISP_WAIT_SECS`
+- `BRICSCAD_EXE`
+- `AUTOCAD_EXE`
+- `AUTOCAD_ACCORECONSOLE`
+
+Exemple de workflow Windows:
+
+1. éditer `make/env.ps1`
+2. décommenter `AUTOLISP_KEEP_WORKDIR=1` et `AUTOLISP_VERBOSE=1`
+3. lancer `.\make\test-bricscad.ps1`
 
 La suite couvre actuellement:
 
