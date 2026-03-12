@@ -222,11 +222,24 @@ to_windows_path() {
   fi
 }
 
+to_runtime_lisp_path() {
+  local p="$1"
+  if [[ $IS_WINDOWS -eq 1 ]]; then
+    p="$(to_windows_path "$p")"
+  fi
+  to_lisp_path "$p"
+}
+
 escape_vbs_string() {
   local s="$1"
   s=${s//\"/\"\"}
   printf '%s' "$s"
 }
+
+LISP_OUTFILE="$(to_runtime_lisp_path "$OUTFILE")"
+LISP_ERRFILE="$(to_runtime_lisp_path "$ERRFILE")"
+LISP_STATUSFILE="$(to_runtime_lisp_path "$STATUSFILE")"
+LISP_LOGDIR="$(to_runtime_lisp_path "$LOGDIR")"
 
 find_log_file() {
   local f
@@ -398,7 +411,7 @@ for i in "${!ACTION_KINDS[@]}"; do
       exit 2
     fi
     abs_src="$(to_abs_path "$value")"
-    abs_src="$(to_lisp_path "$abs_src")"
+    abs_src="$(to_runtime_lisp_path "$abs_src")"
     abs_dir="$(dirname "$abs_src")"
     LOAD_PATHS+=("$abs_src")
     HAS_LOAD_ACTION=1
@@ -435,10 +448,10 @@ RUNLSPFILE="$WORKDIR/run-common.lsp"
     done
     printf '(setvar "SRCHPATH" (strcat "%s" _autolisp_old_srchpath))\n' "$srch_prefix"
   fi
-  printf '(setq *AUTOLISP_OUTFILE* "%s")\n' "$(escape_lisp_string "$OUTFILE")"
-  printf '(setq *AUTOLISP_ERRFILE* "%s")\n' "$(escape_lisp_string "$ERRFILE")"
-  printf '(setq *AUTOLISP_STATUSFILE* "%s")\n' "$(escape_lisp_string "$STATUSFILE")"
-  printf '(setq *AUTOLISP_LOGDIR* "%s")\n' "$(escape_lisp_string "$LOGDIR")"
+  printf '(setq *AUTOLISP_OUTFILE* "%s")\n' "$(escape_lisp_string "$LISP_OUTFILE")"
+  printf '(setq *AUTOLISP_ERRFILE* "%s")\n' "$(escape_lisp_string "$LISP_ERRFILE")"
+  printf '(setq *AUTOLISP_STATUSFILE* "%s")\n' "$(escape_lisp_string "$LISP_STATUSFILE")"
+  printf '(setq *AUTOLISP_LOGDIR* "%s")\n' "$(escape_lisp_string "$LISP_LOGDIR")"
   printf '(setq *AUTOLISP_LOGNAME* "%s")\n' "autolisp-session.log"
   printf '(setq *AUTOLISP_QUIT_ON_FINISH* %s)\n' "$QUIT_ON_FINISH"
   cat <<'EOLISP'
