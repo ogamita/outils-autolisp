@@ -1,4 +1,4 @@
-.PHONY: test-ci test test-bricscad bench-bricscad clean
+.PHONY: test-ci test test-bricscad bench-bricscad docs-pdf clean
 
 test-ci: test
 
@@ -22,9 +22,10 @@ bench-bricscad:
 		src/autolisp-hash-table.lsp \
 		tests/hash-table-tests.lsp \
 		tests/hash-table-benchmarks.lsp \
-		-x '(setq ah-run-benchmarks-flag nil)' \
-		-x '(setq ah-run-benchmarks-flag T)' \
-		tests/run-tests.lsp
+		tests/run-benchmarks.lsp
+
+docs-pdf:
+	$(MAKE) -C doc pdf
 
 clean:
 	@echo "autolisp-hash-table: nothing to clean yet"

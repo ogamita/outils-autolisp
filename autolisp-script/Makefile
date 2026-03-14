@@ -1,4 +1,4 @@
-.PHONY: test-ci test-fakecad test-bricscad test-autocad clean
+.PHONY: test-ci test-fakecad test-bricscad test-autocad docs-pdf clean
 
 CAD ?= --bricscad
 TEST_BACKEND ?= real
@@ -24,6 +24,9 @@ test-bricscad:
 
 test-autocad:
 	./tests/run.sh $(TEST_BACKEND_FLAG) $(TEST_RUN_ARGS) --timeout $(TEST_TIMEOUT) --autocad
+
+docs-pdf:
+	pandoc autolisp-examples.org -o autolisp-examples.pdf
 
 
 clean:

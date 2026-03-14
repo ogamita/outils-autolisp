@@ -195,6 +195,40 @@ Le hash utilisé dépend du test de la table.
 - pas de gestion documentée des structures circulaires dans =ah-sxhash= ;
 - stockage interne encore fondé sur =autolisp-vector=.
 
+* Benchmarks
+
+Le dépôt contient un banc d'essai dans
+=tests/hash-table-benchmarks.lsp=.
+
+État observé au 14 mars 2026 :
+
+- =make test-bricscad= passe ;
+- =make bench-bricscad= passe en utilisant le runner dédié
+  =tests/run-benchmarks.lsp= ;
+- sur macOS + BricsCAD, il reste préférable d'utiliser l'espace de travail
+  =2D Drafting= et non =2D Drafting (Modern)=.
+
+Mesures relevées le 14 mars 2026 :
+
+| opération    | taille | itérations | ms | note     |
+|--------------+--------+------------+----+----------|
+| ah-puthash   | 11     | 11         | 2  | count=11 |
+| ah-gethash   | 11     | 11         | 1  | sum=55   |
+| ah-remhash   | 11     | 11         | 1  | count=0  |
+| ah-puthash   | 23     | 23         | 4  | count=23 |
+| ah-gethash   | 23     | 23         | 1  | sum=253  |
+| ah-remhash   | 23     | 23         | 2  | count=0  |
+| ah-puthash   | 47     | 47         | 10 | count=47 |
+| ah-gethash   | 47     | 47         | 5  | sum=1081 |
+| ah-remhash   | 47     | 47         | 6  | count=0  |
+| ah-puthash   | 97     | 97         | 65 | count=97 |
+| ah-gethash   | 97     | 97         | 46 | sum=4656 |
+| ah-remhash   | 97     | 97         | 47 | count=0  |
+
+Ces mesures sont des mesures de développement locales. Elles sont utiles pour
+suivre les régressions et comparer les opérations entre elles, mais elles ne
+constituent pas encore un engagement de performance normatif.
+
 * Exemple complet
 
 #+begin_src lisp

@@ -1,4 +1,4 @@
-.PHONY: test-ci test test-bricscad bench-bricscad clean
+.PHONY: test-ci test test-bricscad bench-bricscad docs-pdf clean
 
 test-ci: test
 
@@ -23,6 +23,9 @@ bench-bricscad:
 		-x '(setq av-run-benchmarks-flag nil)' \
 		-x '(setq av-run-benchmarks-flag T)' \
 		tests/run-tests.lsp
+
+docs-pdf:
+	$(MAKE) -C doc pdf
 
 clean:
 	@echo "autolisp-vector: nothing to clean yet"
