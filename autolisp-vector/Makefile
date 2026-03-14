@@ -25,7 +25,7 @@ bench-bricscad:
 		tests/run-tests.lsp
 
 docs-pdf:
-	$(MAKE) -C doc pdf
+	$(MAKE) -C docs pdf
 
 clean:
 	@echo "autolisp-vector: nothing to clean yet"

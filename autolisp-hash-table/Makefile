@@ -25,7 +25,7 @@ bench-bricscad:
 		tests/run-benchmarks.lsp
 
 docs-pdf:
-	$(MAKE) -C doc pdf
+	$(MAKE) -C docs pdf
 
 clean:
 	@echo "autolisp-hash-table: nothing to clean yet"
