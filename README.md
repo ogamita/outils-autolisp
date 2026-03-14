@@ -32,6 +32,13 @@ Statut: phase de conception / spécification, pas encore implémenté dans ce d�
 
 Documentation: [autolisp-formatter/docs/specifications.org](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-formatter/docs/specifications.org)
 
+### `autolisp-vector`
+Sous-projet de conception puis d'implémentation d'un vecteur AutoLISP indexé par arbre, pensé comme brique de base pour des structures futures comme une table de hashage.
+
+Statut: implémentation initiale en place, avec tests BricsCAD et benchmarks optionnels activables par environnement.
+
+Documentation: [autolisp-vector/doc/specification.org](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-vector/doc/specification.org)
+
 ### `autolisp-defstruct`
 Prototype autour d'une implémentation `defstruct` pour AutoLISP. Le contenu actuel ressemble à des notes de conception et d'expérimentation plus qu'à une bibliothèque stabilisée.
 
