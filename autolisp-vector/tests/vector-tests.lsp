@@ -27,6 +27,35 @@
       (is-equal 3 (av-aref av-vector 2)))))
 
 (deftest
+  "metadata are readable from internal symbol storage"
+  (function
+    (lambda (/ av-vector av-same-depth av-root av-path-table)
+      (setq av-vector (av-make-array 4 nil '(1 2 3 4) 0))
+      (setq av-same-depth (av-make-array 3 nil '(7 8 9) nil))
+      (setq av-root (av--getprop av-vector 'av-root))
+      (setq av-path-table (av--getprop av-vector 'av-path-table))
+      (is-equal 'av-vector (av--getprop av-vector 'av-kind))
+      (is-equal 4 (av--getprop av-vector 'av-length))
+      (is-equal 2 (av--getprop av-vector 'av-height))
+      (is-equal 0 (av--getprop av-vector 'av-fill-pointer))
+      (is av-root)
+      (is av-path-table)
+      (is-equal 8 (strlen av-path-table))
+      (is-equal av-path-table (av--getprop av-same-depth 'av-path-table))
+      (is-equal 1 (av-aref av-vector 0))
+      (is-equal 4 (av-aref av-vector 3)))))
+
+(deftest
+  "internal metadata helpers ignore malformed symbol values"
+  (function
+    (lambda (/ av-bad-symbol)
+      (setq av-bad-symbol (read "av-bad-metadata-symbol"))
+      (set av-bad-symbol (cons 0 0))
+      (is-equal nil (av--getprop av-bad-symbol 'av-kind))
+      (is-equal 7 (av--putprop av-bad-symbol 7 'av-length))
+      (is-equal 7 (av--getprop av-bad-symbol 'av-length)))))
+
+(deftest
   "set-aref mutates one slot"
   (function
     (lambda (/ av-vector)

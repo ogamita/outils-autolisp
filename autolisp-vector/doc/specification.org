@@ -497,12 +497,24 @@ Les mesures sont produites par :
 
 Le run de référence daté du *14 mars 2026* est valide fonctionnellement :
 
-- 12 tests unitaires =OK= ;
+- 14 tests unitaires =OK= ;
 - 0 =FAIL= ;
 - 0 =ERROR= ;
 - benchmarks exécutés jusqu'à =BENCH-END=.
 
 ** Résultats synthétiques
+
+| Taille | av-length | length | av-aref | nth | av-set-aref | list-set-at | av-vector-push-pop | cons-cdr | av-subseq | list-subseq | av-replace-mid | list-replace-mid |
+|--------+-----------+--------+---------+-----+-------------+-------------+--------------------+----------+-----------+-------------+----------------+------------------|
+|      5 |         4 |      1 |      13 |   0 |          15 |           2 |                  1 |        0 |         6 |           0 |             29 |                1 |
+|     10 |         4 |      0 |      13 |   0 |          16 |           2 |                  1 |        0 |        11 |           0 |             34 |                0 |
+|     50 |         3 |      0 |      15 |   0 |          19 |           7 |                  6 |        0 |        60 |           1 |            178 |                0 |
+|    100 |         3 |      0 |      16 |   0 |          24 |          10 |                 14 |        0 |       134 |           1 |            353 |                1 |
+|    500 |         4 |      0 |      21 |   0 |          22 |          49 |                 74 |        0 |       749 |           3 |           2186 |                4 |
+|   1000 |         4 |      1 |      19 |   1 |          23 |          91 |                143 |        0 |       789 |           3 |           2293 |                4 |
+|   5000 |         4 |      6 |      29 |   3 |          28 |         510 |                142 |        0 |      1040 |           3 |           2991 |                4 |
+
+Temps exprimés en millisecondes.
 
 *** Longueur
 
@@ -514,24 +526,25 @@ La mesure confirme le comportement attendu :
 
 Exemples du run de référence :
 
-- taille 1000 : =av-length= 2 ms, =length= 1 ms ;
-- taille 5000 : =av-length= 2 ms, =length= 6 ms.
+- taille 1000 : =av-length= 4 ms, =length= 1 ms ;
+- taille 5000 : =av-length= 4 ms, =length= 6 ms.
 
 Conclusion : l'objectif =O(1)= pour la longueur est atteint et visible.
 
 *** Lecture d'un élément
 
-=av-aref= respecte toujours l'interface visée mais reste trop coûteux en
-pratique face à =nth= dans l'implantation actuelle.
+=av-aref= reste plus coûteux que =nth=, mais la nouvelle représentation interne
+réduit très fortement la constante cachée.
 
 Exemples du run de référence :
 
-- taille 100 : =av-aref= 22 ms, =nth= 1 ms ;
-- taille 1000 : =av-aref= 94 ms, =nth= 1 ms ;
-- taille 5000 : =av-aref= 184 ms, =nth= 3 ms.
+- taille 100 : =av-aref= 16 ms, =nth= 0 ms ;
+- taille 1000 : =av-aref= 19 ms, =nth= 1 ms ;
+- taille 5000 : =av-aref= 29 ms, =nth= 3 ms.
 
-Conclusion : la propriété asymptotique seule ne suffit pas ici ; les constantes
-cachées de la représentation actuelle dominent encore le coût total.
+Conclusion : =av-aref= n'est pas encore compétitif face à la lecture native sur
+liste, mais il a quitté la zone de coût prohibitive observée sur la baseline
+précédente.
 
 *** Écriture d'un élément
 
@@ -540,9 +553,9 @@ quand la taille augmente.
 
 Exemples du run de référence :
 
-- taille 100 : =av-set-aref= 16 ms, =list-set-at= 19 ms ;
-- taille 500 : =av-set-aref= 36 ms, =list-set-at= 93 ms ;
-- taille 5000 : =av-set-aref= 186 ms, =list-set-at= 4459 ms.
+- taille 100 : =av-set-aref= 24 ms, =list-set-at= 10 ms ;
+- taille 500 : =av-set-aref= 22 ms, =list-set-at= 49 ms ;
+- taille 5000 : =av-set-aref= 28 ms, =list-set-at= 510 ms.
 
 Conclusion : le chemin d'écriture commence à justifier la structure arborescente.
 
@@ -553,22 +566,22 @@ Conclusion : le chemin d'écriture commence à justifier la structure arborescen
 
 Exemples du run de référence :
 
-- taille 1000 : =av-vector-push-pop= 207 ms, =cons-cdr= 0 ms ;
-- taille 5000 : =av-vector-push-pop= 178 ms, =cons-cdr= 0 ms.
+- taille 1000 : =av-vector-push-pop= 143 ms, =cons-cdr= 0 ms ;
+- taille 5000 : =av-vector-push-pop= 142 ms, =cons-cdr= 0 ms.
 
 Conclusion : la sémantique est stable, mais le coût reste très supérieur à la
 pile native sur listes, ce qui est attendu pour cette v1.
 
 *** Sous-séquences
 
-L'optimisation par curseur séquentiel a nettement amélioré =av-subseq=, mais
-pas au point de battre l'approche liste.
+=av-subseq= reste plus lent que =list-subseq=, mais le changement de
+représentation a encore réduit le coût des accès répétés.
 
 Exemples du run de référence :
 
-- taille 500 : =av-subseq= 1047 ms, =list-subseq= 32 ms ;
-- taille 1000 : =av-subseq= 2366 ms, =list-subseq= 3 ms ;
-- taille 5000 : =av-subseq= 2868 ms, =list-subseq= 169 ms.
+- taille 500 : =av-subseq= 749 ms, =list-subseq= 3 ms ;
+- taille 1000 : =av-subseq= 789 ms, =list-subseq= 3 ms ;
+- taille 5000 : =av-subseq= 1040 ms, =list-subseq= 3 ms.
 
 Conclusion : l'amélioration est réelle, mais la constante d'accès par case reste
 trop élevée pour rendre l'opération compétitive.
@@ -580,9 +593,9 @@ loin l'opération la plus coûteuse sur la représentation courante.
 
 Exemples du run de référence :
 
-- taille 500 : =av-replace-mid= 4446 ms, =list-replace-mid= 71 ms ;
-- taille 1000 : =av-replace-mid= 10008 ms, =list-replace-mid= 146 ms ;
-- taille 5000 : =av-replace-mid= 13640 ms, =list-replace-mid= 4 ms.
+- taille 500 : =av-replace-mid= 2186 ms, =list-replace-mid= 4 ms ;
+- taille 1000 : =av-replace-mid= 2293 ms, =list-replace-mid= 4 ms ;
+- taille 5000 : =av-replace-mid= 2991 ms, =list-replace-mid= 4 ms.
 
 Conclusion : la copie et les accès répétés au chemin critique doivent être
 revus avant d'espérer une compétitivité pratique.
@@ -594,24 +607,26 @@ La baseline du 14 mars 2026 établit les points suivants :
 - la sémantique publique de v1 est correcte ;
 - le protocole de benchmark est exploitable et reproductible ;
 - =av-length= atteint bien son objectif ;
-- =av-set-aref= devient intéressant sur grandes tailles ;
-- =av-subseq= et =av-replace= ont progressé mais restent trop coûteux ;
-- =av-aref= est encore trop lent pour valider l'objectif pratique du projet.
+- =av-set-aref= devient meilleur que =list-set-at= dès les tailles moyennes ;
+- =av-subseq= et =av-replace= ont beaucoup progressé mais restent trop coûteux ;
+- =av-aref= reste derrière =nth= mais dans un ordre de grandeur bien plus
+  raisonnable.
 
 ** Interprétation technique
 
 L'explication la plus probable du coût résiduel est la combinaison de :
 
-- stockage des métadonnées dans la valeur d'un symbole ;
-- accès indirects via =eval= et =set= dans le chemin critique ;
-- structure interne fondée sur symboles + alists ;
-- multiplication des helpers et allocations intermédiaires.
+- profondeur logarithmique de l'arbre interne ;
+- reconstruction persistante du chemin sur chaque écriture ;
+- parcours répétés case par case pour =av-subseq= et =av-replace= ;
+- comparaison avec les primitives de liste natives de l'interpréteur.
 
 Cette baseline doit donc être considérée comme :
 
 - une *baseline fonctionnelle valide* ;
-- une *baseline asymptotique partiellement convaincante* ;
-- mais *pas encore* une baseline de performance satisfaisante pour la lecture.
+- une *baseline asymptotique convaincante* pour =length= et =set-aref= ;
+- mais *pas encore* une baseline de performance satisfaisante pour =aref=,
+  =subseq= et =replace=.
 
 ** Décision de gel
 

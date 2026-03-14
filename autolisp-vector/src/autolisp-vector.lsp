@@ -26,25 +26,32 @@
 ;;;   av-vector-string
 ;;;   av-print-vector
 
-(defun av--getprop (av-symbol av-prop / av-data)
-  (cdr (assoc av-prop
-              (cond
-                ((vl-catch-all-error-p
-                   (setq av-data
-                         (vl-catch-all-apply 'eval (list av-symbol))))
-                 nil)
-                (t
-                 av-data)))))
+(defun av--property-alist-p (av-data / av-rest av-valid)
+  (setq av-rest av-data)
+  (setq av-valid T)
+  (while (and av-valid
+              av-rest
+              (= (type av-rest) 'LIST))
+    (if (/= (type (car av-rest)) 'LIST)
+      (setq av-valid nil)
+      (setq av-rest (cdr av-rest))))
+  (and av-valid (null av-rest)))
 
-(defun av--putprop (av-symbol av-value av-prop / av-data av-current av-cell)
+(defun av--symbol-data (av-symbol / av-data)
   (setq av-data
-        (cond
-          ((vl-catch-all-error-p
-             (setq av-current
-                   (vl-catch-all-apply 'eval (list av-symbol))))
-           nil)
-          (t
-           av-current)))
+        (if (boundp av-symbol)
+          (vl-symbol-value av-symbol)
+          nil))
+  (if (av--property-alist-p av-data)
+    av-data
+    nil))
+
+(defun av--getprop (av-symbol av-prop / av-data)
+  (setq av-data (av--symbol-data av-symbol))
+  (cdr (assoc av-prop av-data)))
+
+(defun av--putprop (av-symbol av-value av-prop / av-data av-cell)
+  (setq av-data (av--symbol-data av-symbol))
   (setq av-cell (assoc av-prop av-data))
   (if av-cell
     (set av-symbol
@@ -93,180 +100,126 @@
   (setq av-name (strcat av-prefix (itoa (av--next-id))))
   (read av-name))
 
-(defun av--make-leaf (av-value / av-leaf)
-  (setq av-leaf (av--make-symbol "av-leaf-"))
-  (av--putprop av-leaf 'av-leaf 'av-kind)
-  (av--putprop av-leaf av-value 'av-value)
-  (av--putprop av-leaf 1 'av-count)
-  (av--putprop av-leaf 0 'av-height)
-  av-leaf)
+(defun av--power-of-two (av-depth / av-value)
+  (setq av-value 1)
+  (while (> av-depth 0)
+    (setq av-value (* 2 av-value))
+    (setq av-depth (1- av-depth)))
+  av-value)
 
-(defun av--make-node (av-left av-right av-left-count / av-node av-height)
-  (setq av-node (av--make-symbol "av-node-"))
-  (setq av-height
-        (1+ (max (av--getprop av-left 'av-height)
-                 (av--getprop av-right 'av-height))))
-  (av--putprop av-node 'av-node 'av-kind)
-  (av--putprop av-node av-left 'av-left)
-  (av--putprop av-node av-right 'av-right)
-  (av--putprop av-node av-left-count 'av-split)
-  (av--putprop av-node
-               (+ av-left-count (av--getprop av-right 'av-count))
-               'av-count)
-  (av--putprop av-node av-height 'av-height)
+(defun av--path-entry-insert (av-entry av-entries / av-depth av-output av-inserted)
+  (setq av-depth (car av-entry))
+  (setq av-output nil)
+  (setq av-inserted nil)
+  (while av-entries
+    (if (and (not av-inserted)
+             (< av-depth (caar av-entries)))
+      (progn
+        (setq av-output (cons av-entry av-output))
+        (setq av-inserted T)))
+    (setq av-output (cons (car av-entries) av-output))
+    (setq av-entries (cdr av-entries)))
+  (if (not av-inserted)
+    (setq av-output (cons av-entry av-output)))
+  (reverse av-output))
+
+(defun av--build-path-table (av-depth / av-index av-limit av-step av-table av-char)
+  (setq av-index 0)
+  (setq av-limit (av--power-of-two av-depth))
+  (setq av-table "")
+  (while (< av-index av-limit)
+    (setq av-step av-depth)
+    (while (> av-step 0)
+      (setq av-char
+            (if (= 0 (rem (fix (/ av-index (av--power-of-two (1- av-step)))) 2))
+              "a"
+              "d"))
+      (setq av-table (strcat av-table av-char))
+      (setq av-step (1- av-step)))
+    (setq av-index (1+ av-index)))
+  av-table)
+
+(defun av--path-table-for-depth (av-depth / av-tables av-entry av-table)
+  (setq av-tables (av--getprop 'av-state 'av-path-tables))
+  (setq av-entry (assoc av-depth av-tables))
+  (if av-entry
+    (cdr av-entry)
+    (progn
+      (setq av-table (av--build-path-table av-depth))
+      (av--putprop 'av-state
+                   (av--path-entry-insert (cons av-depth av-table) av-tables)
+                   'av-path-tables)
+      av-table)))
+
+(defun av--depth-for-length (av-length / av-depth av-capacity)
+  (setq av-depth 0)
+  (setq av-capacity 1)
+  (while (< av-capacity av-length)
+    (setq av-capacity (* 2 av-capacity))
+    (setq av-depth (1+ av-depth)))
+  av-depth)
+
+(defun av--build-tree (av-depth av-value)
+  (if (<= av-depth 0)
+    av-value
+    (cons (av--build-tree (1- av-depth) av-value)
+          (av--build-tree (1- av-depth) av-value))))
+
+(defun av--tree-ref (av-node av-index av-depth av-path-table / av-step av-offset)
+  (setq av-step 0)
+  (setq av-offset (* av-index av-depth))
+  (while (< av-step av-depth)
+    (if (= "a" (substr av-path-table (+ av-offset av-step 1) 1))
+      (setq av-node (car av-node))
+      (setq av-node (cdr av-node)))
+    (setq av-step (1+ av-step)))
   av-node)
 
-(defun av--build-tree (av-count av-initial-value / av-left-count av-right-count)
-  (cond
-    ((<= av-count 0)
-     nil)
-    ((= av-count 1)
-     (av--make-leaf av-initial-value))
-    (t
-     (setq av-left-count (fix (/ (+ av-count 1) 2)))
-     (setq av-right-count (- av-count av-left-count))
-     (av--make-node
-       (av--build-tree av-left-count av-initial-value)
-       (av--build-tree av-right-count av-initial-value)
-       av-left-count))))
+(defun av--tree-set (av-node av-index av-depth av-path-table av-value / av-offset)
+  (setq av-offset (* av-index av-depth))
+  (av--tree-set-at-path av-node av-path-table av-offset 0 av-depth av-value))
 
-(defun av--build-tree-from-list (vv-count vv-values / vv-left-count vv-right-count vv-left-result vv-right-result)
-  (cond
-    ((<= vv-count 0)
-     (cons nil vv-values))
-    ((= vv-count 1)
-     (cons (av--make-leaf (car vv-values))
-           (cdr vv-values)))
-    (t
-     (setq vv-left-count (fix (/ (+ vv-count 1) 2)))
-     (setq vv-right-count (- vv-count vv-left-count))
-     (setq vv-left-result
-           (av--build-tree-from-list vv-left-count vv-values))
-     (setq vv-right-result
-           (av--build-tree-from-list vv-right-count (cdr vv-left-result)))
-     (cons (av--make-node (car vv-left-result)
-                          (car vv-right-result)
-                          vv-left-count)
-           (cdr vv-right-result)))))
+(defun av--tree-set-at-path (av-node av-path-table av-offset av-step av-depth av-value)
+  (if (<= av-depth 0)
+    av-value
+    (progn
+      (if (= "a" (substr av-path-table (+ av-offset av-step 1) 1))
+        (cons (av--tree-set-at-path (car av-node)
+                                    av-path-table
+                                    av-offset
+                                    (1+ av-step)
+                                    (1- av-depth)
+                                    av-value)
+              (cdr av-node))
+        (cons (car av-node)
+              (av--tree-set-at-path (cdr av-node)
+                                    av-path-table
+                                    av-offset
+                                    (1+ av-step)
+                                    (1- av-depth)
+                                    av-value))))))
 
-(defun av--make-array-from-list (vv-values vv-fill-ptr / vv-size vv-vec vv-root vv-height vv-result)
+(defun av--make-array-from-list (vv-values vv-fill-ptr / vv-size vv-vec vv-root vv-depth vv-index vv-path-table)
   (setq vv-size (length vv-values))
   (setq vv-vec (av--make-vector-symbol))
-  (setq vv-result (av--build-tree-from-list vv-size vv-values))
-  (setq vv-root (car vv-result))
-  (setq vv-height
-        (if vv-root
-          (av--getprop vv-root 'av-height)
-          0))
+  (setq vv-depth (av--depth-for-length vv-size))
+  (setq vv-path-table (av--path-table-for-depth vv-depth))
+  (setq vv-root
+        (if (> vv-size 0)
+          (av--build-tree vv-depth nil)
+          nil))
+  (setq vv-index 0)
+  (foreach vv-value vv-values
+    (setq vv-root (av--tree-set vv-root vv-index vv-depth vv-path-table vv-value))
+    (setq vv-index (1+ vv-index)))
   (av--putprop vv-vec vv-size 'av-length)
   (av--putprop vv-vec 2 'av-branching-factor)
-  (av--putprop vv-vec vv-height 'av-height)
+  (av--putprop vv-vec vv-depth 'av-height)
+  (av--putprop vv-vec vv-path-table 'av-path-table)
   (av--putprop vv-vec vv-root 'av-root)
   (if (not (null vv-fill-ptr))
     (av--putprop vv-vec vv-fill-ptr 'av-fill-pointer))
   vv-vec)
-
-(defun av--tree-ref (av-node av-index / av-split)
-  (cond
-    ((null av-node)
-     (av--error "internal error: missing tree node"))
-    ((eq (av--getprop av-node 'av-kind) 'av-leaf)
-     (av--getprop av-node 'av-value))
-    (t
-     (setq av-split (av--getprop av-node 'av-split))
-     (if (< av-index av-split)
-       (av--tree-ref (av--getprop av-node 'av-left) av-index)
-       (av--tree-ref (av--getprop av-node 'av-right) (- av-index av-split))))))
-
-(defun av--tree-set (av-node av-index av-value / av-split)
-  (cond
-    ((null av-node)
-     (av--error "internal error: missing tree node"))
-    ((eq (av--getprop av-node 'av-kind) 'av-leaf)
-     (av--putprop av-node av-value 'av-value)
-     av-value)
-    (t
-     (setq av-split (av--getprop av-node 'av-split))
-     (if (< av-index av-split)
-       (av--tree-set (av--getprop av-node 'av-left) av-index av-value)
-       (av--tree-set (av--getprop av-node 'av-right) (- av-index av-split) av-value)))))
-
-(defun av--cursor-descend-leftmost (vv-node vv-path)
-  (while (and vv-node
-              (not (eq (av--getprop vv-node 'av-kind) 'av-leaf)))
-    (setq vv-path (cons (list vv-node 'left) vv-path))
-    (setq vv-node (av--getprop vv-node 'av-left)))
-  (list vv-node vv-path))
-
-(defun av--cursor-path-to-index (vv-node vv-index vv-path / vv-split)
-  (while (and vv-node
-              (not (eq (av--getprop vv-node 'av-kind) 'av-leaf)))
-    (setq vv-split (av--getprop vv-node 'av-split))
-    (if (< vv-index vv-split)
-      (progn
-        (setq vv-path (cons (list vv-node 'left) vv-path))
-        (setq vv-node (av--getprop vv-node 'av-left)))
-      (progn
-        (setq vv-path (cons (list vv-node 'right) vv-path))
-        (setq vv-index (- vv-index vv-split))
-        (setq vv-node (av--getprop vv-node 'av-right)))))
-  (list vv-node vv-path))
-
-(defun av--cursor-make (vv-vec vv-start / vv-len vv-desc)
-  (av--require-vector vv-vec)
-  (setq vv-len (av-length vv-vec))
-  (if (or (< vv-start 0) (> vv-start vv-len))
-    (av--error "cursor start out of range"))
-  (if (= vv-start vv-len)
-    (list nil nil 0)
-    (progn
-      (setq vv-desc
-            (av--cursor-path-to-index (av--getprop vv-vec 'av-root) vv-start nil))
-      (list (car vv-desc)
-            (cadr vv-desc)
-            (- vv-len vv-start)))))
-
-(defun av--cursor-empty-p (vv-cursor)
-  (or (null vv-cursor)
-      (<= (caddr vv-cursor) 0)
-      (null (car vv-cursor))))
-
-(defun av--cursor-value (vv-cursor)
-  (if (av--cursor-empty-p vv-cursor)
-    (av--error "cursor exhausted"))
-  (av--getprop (car vv-cursor) 'av-value))
-
-(defun av--cursor-set-value (vv-cursor vv-value)
-  (if (av--cursor-empty-p vv-cursor)
-    (av--error "cursor exhausted"))
-  (av--putprop (car vv-cursor) vv-value 'av-value)
-  vv-value)
-
-(defun av--cursor-advance (vv-cursor / vv-node vv-path vv-rem vv-frame vv-parent vv-desc)
-  (if (av--cursor-empty-p vv-cursor)
-    vv-cursor
-    (progn
-      (setq vv-node (car vv-cursor))
-      (setq vv-path (cadr vv-cursor))
-      (setq vv-rem (1- (caddr vv-cursor)))
-      (if (<= vv-rem 0)
-        (list nil nil 0)
-        (progn
-          (while (and vv-path
-                      (eq (cadr (car vv-path)) 'right))
-            (setq vv-path (cdr vv-path)))
-          (if (null vv-path)
-            (list nil nil 0)
-            (progn
-              (setq vv-frame (car vv-path))
-              (setq vv-parent (car vv-frame))
-              (setq vv-desc
-                    (av--cursor-descend-leftmost
-                      (av--getprop vv-parent 'av-right)
-                      (cons (list vv-parent 'right) (cdr vv-path))))
-              (list (car vv-desc)
-                    (cadr vv-desc)
-                    vv-rem))))))))
 
 (defun av--list-nth (av-list av-index / av-rest)
   (setq av-rest av-list)
@@ -357,7 +310,7 @@
   (av--getprop av-vec 'av-fill-pointer))
 
 (defun av--fill-pointer-present-p (vv-vec / vv-data)
-  (setq vv-data (eval vv-vec))
+  (setq vv-data (av--symbol-data vv-vec))
   (not (null (assoc 'av-fill-pointer vv-data))))
 
 (defun av-set-fill-pointer (av-vec av-fill-ptr / av-vec-length)
@@ -375,7 +328,7 @@
   av-vector)
 
 (defun av-make-array (av-size av-initial-element av-initial-contents av-fill-ptr
-                       / av-vec av-root av-height av-initial-length)
+                       / av-vec av-root av-height av-initial-length av-path-table)
   (av--ensure-nonnegative-integer av-size "length")
   (if (and av-initial-element av-initial-contents)
     (av--error "initial-element and initial-contents are mutually exclusive"))
@@ -397,14 +350,16 @@
       av-vec)
     (progn
   (setq av-vec (av--make-vector-symbol))
-  (setq av-root (av--build-tree av-size av-initial-element))
-  (setq av-height
-        (if av-root
-          (av--getprop av-root 'av-height)
-          0))
+  (setq av-height (av--depth-for-length av-size))
+  (setq av-path-table (av--path-table-for-depth av-height))
+  (setq av-root
+        (if (> av-size 0)
+          (av--build-tree av-height av-initial-element)
+          nil))
   (av--putprop av-vec av-size 'av-length)
   (av--putprop av-vec 2 'av-branching-factor)
   (av--putprop av-vec av-height 'av-height)
+  (av--putprop av-vec av-path-table 'av-path-table)
   (av--putprop av-vec av-root 'av-root)
   (if (not (null av-fill-ptr))
     (av--putprop av-vec av-fill-ptr 'av-fill-pointer))
@@ -429,18 +384,27 @@
 
 (defun av-aref (av-vec av-index)
   (av--check-index av-vec av-index)
-  (av--tree-ref (av--getprop av-vec 'av-root) av-index))
+  (av--tree-ref (av--getprop av-vec 'av-root)
+                av-index
+                (av--getprop av-vec 'av-height)
+                (av--getprop av-vec 'av-path-table)))
 
 (defun av-svref (av-vec av-index)
   (av-aref av-vec av-index))
 
 (defun av-set-aref (av-vec av-index av-value)
   (av--check-index av-vec av-index)
-  (av--tree-set (av--getprop av-vec 'av-root) av-index av-value)
+  (av--putprop av-vec
+               (av--tree-set (av--getprop av-vec 'av-root)
+                             av-index
+                             (av--getprop av-vec 'av-height)
+                             (av--getprop av-vec 'av-path-table)
+                             av-value)
+               'av-root)
   av-value)
 
 (defun av-replace (av-destination av-source av-start1 av-end1 av-start2 av-end2
-                    / vv-destination-length vv-source-length vv-count vv-dst-cursor vv-src-cursor vv-src-list)
+                    / vv-destination-length vv-source-length vv-count vv-dst-index vv-src-index vv-src-list)
   (av--require-vector av-destination)
   (setq vv-destination-length (av-length av-destination))
   (setq vv-source-length (av--sequence-length av-source))
@@ -452,40 +416,38 @@
   (av--check-range av-start2 av-end2 vv-source-length "replace source")
   (setq vv-count (min (- av-end1 av-start1)
                       (- av-end2 av-start2)))
-  (setq vv-dst-cursor (av--cursor-make av-destination av-start1))
+  (setq vv-dst-index av-start1)
   (cond
     ((av-vector-p av-source)
-     (setq vv-src-cursor (av--cursor-make av-source av-start2))
+     (setq vv-src-index av-start2)
      (while (> vv-count 0)
-       (av--cursor-set-value vv-dst-cursor (av--cursor-value vv-src-cursor))
-       (setq vv-dst-cursor (av--cursor-advance vv-dst-cursor))
-       (setq vv-src-cursor (av--cursor-advance vv-src-cursor))
+       (av-set-aref av-destination vv-dst-index (av-aref av-source vv-src-index))
+       (setq vv-dst-index (1+ vv-dst-index))
+       (setq vv-src-index (1+ vv-src-index))
        (setq vv-count (1- vv-count))))
     ((listp av-source)
      (setq vv-src-list (av--list-drop av-source av-start2))
      (while (> vv-count 0)
-       (av--cursor-set-value vv-dst-cursor (car vv-src-list))
-       (setq vv-dst-cursor (av--cursor-advance vv-dst-cursor))
+       (av-set-aref av-destination vv-dst-index (car vv-src-list))
+       (setq vv-dst-index (1+ vv-dst-index))
        (setq vv-src-list (cdr vv-src-list))
        (setq vv-count (1- vv-count))))
     (t
      (av--error "unsupported replace source")))
   av-destination)
 
-(defun av-subseq (av-vec av-start av-end / av-vec-length vv-cursor vv-values vv-count)
+(defun av-subseq (av-vec av-start av-end / av-vec-length vv-values vv-index)
   (av--require-vector av-vec)
   (setq av-vec-length (av-length av-vec))
   (setq av-start (if av-start av-start 0))
   (setq av-end (av--normalize-end av-end av-vec-length))
   (av--check-range av-start av-end av-vec-length "subseq")
-  (setq vv-cursor (av--cursor-make av-vec av-start))
   (setq vv-values nil)
-  (setq vv-count (- av-end av-start))
-  (while (> vv-count 0)
-    (setq vv-values (cons (av--cursor-value vv-cursor) vv-values))
-    (setq vv-cursor (av--cursor-advance vv-cursor))
-    (setq vv-count (1- vv-count)))
-  (av--make-array-from-list (reverse vv-values) nil))
+  (setq vv-index av-end)
+  (while (> vv-index av-start)
+    (setq vv-index (1- vv-index))
+    (setq vv-values (cons (av-aref av-vec vv-index) vv-values)))
+  (av--make-array-from-list vv-values nil))
 
 (defun av-copy-vector (av-vec / vv-copy)
   (av--require-vector av-vec)
