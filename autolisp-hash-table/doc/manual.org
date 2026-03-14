@@ -1,0 +1,220 @@
+#+TITLE: Manuel utilisateur de autolisp-hash-table
+#+AUTHOR: OpenAI
+#+LANGUAGE: fr
+#+OPTIONS: toc:2 num:t
+
+* Objet
+
+=autolisp-hash-table= fournit une API de tables de hachage inspirée de Common
+Lisp, adaptée à AutoLISP.
+
+La v1 propose :
+
+- création de tables ;
+- insertion et lecture par clé ;
+- suppression ;
+- vidage ;
+- itération ;
+- fonction de hachage =ah-sxhash=.
+
+* Chargement
+
+Le module dépend actuellement de =autolisp-vector= pour son stockage interne.
+
+Exemple de chargement :
+
+#+begin_src lisp
+(load "../autolisp-vector/src/autolisp-vector.lsp")
+(load "src/autolisp-hash-table.lsp")
+#+end_src
+
+* API publique
+
+** Création
+
+*** =(ah-make-hash-table [test [size [rehash-size [rehash-threshold]]]])=
+
+Crée une table de hachage.
+
+Arguments :
+
+- =test= :: symbole, actuellement =eq= ou =equal= ;
+- =size= :: capacité cible initiale ;
+- =rehash-size= :: multiplicateur de croissance ;
+- =rehash-threshold= :: seuil de charge.
+
+Exemple :
+
+#+begin_src lisp
+(setq table (ah-make-hash-table 'equal 23 2.0 0.5))
+#+end_src
+
+** Prédicats et introspection
+
+- =(ah-hash-table-p table)=
+- =(ah-hash-table-count table)=
+- =(ah-hash-table-size table)=
+- =(ah-hash-table-test table)=
+- =(ah-hash-table-rehash-threshold table)=
+
+** Accès
+
+*** =(ah-gethash table key [default])=
+
+Retourne la *valeur principale*.
+
+Effet secondaire :
+
+- met à jour la variable globale =ah-*gethash-found-p*= ;
+- cette variable vaut =T= si la clé existe ;
+- elle vaut =nil= sinon.
+
+Exemples :
+
+#+begin_src lisp
+(ah-gethash table "foo")
+; => nil
+ah-*gethash-found-p*
+; => nil
+
+(ah-gethash table "foo" 42)
+; => 42
+ah-*gethash-found-p*
+; => nil
+#+end_src
+
+*** =(ah-remhash table key)=
+
+Retourne la *valeur supprimée*.
+
+Effet secondaire :
+
+- met à jour la variable globale =ah-*remhash-found-p*= ;
+- cette variable vaut =T= si la clé existait ;
+- elle vaut =nil= sinon.
+
+Exemples :
+
+#+begin_src lisp
+(ah-remhash table "foo")
+; => 10
+ah-*remhash-found-p*
+; => T
+
+(ah-remhash table "unknown")
+; => nil
+ah-*remhash-found-p*
+; => nil
+#+end_src
+
+** Mutation
+
+- =(ah-puthash table key value)=
+- =(ah-remhash table key)=
+- =(ah-clrhash table)=
+
+Exemples :
+
+#+begin_src lisp
+(ah-puthash table "foo" 10)
+(ah-gethash table "foo")
+; => 10
+ah-*gethash-found-p*
+; => T
+
+(ah-remhash table "foo")
+; => 10
+ah-*remhash-found-p*
+; => T
+#+end_src
+
+** Itération
+
+*** =(ah-maphash function table)=
+
+Appelle =function= sur chaque couple clé/valeur.
+
+Exemple :
+
+#+begin_src lisp
+(ah-maphash
+  (function
+    (lambda (k v)
+      (print (list k v))))
+  table)
+#+end_src
+
+** Hachage
+
+*** =(ah-sxhash object [test])=
+
+Retourne un entier non négatif stable dans la session courante.
+
+Exemples :
+
+#+begin_src lisp
+(ah-sxhash "abc")
+(ah-sxhash '(1 2 3) 'equal)
+#+end_src
+
+* Types pris en charge
+
+La v1 prend en charge :
+
+- =nil= ;
+- nombres ;
+- chaînes ;
+- symboles ;
+- listes et dotted pairs ;
+- objets CAD via représentation observable stable.
+
+Règle générale :
+
+- le hash combine toujours un *tag de type* ;
+- puis une *représentation observable stable*.
+
+Exemples :
+
+- symbole :: nom du symbole ;
+- entité CAD :: type + handle ;
+- objet inconnu :: représentation imprimée documentée.
+
+* Sémantique des tests
+
+Les tests supportés sont :
+
+- =eq=
+- =equal=
+
+Le hash utilisé dépend du test de la table.
+
+* Limitations de la v1
+
+- pas d'API compatible =setf= ;
+- pas de garantie particulière sur l'ordre d'itération ;
+- pas de gestion documentée des structures circulaires dans =ah-sxhash= ;
+- stockage interne encore fondé sur =autolisp-vector=.
+
+* Exemple complet
+
+#+begin_src lisp
+(setq table (ah-make-hash-table 'equal 11 2.0 0.5))
+
+(ah-puthash table "a" 1)
+(ah-puthash table "b" 2)
+
+(ah-gethash table "a")
+; => 1
+ah-*gethash-found-p*
+; => T
+
+(ah-gethash table "z" 'missing)
+; => missing
+ah-*gethash-found-p*
+; => nil
+
+(ah-remhash table "b")
+
+(ah-hash-table-count table)
+; => 1
+#+end_src
