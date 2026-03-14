@@ -204,8 +204,20 @@
     (ah--prime-nth ah-primes ah-low)
     (ah--error "prime table exhausted")))
 
-(defun ah--make-slot-vector (ah-size ah-empty-marker)
-  (av-make-array ah-size ah-empty-marker nil nil))
+(defun ah--make-slot-vector (ah-size ah-empty-marker / ah-slots ah-depth ah-path-table ah-root)
+  (setq ah-slots (av--make-vector-symbol))
+  (setq ah-depth (av--depth-for-length ah-size))
+  (setq ah-path-table (av--path-table-for-depth ah-depth))
+  (setq ah-root
+        (if (> ah-size 0)
+          (av--build-tree ah-depth ah-empty-marker)
+          nil))
+  (av--putprop ah-slots ah-size 'av-length)
+  (av--putprop ah-slots 2 'av-branching-factor)
+  (av--putprop ah-slots ah-depth 'av-height)
+  (av--putprop ah-slots ah-path-table 'av-path-table)
+  (av--putprop ah-slots ah-root 'av-root)
+  ah-slots)
 
 (defun ah--make-entry (ah-hash ah-key ah-value)
   (list 'ah-entry ah-hash ah-key ah-value))

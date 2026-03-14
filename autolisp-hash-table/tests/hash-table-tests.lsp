@@ -188,6 +188,23 @@
       (is-not ah-*gethash-found-p*))))
 
 (deftest
+  "larger rehash preserves all inserted entries"
+  (function
+    (lambda (/ ah-table ah-index ah-key)
+      (setq ah-table (ah-make-hash-table 'equal 11 2.0 0.5))
+      (setq ah-index 0)
+      (while (< ah-index 20)
+        (setq ah-key (strcat "k" (itoa ah-index)))
+        (ah-puthash ah-table ah-key ah-index)
+        (setq ah-index (1+ ah-index)))
+      (setq ah-index 0)
+      (while (< ah-index 20)
+        (setq ah-key (strcat "k" (itoa ah-index)))
+        (is-equal ah-index (ah-gethash ah-table ah-key nil))
+        (is ah-*gethash-found-p*)
+        (setq ah-index (1+ ah-index))))))
+
+(deftest
   "equal test hashes structural keys compatibly"
   (function
     (lambda (/ ah-table ah-key)
