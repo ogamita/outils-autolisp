@@ -1,32 +1,59 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 2 ]]; then
-  echo "fake-cad: expected '/b <run-common.lsp>' or '/B <run.scr>'" >&2
+PROFILE_NAME="${AUTOLISP_FAKE_EXPECT_PROFILE:-}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -P)
+      if [[ $# -lt 2 ]]; then
+        echo "fake-cad: missing value after -P" >&2
+        exit 2
+      fi
+      ACTUAL_PROFILE="$2"
+      shift 2
+      ;;
+    /b)
+      if [[ $# -lt 2 ]]; then
+        echo "fake-cad: missing value after /b" >&2
+        exit 2
+      fi
+      RUNLSPFILE="$2"
+      shift 2
+      ;;
+    /B|-b)
+      if [[ $# -lt 2 ]]; then
+        echo "fake-cad: missing value after $1" >&2
+        exit 2
+      fi
+      SCRFILE="$2"
+      if [[ ! -f "$SCRFILE" ]]; then
+        echo "fake-cad: SCRFILE not found: $SCRFILE" >&2
+        exit 2
+      fi
+      RUNLSPFILE="$(sed -n 's/^(load "\(.*\)")/\1/p' "$SCRFILE" | head -n 1)"
+      if [[ -z "$RUNLSPFILE" || ! -f "$RUNLSPFILE" ]]; then
+        echo "fake-cad: could not resolve run-common.lsp from $SCRFILE" >&2
+        exit 2
+      fi
+      shift 2
+      ;;
+    *)
+      echo "fake-cad: unexpected argument: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ -z "${RUNLSPFILE:-}" ]]; then
+  echo "fake-cad: expected '/b <run-common.lsp>', '/B <run.scr>' or '-b <run.scr>'" >&2
   exit 2
 fi
 
-case "$1" in
-  /b)
-    RUNLSPFILE="$2"
-    ;;
-  /B)
-    SCRFILE="$2"
-    if [[ ! -f "$SCRFILE" ]]; then
-      echo "fake-cad: SCRFILE not found: $SCRFILE" >&2
-      exit 2
-    fi
-    RUNLSPFILE="$(sed -n 's/^(load "\(.*\)")/\1/p' "$SCRFILE" | head -n 1)"
-    if [[ -z "$RUNLSPFILE" || ! -f "$RUNLSPFILE" ]]; then
-      echo "fake-cad: could not resolve run-common.lsp from $SCRFILE" >&2
-      exit 2
-    fi
-    ;;
-  *)
-    echo "fake-cad: expected '/b <run-common.lsp>' or '/B <run.scr>'" >&2
-    exit 2
-    ;;
-esac
+if [[ -n "$PROFILE_NAME" && "${ACTUAL_PROFILE:-}" != "$PROFILE_NAME" ]]; then
+  echo "fake-cad: expected profile '$PROFILE_NAME', got '${ACTUAL_PROFILE:-}'" >&2
+  exit 2
+fi
 SCENARIO="${AUTOLISP_FAKE_SCENARIO:-}"
 OUTFILE="${OUTFILE:?missing OUTFILE}"
 ERRFILE="${ERRFILE:?missing ERRFILE}"
@@ -50,9 +77,45 @@ require_runlsp_regex() {
   fi
 }
 
+require_scr_contains() {
+  local needle="$1"
+  if [[ -z "${SCRFILE:-}" ]]; then
+    printf 'fake-cad: SCRFILE is not set\n' >&2
+    exit 3
+  fi
+  if ! grep -Fq "$needle" "$SCRFILE"; then
+    printf 'fake-cad: missing expected script command in %s: %s\n' "$SCRFILE" "$needle" >&2
+    exit 3
+  fi
+}
+
+extract_eval_form() {
+  perl -0ne '
+    if (/\(if \(autolisp-run-eval-file 1 "(.*)"\) \(autolisp-note-ok\) \(autolisp-note-fail\)\)/s) {
+      my $path = $1;
+      $path =~ s/\\"/"/g;
+      $path =~ s/\\\\/\\/g;
+      open my $fh, "<", $path or exit 2;
+      local $/ = undef;
+      print <$fh>;
+      close $fh;
+      exit 0;
+    }
+    exit 1;
+  ' "$RUNLSPFILE"
+}
+
+extract_req_id() {
+  sed -n '1s/^;REQ //p' "$INPFILE" | head -n 1
+}
+
+extract_input_form() {
+  sed '1d' "$INPFILE"
+}
+
 case "$SCENARIO" in
   eval_prints)
-    require_runlsp_contains '(if (autolisp-run-eval 1 "(progn (print (quote \"Hello World\")) (print \"Hiya!\"))") (autolisp-note-ok) (autolisp-note-fail))'
+    require_runlsp_regex '\(if \(autolisp-run-eval-file 1 ".*eval-1\.lsp"\) \(autolisp-note-ok\) \(autolisp-note-fail\)\)'
     require_runlsp_contains '(defun print (obj)'
     require_runlsp_contains '(defun autolisp-stdout-prefix ()'
     cat >"$OUTFILE" <<'EOF'
@@ -66,11 +129,38 @@ EOF
     printf '0\n' >"$STATUSFILE"
     ;;
   eval_no_output)
-    require_runlsp_contains '(if (autolisp-run-eval 1 "(+ 1 2)") (autolisp-note-ok) (autolisp-note-fail))'
+    require_runlsp_regex '\(if \(autolisp-run-eval-file 1 ".*eval-1\.lsp"\) \(autolisp-note-ok\) \(autolisp-note-fail\)\)'
     require_runlsp_contains '(defun print (obj)'
     cat >"$OUTFILE" <<'EOF'
 EVAL (+ 1 2)
 RESULT 3
+TOTAL=1 OK=1 FAIL=0 ERROR=0
+EOF
+    : >"$ERRFILE"
+    printf '0\n' >"$STATUSFILE"
+    ;;
+  macos_batch_quit)
+    require_scr_contains '_.COMMANDLINE'
+    require_scr_contains '(command "_QUIT" "_Y")'
+    require_runlsp_contains '(setq *AUTOLISP_QUIT_ON_FINISH* 0)'
+    cat >"$OUTFILE" <<'EOF'
+EVAL (+ 1 2)
+RESULT 3
+TOTAL=1 OK=1 FAIL=0 ERROR=0
+EOF
+    : >"$ERRFILE"
+    printf '0\n' >"$STATUSFILE"
+    ;;
+  eval_load_string)
+    require_runlsp_regex '\(if \(autolisp-run-eval-file 1 ".*eval-1\.lsp"\) \(autolisp-note-ok\) \(autolisp-note-fail\)\)'
+    if [[ "$(extract_eval_form)" != '(load "loader.lsp")' ]]; then
+      printf 'fake-cad: expected (load "loader.lsp"), got:\n' >&2
+      extract_eval_form >&2 || true
+      exit 5
+    fi
+    cat >"$OUTFILE" <<'EOF'
+EVAL (load "loader.lsp")
+RESULT "loader.lsp"
 TOTAL=1 OK=1 FAIL=0 ERROR=0
 EOF
     : >"$ERRFILE"
@@ -117,6 +207,106 @@ TOTAL=2 OK=2 FAIL=0 ERROR=0
 EOF
     : >"$ERRFILE"
     printf '0\n' >"$STATUSFILE"
+    ;;
+  interactive_expr)
+    case "$(extract_eval_form)" in
+      "(+ 1 2)")
+        cat >"$OUTFILE" <<'EOF'
+EVAL (+ 1 2)
+RESULT 3
+TOTAL=1 OK=1 FAIL=0 ERROR=0
+EOF
+        : >"$ERRFILE"
+        printf '0\n' >"$STATUSFILE"
+        ;;
+      $'(progn\n  (print "Hi")\n  (* 2 5))')
+        cat >"$OUTFILE" <<'EOF'
+EVAL (progn
+  (print "Hi")
+  (* 2 5))
+<<<AUTOLISP-STDOUT>>>"Hi"
+RESULT 10
+TOTAL=1 OK=1 FAIL=0 ERROR=0
+EOF
+        : >"$ERRFILE"
+        printf '0\n' >"$STATUSFILE"
+        ;;
+      "(/ 1 0)")
+        cat >"$OUTFILE" <<'EOF'
+EVAL (/ 1 0)
+TOTAL=1 OK=0 FAIL=1 ERROR=0
+EOF
+        cat >"$ERRFILE" <<'EOF'
+ERROR eval (/ 1 0): divide by zero
+EOF
+        printf '1\n' >"$STATUSFILE"
+        ;;
+      *)
+        printf 'fake-cad: unexpected interactive expression in %s:\n' "$RUNLSPFILE" >&2
+        extract_eval_form >&2 || true
+        exit 5
+        ;;
+    esac
+    ;;
+  interactive_batch)
+    if [[ "${INPFILE:-}" == "" ]]; then
+      echo "fake-cad: missing INPFILE for interactive batch" >&2
+      exit 5
+    fi
+    require_runlsp_contains '(setq *AUTOLISP_INPFILE*'
+    printf 'READY 0\n' >"$STATUSFILE"
+    while true; do
+      while [[ ! -f "$INPFILE" ]]; do
+        sleep 0.05
+      done
+      req_id="$(extract_req_id)"
+      form="$(extract_input_form)"
+      case "$form" in
+        "(+ 1 2)")
+          cat >"$OUTFILE" <<'EOF'
+EVAL (+ 1 2)
+RESULT 3
+TOTAL=1 OK=1 FAIL=0 ERROR=0
+EOF
+          : >"$ERRFILE"
+          rm -f "$INPFILE"
+          printf 'READY %s\n' "$req_id" >"$STATUSFILE"
+          ;;
+        $'(progn\n  (print "Hi")\n  (* 2 5))')
+          cat >"$OUTFILE" <<'EOF'
+EVAL (progn
+  (print "Hi")
+  (* 2 5))
+<<<AUTOLISP-STDOUT>>>"Hi"
+RESULT 10
+TOTAL=1 OK=1 FAIL=0 ERROR=0
+EOF
+          : >"$ERRFILE"
+          rm -f "$INPFILE"
+          printf 'READY %s\n' "$req_id" >"$STATUSFILE"
+          ;;
+        "(/ 1 0)")
+          cat >"$OUTFILE" <<'EOF'
+EVAL (/ 1 0)
+TOTAL=1 OK=0 FAIL=1 ERROR=0
+EOF
+          cat >"$ERRFILE" <<'EOF'
+ERROR eval (/ 1 0): divide by zero
+EOF
+          rm -f "$INPFILE"
+          printf 'READY %s\n' "$req_id" >"$STATUSFILE"
+          ;;
+        "'__AUTOLISP_QUIT__")
+          rm -f "$INPFILE"
+          printf 'STOP %s\n' "$req_id" >"$STATUSFILE"
+          exit 0
+          ;;
+        *)
+          printf 'fake-cad: unexpected interactive batch form:\n%s\n' "$form" >&2
+          exit 5
+          ;;
+      esac
+    done
     ;;
   *)
     printf 'fake-cad: unknown AUTOLISP_FAKE_SCENARIO: %s\n' "$SCENARIO" >&2

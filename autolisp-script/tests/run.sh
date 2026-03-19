@@ -12,6 +12,10 @@ IS_WINDOWS=0
 case "$OS" in
   MINGW*|MSYS*|CYGWIN*) IS_WINDOWS=1 ;;
 esac
+IS_MACOS=0
+case "$OS" in
+  Darwin) IS_MACOS=1 ;;
+esac
 
 mkdir -p "$TMP_DIR"
 
@@ -131,6 +135,13 @@ run_case() {
   local expected_stderr="$4"
   local expected_rc="$5"
   shift 5
+  local -a case_env=()
+  local -a env_vars=()
+
+  while [[ $# -gt 1 && "$1" == "--env" ]]; do
+    case_env+=("$2")
+    shift 2
+  done
 
   local case_dir stdout_file stderr_file rc_file actual_rc
   local expected_stdout_file expected_stderr_file
@@ -166,9 +177,122 @@ run_case() {
     )
   fi
 
-  if env "${cmd_env[@]}" \
+  env_vars=("${cmd_env[@]}")
+  if [[ ${#case_env[@]} -gt 0 ]]; then
+    env_vars+=("${case_env[@]}")
+  fi
+
+  if env "${env_vars[@]}" \
     perl -e 'alarm shift @ARGV; exec @ARGV' "$((RUN_TIMEOUT + 5))" \
     "$AUTOLISP" "${CAD_ARGS[@]}" --timeout "$RUN_TIMEOUT" "$@" >"$stdout_file" 2>"$stderr_file"
+  then
+    actual_rc=0
+  else
+    actual_rc=$?
+  fi
+  printf '%s\n' "$actual_rc" >"$rc_file"
+
+  if [[ "$actual_rc" -ne "$expected_rc" ]]; then
+    echo "$name KO" >&2
+    echo "FAIL $name: expected rc=$expected_rc got rc=$actual_rc" >&2
+    echo "workdir: $case_dir/workdir" >&2
+    if [[ "$actual_rc" -eq 142 ]]; then
+      echo "FAIL $name: shell timeout exceeded (${RUN_TIMEOUT}s + guard)" >&2
+    fi
+    if [[ "$VERBOSE" -eq 1 ]]; then
+      [[ -s "$stdout_file" ]] && echo "--- stdout ---" >&2 && cat "$stdout_file" >&2
+      [[ -s "$stderr_file" ]] && echo "--- stderr ---" >&2 && cat "$stderr_file" >&2
+    fi
+    failures=$((failures + 1))
+    return
+  fi
+
+  if ! diff -u "$expected_stdout_file" "$stdout_file"; then
+    echo "$name KO" >&2
+    echo "FAIL $name: stdout mismatch" >&2
+    failures=$((failures + 1))
+    echo "workdir: $case_dir/workdir" >&2
+    if [[ "$VERBOSE" -eq 1 ]]; then
+      echo "expected stdout: $expected_stdout_file" >&2
+      echo "actual stdout: $stdout_file" >&2
+      [[ -s "$stderr_file" ]] && echo "--- stderr ---" >&2 && cat "$stderr_file" >&2
+    fi
+    return
+  fi
+
+  if ! diff -u "$expected_stderr_file" "$stderr_file"; then
+    echo "$name KO" >&2
+    echo "FAIL $name: stderr mismatch" >&2
+    failures=$((failures + 1))
+    echo "workdir: $case_dir/workdir" >&2
+    if [[ "$VERBOSE" -eq 1 ]]; then
+      echo "expected stderr: $expected_stderr_file" >&2
+      echo "actual stderr: $stderr_file" >&2
+    fi
+    return
+  fi
+
+  echo "$name OK"
+}
+
+run_stdin_case() {
+  local name="$1"
+  local scenario="$2"
+  local stdin_fixture="$3"
+  local expected_stdout="$4"
+  local expected_stderr="$5"
+  local expected_rc="$6"
+  shift 6
+  local -a case_env=()
+  local -a env_vars=()
+
+  while [[ $# -gt 1 && "$1" == "--env" ]]; do
+    case_env+=("$2")
+    shift 2
+  done
+
+  local case_dir stdout_file stderr_file rc_file actual_rc
+  local expected_stdout_file expected_stderr_file
+  case_dir="$(mktemp -d "$TMP_DIR/${name}.XXXXXX")"
+  stdout_file="$case_dir/stdout.txt"
+  stderr_file="$case_dir/stderr.txt"
+  rc_file="$case_dir/rc.txt"
+  expected_stdout_file="$case_dir/expected.stdout"
+  expected_stderr_file="$case_dir/expected.stderr"
+
+  materialize_expected "$expected_stdout" "$expected_stdout_file"
+  materialize_expected "$expected_stderr" "$expected_stderr_file"
+
+  echo "$name RUN engine=$ENGINE_FLAG exe=${DETECTED_ENGINE_EXE:-fallback-ui} timeout=${RUN_TIMEOUT}s"
+
+  declare -a cmd_env=(
+    "AUTOLISP_WORKDIR=$case_dir/workdir"
+    "AUTOLISP_KEEP_WORKDIR=1"
+    "AUTOLISP_VERBOSE=0"
+  )
+
+  if [[ -n "$DETECTED_ENGINE_EXE" ]]; then
+    cmd_env+=(
+      "$ENGINE_EXE_VAR=$DETECTED_ENGINE_EXE"
+    )
+  fi
+
+  if [[ "$USE_FAKE_CAD" -eq 1 ]]; then
+    cmd_env+=(
+      "AUTOLISP_FAKE_SCENARIO=$scenario"
+      "BRICSCAD_COM_MODE=off"
+      "AUTOCAD_COM_MODE=off"
+    )
+  fi
+
+  env_vars=("${cmd_env[@]}")
+  if [[ ${#case_env[@]} -gt 0 ]]; then
+    env_vars+=("${case_env[@]}")
+  fi
+
+  if env "${env_vars[@]}" \
+    perl -e 'alarm shift @ARGV; exec @ARGV' "$((RUN_TIMEOUT + 5))" \
+    "$AUTOLISP" "${CAD_ARGS[@]}" --timeout "$RUN_TIMEOUT" "$@" <"$stdin_fixture" >"$stdout_file" 2>"$stderr_file"
   then
     actual_rc=0
   else
@@ -235,6 +359,38 @@ run_case \
   0 \
   -x '(+ 1 2)'
 
+if [[ "$ENGINE_FLAG" == "--bricscad" ]]; then
+  run_case \
+    "macos_batch_quit" \
+    "macos_batch_quit" \
+    "$SCRIPT_DIR/expected/eval_no_output.stdout" \
+    "$SCRIPT_DIR/expected/empty.stderr" \
+    0 \
+    --env AUTOLISP_OS=Darwin \
+    --env BRICSCAD_MACOS_MODE=batch \
+    -x '(+ 1 2)'
+
+  run_case \
+    "macos_batch_profile" \
+    "macos_batch_quit" \
+    "$SCRIPT_DIR/expected/eval_no_output.stdout" \
+    "$SCRIPT_DIR/expected/empty.stderr" \
+    0 \
+    --env AUTOLISP_OS=Darwin \
+    --env BRICSCAD_MACOS_MODE=batch \
+    --env AUTOLISP_FAKE_EXPECT_PROFILE=Lisp \
+    --bricscad-macos-profile Lisp \
+    -x '(+ 1 2)'
+fi
+
+run_case \
+  "eval_load_string" \
+  "eval_load_string" \
+  "$SCRIPT_DIR/expected/eval_load_string.stdout" \
+  "$SCRIPT_DIR/expected/empty.stderr" \
+  0 \
+  -x '(load "loader.lsp")'
+
 run_case \
   "load_main_default" \
   "load_main_default" \
@@ -259,6 +415,41 @@ run_case \
   "$SCRIPT_DIR/expected/empty.stderr" \
   0 \
   "$SCRIPT_DIR/fixtures/load-side-effect.lsp"
+
+if [[ "$ENGINE_FLAG" == "--bricscad" && "$IS_MACOS" -eq 1 ]]; then
+  run_stdin_case \
+    "interactive_repl" \
+    "interactive_batch" \
+    "$SCRIPT_DIR/fixtures/interactive-input.lsp" \
+    "$SCRIPT_DIR/expected/interactive_repl.stdout" \
+    "$SCRIPT_DIR/expected/empty.stderr" \
+    0 \
+    --env AUTOLISP_OS=Darwin \
+    --env BRICSCAD_MACOS_MODE=batch \
+    --interactive
+else
+  run_stdin_case \
+    "interactive_repl" \
+    "interactive_expr" \
+    "$SCRIPT_DIR/fixtures/interactive-input.lsp" \
+    "$SCRIPT_DIR/expected/interactive_repl.stdout" \
+    "$SCRIPT_DIR/expected/empty.stderr" \
+    0 \
+    --interactive
+fi
+
+if [[ "$ENGINE_FLAG" == "--bricscad" ]]; then
+  run_stdin_case \
+    "interactive_batch_repl" \
+    "interactive_batch" \
+    "$SCRIPT_DIR/fixtures/interactive-input.lsp" \
+    "$SCRIPT_DIR/expected/interactive_repl.stdout" \
+    "$SCRIPT_DIR/expected/empty.stderr" \
+    0 \
+    --env AUTOLISP_OS=Darwin \
+    --env BRICSCAD_MACOS_MODE=batch \
+    --interactive
+fi
 
 if [[ "$failures" -ne 0 ]]; then
   echo "Tests failed: $failures" >&2

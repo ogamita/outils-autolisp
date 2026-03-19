@@ -21,13 +21,16 @@ Le script fabrique à la volée un fichier `run-common.lsp` qui:
 
 ## Utilisation
 ```bash
-autolisp [--autocad|--bricscad] [--timeout N] {source.lsp | -x expression}... [--dwg fichier.dwg] [--main C:MAIN]
+autolisp [--autocad|--bricscad] [--timeout N] [--bootstrap-phase marker|core|log|full] [--bricscad-macos-mode auto|osascript|batch] [--bricscad-macos-app attach|launch] [--bricscad-macos-profile NOM] {source.lsp | -x expression}... [--dwg fichier.dwg] [--main C:MAIN]
+autolisp [--autocad|--bricscad] [--timeout N] [--bootstrap-phase marker|core|log|full] [--bricscad-macos-mode auto|osascript|batch] [--bricscad-macos-app attach|launch] [--bricscad-macos-profile NOM] -i|--interactive [--dwg fichier.dwg]
 ```
 
 ## Sémantique d'exécution
 - Les entrées `{source.lsp | -x expression}` sont traitées strictement dans l'ordre.
 - Chaque `source.lsp` est exécuté via `(load "...")`.
 - Chaque `-x expression` est lu puis évalué comme une forme AutoLISP.
+- `-i` / `--interactive` démarre un REPL: le wrapper lit une forme Lisp sur `stdin`, continue la lecture tant que le parenthésage reste incomplet, exécute la forme comme avec `-x`, affiche `STDOUT`, `STDERR` et `RESULT`, puis recommence.
+- Le mode interactif est exclusif: il n'accepte pas de `source.lsp` ni de `-x` sur la même ligne de commande.
 - Si au moins un fichier `.lsp` a été fourni, le wrapper appelle ensuite `C:MAIN` par défaut, ou la commande passée avec `--main`.
 - Si une action échoue, le script continue à construire le résumé, puis renvoie `1`.
 
@@ -38,6 +41,7 @@ Exemples:
 ./autolisp lib1.lsp lib2.lsp --main C:RUN
 ./autolisp -x '(princ (+ 1 2))'
 ./autolisp init.lsp -x '(setq *x* 42)' test.lsp
+./autolisp --interactive
 ```
 
 ## Sélection du moteur
@@ -58,6 +62,7 @@ Le wrapper injecte les variables globales suivantes dans l'environnement LISP:
 - `*AUTOLISP_OUTFILE*`
 - `*AUTOLISP_ERRFILE*`
 - `*AUTOLISP_STATUSFILE*`
+- `*AUTOLISP_INPFILE*`
 - `*AUTOLISP_LOGDIR*`
 - `*AUTOLISP_LOGNAME*`
 - `*AUTOLISP_QUIT_ON_FINISH*`
@@ -67,6 +72,8 @@ Il définit aussi des helpers dans `run-common.lsp`, notamment:
 - `autolisp-log-out`
 - `autolisp-log-err`
 - `autolisp-set-status`
+
+En mode REPL batch BricsCAD sur macOS, `*AUTOLISP_INPFILE*` sert de canal d'entrée. Le wrapper shell écrit chaque requête dans un fichier temporaire puis le renomme atomiquement vers `input.lsp`, pour éviter que BricsCAD lise une forme partiellement écrite. Le handshake avec `status.txt` utilise des états textuels `READY <n>` et `STOP <n>`.
 
 Le cas standard consiste à exposer une commande `C:MAIN`, par exemple:
 
@@ -113,6 +120,7 @@ Chaque exécution crée un répertoire temporaire sous:
 
 - `AUTOLISP_WORKDIR`, si défini
 - sinon `autolisp-script/.autolisp-runs`
+- exception: en mode BricsCAD macOS `batch`, le défaut devient `${TMPDIR:-/tmp}/autolisp-runs` pour éviter les problèmes de chargement depuis le dossier du repo
 
 Ce répertoire contient notamment:
 
@@ -130,6 +138,10 @@ Par défaut il est supprimé en fin d'exécution.
 - `AUTOCAD_COM_MODE`: `auto`, `attach`, `launch`, `off`
 - `AUTOCAD_EXE`: chemin vers `acad.exe` ou `acadlt.exe`
 - `BRICSCAD_EXE`: chemin vers `bricscad.exe`
+- `BRICSCAD_MACOS_MODE`: `auto`, `osascript`, `batch`
+- `BRICSCAD_MACOS_APP_MODE`: `attach`, `launch`
+- `BRICSCAD_MACOS_PROFILE`: nom du profil BricsCAD pour le mode batch macOS
+- `AUTOLISP_BOOTSTRAP_PHASE`: `marker`, `core`, `log`, `full`
 - `BRICSCAD_COM_MODE`: `auto`, `attach`, `launch`, `off`
 - `AUTOLISP_DWG`: DWG par défaut pour AutoCAD Core Console
 - `AUTOLISP_TIMEOUT`: ancien nom de timeout, encore accepté
@@ -152,14 +164,28 @@ Par défaut il est supprimé en fin d'exécution.
 - En mode COM `attach`, le wrapper n'ordonne pas la fermeture de BricsCAD à la fin.
 
 ### macOS
-- Le fallback principal repose sur `osascript` et du pilotage UI.
-- Le script active l'application CAD, injecte `(load "...")`, puis attend la mise à jour du fichier de statut.
-- Ce mode dépend des autorisations Accessibilité et reste plus fragile qu'un lancement direct.
+- BricsCAD expose maintenant deux modes explicites:
+  - `--bricscad-macos-mode osascript`: envoie `(load ".../run-common.lsp")` à une session GUI via `osascript`
+  - `--bricscad-macos-mode batch`: lance une nouvelle instance avec `-b run.scr`
+- `--bricscad-macos-profile NOM` ajoute `-P NOM` au lancement batch macOS pour imposer un profil BricsCAD stable.
+- En mode `osascript`, le wrapper commence par envoyer `_.COMMANDLINE` puis la commande `(load ".../run-common.lsp")`, afin d'afficher et focaliser la ligne de commande avant l'injection; `--bricscad-macos-app launch` ouvre BricsCAD automatiquement avant l'injection et `--bricscad-macos-app attach` échoue si aucune instance n'est déjà ouverte.
+- En mode `batch`, le wrapper continue à faire toute l'I/O via `output.txt`, `errors.txt` et `status.txt`; BricsCAD ne fournit pas de sortie standard exploitable.
+- En mode `batch` avec `-i`, le wrapper garde une seule instance BricsCAD active et implémente un REPL via `input.lsp` + `status.txt`.
+- En mode BricsCAD macOS `batch`, le wrapper fait commencer `run.scr` par `_.COMMANDLINE` pour rendre visibles les expressions et résultats dans la fenêtre BricsCAD, puis termine par `(command "_QUIT" "_Y")` pour fermer l'instance lancée.
+- Le fallback `osascript` dépend des autorisations Accessibilité et reste plus fragile qu'un lancement direct.
 - Sous BricsCAD, le workspace doit être `2D Drafting`. Le workspace `2D Drafting (Modern)` peut empêcher l'injection de la commande et provoquer un timeout avec `status.txt` restant à `__PENDING__`.
 - En cas de timeout sans aucune sortie ni erreur, le wrapper affiche un hint spécifique pour ce cas.
 
+### Phases de bootstrap
+- `full`: comportement normal, avec setup du log CAD, capture de `print` / `princ` / `prompt`, et REPL batch.
+- `log`: exécute les actions sans redéfinir `print` / `princ` / `prompt`, mais garde le setup du log CAD.
+- `core`: exécute les actions avec l'I/O fichier de base, sans setup du log CAD ni redéfinition des sorties standard Lisp.
+- `marker`: n'exécute pas les actions demandées; écrit seulement un marqueur de bootstrap puis un statut final, utile pour vérifier que `run-common.lsp` démarre bien.
+- Le mode interactif `-i` impose `--bootstrap-phase full`.
+
 ### Unix hors Windows
-- Si `AUTOCAD_EXE` ou `BRICSCAD_EXE` est fourni, le wrapper tente un lancement direct avec `/b`.
+- Si `AUTOCAD_EXE` est fourni, le wrapper tente un lancement direct avec `/b`.
+- Si `BRICSCAD_EXE` est fourni, le wrapper tente un lancement direct avec `-b run.scr`.
 - Sinon, pour AutoCAD ou BricsCAD sur macOS, il bascule sur le fallback UI si disponible.
 
 ## Exemples courants
@@ -168,6 +194,24 @@ BricsCAD avec la commande par défaut:
 
 ```bash
 ./autolisp --bricscad ./autolisp.lsp
+```
+
+BricsCAD macOS en batch:
+
+```bash
+./autolisp --bricscad --bricscad-macos-mode batch ./autolisp.lsp
+```
+
+BricsCAD macOS en batch avec profil dédié:
+
+```bash
+./autolisp --bricscad --bricscad-macos-mode batch --bricscad-macos-profile Lisp ./autolisp.lsp
+```
+
+BricsCAD macOS en attachement à une session déjà lancée:
+
+```bash
+./autolisp --bricscad --bricscad-macos-mode osascript --bricscad-macos-app attach ./autolisp.lsp
 ```
 
 BricsCAD avec expression inline:
@@ -186,6 +230,12 @@ BricsCAD avec chargement multiple puis `C:RUN`:
 
 ```bash
 ./autolisp -x '(princ "bonjour")'
+```
+
+REPL interactif:
+
+```bash
+./autolisp --interactive
 ```
 
 AutoCAD Core Console sous Windows:
@@ -266,6 +316,7 @@ La suite couvre actuellement:
 - chargement d'un fichier `.lsp`
 - `--main` avec point d'entrée personnalisé
 - sortie produite pendant le `load` d'un fichier
+- mode interactif `--interactive`, y compris une forme multi-lignes et un échec d'évaluation
 
 ### Backend `fake-cad`
 
@@ -290,6 +341,7 @@ En revanche, il teste très bien la logique interne du wrapper:
 
 - génération de `run-common.lsp`
 - gestion des actions `load` et `-x`
+- boucle REPL `--interactive`
 - appel de `MAIN` / `--main`
 - reconstruction de `stdout`
 - comparaison des sorties attendues

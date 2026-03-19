@@ -1,0 +1,3 @@
+EVAL (load "loader.lsp")
+RESULT "loader.lsp"
+TOTAL=1 OK=1 FAIL=0 ERROR=0
