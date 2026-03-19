@@ -4,41 +4,41 @@
 
 (setq *CL:HELP-ENTRIES*
   '(
-    ("CL:DOCUMENTATION" .
-      ((name . "CL:documentation")
-       (title . "CL:documentation")
+    ("DOCUMENTATION" .
+      ((name . "documentation")
+       (title . "documentation")
        (summary . "Returns a formatted documentation string for a documented symbol.")
        (feature-groups . ("Help"))
-       (signature . "(CL:documentation symbol doc-type)")
+       (signature . "(documentation symbol doc-type)")
        (return-values . "Type: String or nil\nA documentation string when the symbol is documented and doc-type is T or FUNCTION; otherwise nil.")
-       (examples . "(CL:documentation 'open 'function)")
+       (examples . "(documentation 'open 'function)")
        (url . nil)))
-    ("CL:DESCRIBE" .
-      ((name . "CL:describe")
-       (title . "CL:describe")
+    ("DESCRIBE" .
+      ((name . "describe")
+       (title . "describe")
        (summary . "Prints a human-readable description of an AutoLISP object.")
        (feature-groups . ("Help"))
-       (signature . "(CL:describe object)")
+       (signature . "(describe object)")
        (return-values . "Type: Object\nReturns the object after printing its description.")
-       (examples . "(CL:describe 'open)\n(CL:describe '(1 2 3))")
+       (examples . "(describe 'open)\n(describe '(1 2 3))")
        (url . nil)))
-    ("CL:APROPOS" .
-      ((name . "CL:apropos")
-       (title . "CL:apropos")
+    ("APROPOS" .
+      ((name . "apropos")
+       (title . "apropos")
        (summary . "Prints a summary line for each documented function whose name matches a simplified wildcard pattern.")
        (feature-groups . ("Help"))
-       (signature . "(CL:apropos pattern)")
+       (signature . "(apropos pattern)")
        (return-values . "Type: List\nReturns the list of matching symbols.")
-       (examples . "(CL:apropos \"str*\")")
+       (examples . "(apropos \"str*\")")
        (url . nil)))
-    ("CL:APROPOS-LIST" .
-      ((name . "CL:apropos-list")
-       (title . "CL:apropos-list")
+    ("APROPOS-LIST" .
+      ((name . "apropos-list")
+       (title . "apropos-list")
        (summary . "Returns the documented symbols whose names match a simplified wildcard pattern.")
        (feature-groups . ("Help"))
-       (signature . "(CL:apropos-list pattern)")
+       (signature . "(apropos-list pattern)")
        (return-values . "Type: List\nReturns the list of matching symbols without printing summaries.")
-       (examples . "(CL:apropos-list \"get*\")")
+       (examples . "(apropos-list \"get*\")")
        (url . nil)))
     ("HELP" .
       ((name . "help")
@@ -88,37 +88,37 @@
     ("AD-DOCUMENTATION" .
       ((name . "ad-documentation")
        (title . "ad-documentation")
-       (summary . "Alias of CL:documentation.")
+       (summary . "Alias of documentation.")
        (feature-groups . ("Help"))
        (signature . "(ad-documentation symbol doc-type)")
-       (return-values . "Type: String or nil\nSame result as CL:documentation.")
+       (return-values . "Type: String or nil\nSame result as documentation.")
        (examples . "(ad-documentation 'open 'function)")
        (url . nil)))
     ("AD-DESCRIBE" .
       ((name . "ad-describe")
        (title . "ad-describe")
-       (summary . "Alias of CL:describe.")
+       (summary . "Alias of describe.")
        (feature-groups . ("Help"))
        (signature . "(ad-describe object)")
-       (return-values . "Type: Object\nSame result as CL:describe.")
+       (return-values . "Type: Object\nSame result as describe.")
        (examples . "(ad-describe 'open)")
        (url . nil)))
     ("AD-APROPOS" .
       ((name . "ad-apropos")
        (title . "ad-apropos")
-       (summary . "Alias of CL:apropos.")
+       (summary . "Alias of apropos.")
        (feature-groups . ("Help"))
        (signature . "(ad-apropos pattern)")
-       (return-values . "Type: List\nSame result as CL:apropos.")
+       (return-values . "Type: List\nSame result as apropos.")
        (examples . "(ad-apropos \"str*\")")
        (url . nil)))
     ("AD-APROPOS-LIST" .
       ((name . "ad-apropos-list")
        (title . "ad-apropos-list")
-       (summary . "Alias of CL:apropos-list.")
+       (summary . "Alias of apropos-list.")
        (feature-groups . ("Help"))
        (signature . "(ad-apropos-list pattern)")
-       (return-values . "Type: List\nSame result as CL:apropos-list.")
+       (return-values . "Type: List\nSame result as apropos-list.")
        (examples . "(ad-apropos-list \"open\")")
        (url . nil)))
     ("AD-HELP" .
@@ -446,7 +446,7 @@
       (eq cl:doc-type 'FUNCTION)
       (eq cl:doc-type 'function)))
 
-(defun CL:documentation (cl:symbol cl:doc-type / cl:entry)
+(defun documentation (cl:symbol cl:doc-type / cl:entry)
   (if (not (CL:doc--documentation-type-supported-p cl:doc-type))
     nil
     (progn
@@ -456,7 +456,7 @@
         nil))))
 
 (defun ad-documentation (ad-symbol ad-doc-type)
-  (CL:documentation ad-symbol ad-doc-type))
+  (documentation ad-symbol ad-doc-type))
 
 (defun CL:doc--object-description (cl:object / cl:type)
   (setq cl:type (type cl:object))
@@ -464,7 +464,7 @@
     ((= cl:type 'SYM)
      (cond
        ((CL:doc--entry cl:object)
-        (CL:documentation cl:object 'function))
+        (documentation cl:object 'function))
        ((boundp cl:object)
         (CL:doc--join-paragraphs
           (list
@@ -485,7 +485,7 @@
          (strcat "Object type: " (vl-princ-to-string cl:type))
          (strcat "Printed form:\n" (vl-princ-to-string cl:object)))))))
 
-(defun CL:describe (cl:object / cl:text)
+(defun describe (cl:object / cl:text)
   (setq cl:text (CL:doc--object-description cl:object))
   (if cl:text
     (progn
@@ -494,7 +494,7 @@
   cl:object)
 
 (defun ad-describe (ad-object)
-  (CL:describe ad-object))
+  (describe ad-object))
 
 (defun CL:doc--apropos-matches (cl:pattern / cl:results)
   (setq cl:results nil)
@@ -503,14 +503,14 @@
       (setq cl:results (cons (car cl:item) cl:results))))
   (CL:doc--sort-strings cl:results))
 
-(defun CL:apropos-list (cl:pattern / cl:names)
+(defun apropos-list (cl:pattern / cl:names)
   (setq cl:names (CL:doc--apropos-matches cl:pattern))
   (mapcar 'CL:doc--read-symbol cl:names))
 
 (defun ad-apropos-list (ad-pattern)
-  (CL:apropos-list ad-pattern))
+  (apropos-list ad-pattern))
 
-(defun CL:apropos (cl:pattern / cl:names cl:entry)
+(defun apropos (cl:pattern / cl:names cl:entry)
   (setq cl:names (CL:doc--apropos-matches cl:pattern))
   (if cl:names
     (foreach cl:name cl:names
@@ -523,7 +523,7 @@
   (mapcar 'CL:doc--read-symbol cl:names))
 
 (defun ad-apropos (ad-pattern)
-  (CL:apropos ad-pattern))
+  (apropos ad-pattern))
 
 (defun CL:doc--entry-text (cl:entry)
   (CL:doc--join-paragraphs
@@ -559,10 +559,10 @@
              "  (help)                 List help entry points."
              "  (help 'symbol)         Search documented functions by name."
              "  (help \"text\")         Search text across the documentation database."
-             "  (CL:documentation 'f 'function)"
-             "  (CL:describe object)"
-             "  (CL:apropos pattern)"
-             "  (CL:apropos-list pattern)"
+             "  (documentation 'f 'function)"
+             "  (describe object)"
+             "  (apropos pattern)"
+             "  (apropos-list pattern)"
              ""
              "Planned:"
              "  inspect"))
@@ -573,9 +573,9 @@
   (cond
     ((null cl:arg)
      (CL:doc--print-help-index)
-     '(help CL:documentation CL:describe CL:apropos CL:apropos-list inspect))
+     '(help documentation describe apropos apropos-list inspect))
     ((= (type cl:arg) 'SYM)
-     (CL:apropos (vl-symbol-name cl:arg)))
+     (apropos (vl-symbol-name cl:arg)))
     ((= (type cl:arg) 'STR)
      (setq cl:matches (CL:doc--text-search cl:arg))
      (if cl:matches
@@ -588,7 +588,7 @@
      (mapcar '(lambda (cl:entry) (CL:doc--read-symbol (CL:doc--assoc-value 'name cl:entry)))
              cl:matches))
     (T
-     (CL:describe cl:arg))))
+     (describe cl:arg))))
 
 (defun ad-help (ad-arg)
   (help ad-arg))

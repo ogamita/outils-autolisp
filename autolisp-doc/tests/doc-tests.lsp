@@ -7,7 +7,7 @@
   "documentation returns formatted function text"
   (function
     (lambda (/ ad-doc)
-      (setq ad-doc (CL:documentation 'open 'function))
+      (setq ad-doc (documentation 'open 'function))
       (is ad-doc)
       (is (wcmatch ad-doc "*open (AutoLISP)*"))
       (is (wcmatch ad-doc "*Signature:*"))
@@ -17,7 +17,7 @@
   "documentation rejects unsupported doc types"
   (function
     (lambda ()
-      (is-equal nil (CL:documentation 'open 'variable)))))
+      (is-equal nil (documentation 'open 'variable)))))
 
 (deftest
   "describe uses documentation for documented symbols"
@@ -39,7 +39,7 @@
   "apropos-list returns matching symbols"
   (function
     (lambda (/ ad-result)
-      (setq ad-result (CL:apropos-list "open"))
+      (setq ad-result (apropos-list "open"))
       (is ad-result)
       (is (member 'OPEN ad-result)))))
 
@@ -47,7 +47,7 @@
   "apropos wildcard finds string functions"
   (function
     (lambda (/ ad-result)
-      (setq ad-result (CL:apropos-list "str*"))
+      (setq ad-result (apropos-list "str*"))
       (is ad-result)
       (is (member 'STRCAT ad-result)))))
 
@@ -64,8 +64,8 @@
     (lambda (/ ad-result)
       (setq ad-result (help))
       (is (member 'HELP ad-result))
-      (is (member 'CL:DOCUMENTATION ad-result))
-      (is (member 'CL:APROPOS ad-result)))))
+      (is (member 'DOCUMENTATION ad-result))
+      (is (member 'APROPOS ad-result)))))
 
 (deftest
   "help text search returns matching symbols"
@@ -123,9 +123,9 @@
   "ad aliases reuse public API"
   (function
     (lambda ()
-      (is-equal (CL:documentation 'open 'function)
+      (is-equal (documentation 'open 'function)
                 (ad-documentation 'open 'function))
-      (is-equal (CL:apropos-list "open")
+      (is-equal (apropos-list "open")
                 (ad-apropos-list "open"))
       (is-equal (ad-categorize '(alert "hi"))
                 (categorize '(alert "hi")))

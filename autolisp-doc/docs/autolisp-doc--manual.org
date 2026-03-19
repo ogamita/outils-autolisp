@@ -48,14 +48,14 @@ Pour charger seulement =autolisp-doc= :
 
 Les fonctions principales existent maintenant sous deux familles de noms :
 
-- historiques / orientés CL :: =CL:documentation=, =CL:describe=,
-  =CL:apropos=, =CL:apropos-list= ;
+- publiques :: =documentation=, =describe=, =apropos=,
+  =apropos-list= ;
 - préfixés =ad-= :: =ad-documentation=, =ad-describe=, =ad-apropos=,
   =ad-apropos-list=.
 
 ** Documentation
 
-*** =(CL:documentation symbol doc-type)=
+*** =(documentation symbol doc-type)=
 
 Retourne une chaîne formatée décrivant une fonction documentée.
 
@@ -68,7 +68,7 @@ Types de documentation actuellement pris en charge :
 Exemple :
 
 #+begin_src lisp
-(CL:documentation 'open 'function)
+(documentation 'open 'function)
 #+end_src
 
 Le résultat inclut notamment :
@@ -84,7 +84,7 @@ Le résultat inclut notamment :
 
 ** Description
 
-*** =(CL:describe object)=
+*** =(describe object)=
 
 Affiche une description lisible de l'objet et retourne l'objet lui-même.
 
@@ -98,18 +98,18 @@ Comportement principal :
 Exemples :
 
 #+begin_src lisp
-(CL:describe 'open)
-(CL:describe '(1 2 3))
-(CL:describe 42)
+(describe 'open)
+(describe '(1 2 3))
+(describe 42)
 #+end_src
 
 ** Recherche par nom
 
-*** =(CL:apropos pattern)=
+*** =(apropos pattern)=
 
 Affiche une ligne de résumé par symbole documenté correspondant au motif.
 
-*** =(CL:apropos-list pattern)=
+*** =(apropos-list pattern)=
 
 Retourne la liste des symboles documentés correspondant au motif, sans les
 afficher.
@@ -123,9 +123,9 @@ Le motif utilise une syntaxe de wildcard simple compatible =wcmatch= :
 Exemples :
 
 #+begin_src lisp
-(CL:apropos "open")
-(CL:apropos "str*")
-(CL:apropos-list "*hash*")
+(apropos "open")
+(apropos "str*")
+(apropos-list "*hash*")
 #+end_src
 
 ** Point d'entrée =help=
@@ -264,8 +264,8 @@ make test-bricscad
 Les tests valident notamment :
 
 - la présence d'entrées documentaires ;
-- le contenu de =CL:documentation= ;
-- la recherche avec =CL:apropos-list= ;
+- le contenu de =documentation= ;
+- la recherche avec =apropos-list= ;
 - les résumés affichés par les fonctions d'aide via leurs helpers internes ;
 - la recherche textuelle de =help= ;
 - la catégorisation de formes ;
@@ -275,7 +275,7 @@ Les tests valident notamment :
 * Limitations actuelles
 
 - la syntaxe de recherche n'est pas une expression régulière complète ;
-- =CL:documentation= ne couvre pas encore d'autres types de documentation que
+- =documentation= ne couvre pas encore d'autres types de documentation que
   les fonctions ;
 - il n'y a pas encore d'=inspect= interactif ;
 - la base vient actuellement de la source Autodesk ENU accessible en HTTP brut,
