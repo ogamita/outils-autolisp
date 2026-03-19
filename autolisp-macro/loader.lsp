@@ -1,21 +1,34 @@
+(defun autolisp-macro-loader-root (/ loader-path)
+  (cond
+    ((and (boundp '*autolisp-macro-path*)
+          *autolisp-macro-path*)
+     *autolisp-macro-path*)
+    ((setq loader-path (findfile "autolisp-macro/loader.lsp"))
+     (vl-filename-directory loader-path))
+    ((setq loader-path (findfile "loader.lsp"))
+     (vl-filename-directory loader-path))
+    (t nil)))
 
-(setq loader-path (findfile "loader.lsp"))
+(setq *autolisp-macro-path* (autolisp-macro-loader-root))
 
-(if (null loader-path)
+(if (null *autolisp-macro-path*)
   (progn
     (prompt
-      "\n[loader] Error: cannot resolve loader.lsp via findfile. Add 'outils/autolisp-macro' to SRCHPATH (or load this file with an absolute path), then retry.")
-    (exit))
-  (setq dir (strcat (vl-filename-directory loader-path) "/../autolisp-test/")))
+      "\n[loader] Error: cannot resolve autolisp-macro/loader.lsp. Set *autolisp-macro-path* or load this file with an absolute path, then retry.")
+    (exit)))
 
-(load (strcat dir "mruntime.lsp"))
+(load (strcat *autolisp-macro-path* "/../cl-loader.lsp"))
 
-(foreach file '("quasiquote-dotted.lsp"
-                "test-framework.lsp")
-  (mload (strcat dir file)))
+(clload (cl-path-join *autolisp-macro-path* "mruntime.lsp") nil)
 
-(foreach file '("draw-grid.lsp"
+(clload-files *autolisp-macro-path*
+              '("quasiquote-dotted.lsp"
                 "macro-demo.lsp"
                 "quasiquote-demo.lsp"
+                "draw-grid.lsp")
+              '((loader . mload)))
+
+(clload-files (cl-path-join *autolisp-macro-path* "../autolisp-test")
+              '("test-framework.lsp"
                 "test-example.lsp")
-  (mload (strcat dir file)))
+              '((loader . mload)))

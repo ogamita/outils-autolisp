@@ -67,8 +67,6 @@ sera développé en formulaire `if` + `progn` avant évaluation.
 - `unquote` et `splice` sont des marqueurs, pas des fonctions d’usage runtime direct.
 
 ## Comportement de `loader.lsp`
-`loader.lsp` résout son propre chemin via `findfile`, calcule `../autolisp-test/`, puis charge les dépendances.
+`loader.lsp` charge `mruntime.lsp`, les fichiers macro du sous-projet via `clload` + `mload`, puis les fichiers de `autolisp-test`.
 
-Si `findfile` ne retrouve pas `loader.lsp`, le script échoue immédiatement avec un message explicite vous demandant :
-- d’ajouter `outils/autolisp-macro` au `SRCHPATH`, ou
-- de charger `loader.lsp` avec un chemin absolu.
+Le mode verbeux se pilote globalement avec `*verbose*`. Vous pouvez aussi définir `*autolisp-macro-path*` avant chargement pour forcer la racine du sous-projet.
