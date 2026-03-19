@@ -1,0 +1,25 @@
+# Default text normalization.
+* text=auto
+
+# AutoLISP sources, documentation and specifications.
+*.lsp text eol=crlf
+*.lisp text eol=crlf
+*.org text eol=crlf
+*.md text eol=crlf
+*.scr text eol=crlf
+
+# Files executed directly on Unix-like systems.
+*.sh text eol=lf
+*.py text eol=lf
+*.ps1 text eol=lf
+Makefile text eol=lf
+autolisp-script/autolisp text eol=lf
+autolisp-script/make/* text eol=lf
+
+# Technical repository files.
+README.md text eol=lf
+AGENTS.md text eol=lf
+.gitattributes text eol=lf
+
+# Binary assets.
+*.pdf binary
