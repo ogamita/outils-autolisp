@@ -28,4 +28,4 @@ docs-pdf:
 	$(MAKE) -C docs pdf
 
 clean:
-	@echo "autolisp-hash-table: nothing to clean yet"
+	@true

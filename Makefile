@@ -19,3 +19,10 @@ docs-pdf:
 	$(MAKE) -C autolisp-vector     docs-pdf
 	$(MAKE) -C autolisp-hash-table docs-pdf
 	$(MAKE) -C autolisp-formatter  docs-pdf
+
+clean:
+	$(MAKE) -C autolisp-script     clean
+	$(MAKE) -C autolisp-vector     clean
+	$(MAKE) -C autolisp-hash-table clean
+	$(MAKE) -C autolisp-formatter  clean
+
