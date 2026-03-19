@@ -1,0 +1,282 @@
+#+TITLE: Manuel utilisateur de autolisp-doc
+#+AUTHOR: OpenAI
+#+LANGUAGE: fr
+#+OPTIONS: toc:2 num:t
+
+* Objet
+
+=autolisp-doc= fournit une petite couche de documentation interactive pour
+AutoLISP, alimentée par une base locale de référence extraite de la
+documentation Autodesk.
+
+Le module couvre pour l'instant :
+
+- la consultation structurée de la doc d'une fonction ;
+- la description d'objets Lisp ;
+- la recherche par nom de fonction ;
+- la recherche textuelle dans la base documentaire ;
+- une analyse simple de formes Lisp ;
+- un point d'entrée pratique =help=.
+
+* Structure du sous-projet
+
+- =src/autolisp-ref.lsp= :: base documentaire générée ;
+- =src/autolisp-doc.lsp= :: API utilisateur ;
+- =tests/= :: tests unitaires ;
+- =docs/= :: documentation utilisateur ;
+- =scripts/build_autolisp_ref.py= :: générateur de la base.
+
+* Chargement
+
+Depuis la racine du dépôt :
+
+#+begin_src lisp
+(setq *outils-autolisp-path* "/chemin/vers/outils-autolisp")
+(setq *verbose* T)
+(load (strcat *outils-autolisp-path* "/loader.lsp"))
+#+end_src
+
+Pour charger seulement =autolisp-doc= :
+
+#+begin_src lisp
+(setq *autolisp-doc-path* "/chemin/vers/outils-autolisp/autolisp-doc")
+(setq *verbose* T)
+(load (strcat *autolisp-doc-path* "/loader.lsp"))
+#+end_src
+
+* API publique
+
+Les fonctions principales existent maintenant sous deux familles de noms :
+
+- historiques / orientés CL :: =CL:documentation=, =CL:describe=,
+  =CL:apropos=, =CL:apropos-list= ;
+- préfixés =ad-= :: =ad-documentation=, =ad-describe=, =ad-apropos=,
+  =ad-apropos-list=.
+
+** Documentation
+
+*** =(CL:documentation symbol doc-type)=
+
+Retourne une chaîne formatée décrivant une fonction documentée.
+
+Types de documentation actuellement pris en charge :
+
+- =T=
+- =function=
+- =FUNCTION=
+
+Exemple :
+
+#+begin_src lisp
+(CL:documentation 'open 'function)
+#+end_src
+
+Le résultat inclut notamment :
+
+- le titre ;
+- le résumé ;
+- la signature ;
+- les arguments ;
+- les valeurs de retour ;
+- l'historique ;
+- les exemples ;
+- l'URL de la source Autodesk.
+
+** Description
+
+*** =(CL:describe object)=
+
+Affiche une description lisible de l'objet et retourne l'objet lui-même.
+
+Comportement principal :
+
+- symbole documenté :: affiche la documentation formatée ;
+- symbole lié mais non documenté :: affiche sa valeur et son type ;
+- liste :: affiche sa longueur et sa forme imprimée ;
+- autre objet :: affiche le type et la forme imprimée.
+
+Exemples :
+
+#+begin_src lisp
+(CL:describe 'open)
+(CL:describe '(1 2 3))
+(CL:describe 42)
+#+end_src
+
+** Recherche par nom
+
+*** =(CL:apropos pattern)=
+
+Affiche une ligne de résumé par symbole documenté correspondant au motif.
+
+*** =(CL:apropos-list pattern)=
+
+Retourne la liste des symboles documentés correspondant au motif, sans les
+afficher.
+
+Le motif utilise une syntaxe de wildcard simple compatible =wcmatch= :
+
+- =*= :: n'importe quelle suite de caractères ;
+- =?= :: un caractère ;
+- sans wildcard explicite, la recherche est traitée comme un *=contains=*.
+
+Exemples :
+
+#+begin_src lisp
+(CL:apropos "open")
+(CL:apropos "str*")
+(CL:apropos-list "*hash*")
+#+end_src
+
+** Point d'entrée =help=
+
+*** =(help)=
+
+Affiche l'index des fonctions d'aide disponibles.
+
+*** =(help 'symbol)=
+
+Fait une recherche par nom, comme =apropos=.
+
+*** =(help "text")=
+
+Fait une recherche textuelle dans la base de documentation complète.
+
+Exemples :
+
+#+begin_src lisp
+(help)
+(help 'open)
+(help "unicode")
+#+end_src
+
+Une variante préfixée est aussi disponible :
+
+#+begin_src lisp
+(ad-help "unicode")
+#+end_src
+
+** Analyse de formes
+
+*** =(ad-categorize form)=
+
+Analyse une forme Lisp, en particulier une forme =defun=, et retourne la liste
+des familles de symboles documentés qu'elle appelle.
+
+Exemples de catégories :
+
+- =AUTOLISP=
+- =AUTOLISP/DCL=
+- =AUTOLISP/ACTIVE-X=
+- =AUTOLISP/VISUAL-LISP-IDE=
+
+Exemple :
+
+#+begin_src lisp
+(ad-categorize
+  '(defun demo ()
+     (action_tile "accept" "(done_dialog 1)")
+     (vl-load-com)
+     (alert "ok")))
+; => (AUTOLISP/DCL AUTOLISP/ACTIVE-X AUTOLISP)
+#+end_src
+
+Alias :
+
+- =(categorize form)=
+
+*** =(ad-free-variables form)=
+
+Retourne les variables libres d'une forme, c'est-à-dire les symboles utilisés
+comme valeurs mais non liés localement ni déclarés comme paramètres.
+
+La v1 sait notamment reconnaître :
+
+- =defun= ;
+- =lambda= ;
+- =foreach= ;
+- =setq= ;
+- =quote= / =function= pour éviter de descendre dans des données ordinaires.
+
+Exemple :
+
+#+begin_src lisp
+(ad-free-variables
+  '(defun demo (a / b)
+     (setq b (+ a x))
+     (foreach item items
+       (setq z (+ item y b)))
+     (list a b z x y items)))
+; => (X ITEMS Z Y)
+#+end_src
+
+Alias :
+
+- =(free-variables form)=
+
+* Recherche textuelle
+
+La recherche textuelle inspecte plusieurs champs de chaque entrée :
+
+- nom ;
+- titre ;
+- résumé ;
+- signature ;
+- arguments ;
+- retour ;
+- historique ;
+- exemples ;
+- URL source.
+
+Cela permet par exemple de retrouver les fonctions ayant une note sur Unicode,
+sur Windows/Mac, ou sur un argument particulier.
+
+* Génération de la base documentaire
+
+Le fichier =src/autolisp-ref.lsp= est généré à partir de la documentation
+Autodesk par :
+
+#+begin_src bash
+python3 scripts/build_autolisp_ref.py
+#+end_src
+
+La base actuelle stocke, pour chaque fonction :
+
+- un nom canonique ;
+- un résumé ;
+- une famille source (=AutoLISP=, =AutoLISP/DCL=, =AutoLISP/ActiveX=,
+  =AutoLISP/Visual LISP IDE=) ;
+- une signature ;
+- les arguments ;
+- les valeurs de retour ;
+- l'historique ;
+- les exemples ;
+- l'URL d'origine.
+
+* Tests
+
+Depuis =autolisp-doc/= :
+
+#+begin_src bash
+make test-bricscad
+#+end_src
+
+Les tests valident notamment :
+
+- la présence d'entrées documentaires ;
+- le contenu de =CL:documentation= ;
+- la recherche avec =CL:apropos-list= ;
+- les résumés affichés par les fonctions d'aide via leurs helpers internes ;
+- la recherche textuelle de =help= ;
+- la catégorisation de formes ;
+- l'extraction de variables libres ;
+- la cohérence des alias =ad-=.
+
+* Limitations actuelles
+
+- la syntaxe de recherche n'est pas une expression régulière complète ;
+- =CL:documentation= ne couvre pas encore d'autres types de documentation que
+  les fonctions ;
+- il n'y a pas encore d'=inspect= interactif ;
+- la base vient actuellement de la source Autodesk ENU accessible en HTTP brut,
+  même si les GUID correspondent à la référence affichée côté FRA.
