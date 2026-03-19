@@ -1,120 +1,146 @@
 # outils-autolisp
 
-Collection d'outils et bibliothèques AutoLISP pour l'exécution, les macros, les tests, le formatage et quelques utilitaires de documentation.
+Collection d'outils et bibliothèques AutoLISP pour:
+
+- exécuter du code AutoLISP depuis le shell;
+- écrire et charger des macros;
+- lancer des tests;
+- expérimenter des structures de données;
+- consulter une base de documentation locale.
+
+## État actuel
+
+Cette semaine, le dépôt a évolué sur quatre axes principaux:
+
+- ajout du sous-projet `autolisp-doc`, avec base documentaire générée, API `documentation` / `describe` / `apropos`, tests et manuel;
+- refactorisation des `loader.lsp` autour de [`cl-loader.lsp`](/Users/pjb/works/sncf-reseau/src/outils-autolisp/cl-loader.lsp) et d'une variable globale `*verbose*`;
+- amélioration importante de `autolisp-script`, en particulier pour BricsCAD sur macOS et pour le mode interactif avec fake CAD;
+- mise à jour des `Makefile` racine et sous-projets pour mieux séparer tests, benchmarks et génération de documentation.
+
+## Architecture de chargement
+
+Les fichiers `loader.lsp` jouent le rôle d'un chargeur déclaratif minimal.
+Le helper commun [`cl-loader.lsp`](/Users/pjb/works/sncf-reseau/src/outils-autolisp/cl-loader.lsp) fournit:
+
+- `*verbose*` pour activer les traces de chargement;
+- `clload` pour charger un fichier avec options;
+- `clload-files` pour charger une liste de fichiers dans l'ordre;
+- `cl-path-join` pour construire les chemins de travail.
+
+Exemple depuis la racine du dépôt:
+
+```lisp
+(setq *outils-autolisp-path* "/chemin/vers/outils-autolisp")
+(setq *verbose* T)
+(load (strcat *outils-autolisp-path* "/loader.lsp"))
+```
 
 ## Sous-projets
 
 ### `autolisp-script`
-Wrapper CLI pour exécuter du code AutoLISP dans BricsCAD ou AutoCAD, capturer `stdout` / `stderr`, gérer un code de retour shell et piloter des tests automatisés.
 
-Statut: actif, utilisable, avec automatisation de tests en place mais comportement macOS/BricsCAD encore à stabiliser.
+Wrapper CLI pour exécuter du code AutoLISP dans BricsCAD ou AutoCAD, capturer `stdout` / `stderr`, gérer un code de retour shell et proposer un mode interactif.
 
-Documentation: [autolisp-script/doc/autolisp-script.md](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-script/doc/autolisp-script.md)
+Points notables:
+
+- support explicite de BricsCAD macOS en mode `osascript` ou `batch`;
+- REPL interactif avec handshake fichier en mode batch;
+- backend `fake-cad` pour tests automatisés sans moteur réel.
+
+Documentation: [autolisp-script/docs/autolisp-script.md](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-script/docs/autolisp-script.md)
 
 ### `autolisp-test`
+
 Petit framework de tests AutoLISP avec suites, assertions et exécution agrégée via `run-suite` et `run-all`.
 
-Statut: fonctionnel et déjà intégré à d'autres scripts du dépôt.
-
-Documentation: [autolisp-test/doc/autolisp-test.md](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-test/doc/autolisp-test.md)
+Documentation: [autolisp-test/docs/autolisp-test.md](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-test/docs/autolisp-test.md)
 
 ### `autolisp-macro`
-Runtime de macros pour AutoLISP: `defmacro`, expansion de macros, chargement compatible macros et support de `quasiquote`.
 
-Statut: avancé et vraisemblablement exploitable, avec documentation et exemples présents.
+Runtime de macros pour AutoLISP: `defmacro`, expansion de macros, `mload` et support de `quasiquote`.
 
-Documentation: [autolisp-macro/doc/autolisp-macro.md](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-macro/doc/autolisp-macro.md)
+Le `loader.lsp` du sous-projet s'appuie maintenant sur `clload` et peut être piloté via `*autolisp-macro-path*`.
 
-### `autolisp-formatter`
-Projet de formateur / pretty-printer AutoLISP, avec spécifications et plan de travail. Le dépôt contient surtout la documentation de conception à ce stade.
+Documentation: [autolisp-macro/docs/autolisp-macro.md](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-macro/docs/autolisp-macro.md)
 
-Statut: phase de conception / spécification, pas encore implémenté dans ce dépôt.
+### `autolisp-doc`
 
-Documentation: [autolisp-formatter/docs/specifications.org](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-formatter/docs/specifications.org)
+Couche de documentation interactive pour AutoLISP, alimentée par une base locale extraite de la documentation Autodesk.
+
+Le sous-projet fournit notamment:
+
+- `documentation`;
+- `describe`;
+- `apropos`;
+- `apropos-list`;
+- `help`.
+
+Documentation: [autolisp-doc/docs/autolisp-doc--manual.org](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-doc/docs/autolisp-doc--manual.org)
 
 ### `autolisp-vector`
-Sous-projet de conception puis d'implémentation d'un vecteur AutoLISP indexé par arbre, pensé comme brique de base pour des structures futures comme une table de hashage.
 
-Statut: implémentation initiale en place, avec tests BricsCAD et benchmarks optionnels activables par environnement.
+Implémentation d'un vecteur AutoLISP indexé par arbre, utilisé comme brique de base pour d'autres structures.
 
-Documentation: [autolisp-vector/doc/specification.org](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-vector/doc/specification.org)
+Documentation: [autolisp-vector/docs/autolisp-vector--manual.org](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-vector/docs/autolisp-vector--manual.org)
+
+### `autolisp-hash-table`
+
+Implémentation d'une table de hashage AutoLISP construite au-dessus de `autolisp-vector`, avec tests et benchmarks.
+
+Documentation: [autolisp-hash-table/docs/autolisp-hash-table--manual.org](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-hash-table/docs/autolisp-hash-table--manual.org)
+
+### `autolisp-formatter`
+
+Projet de formateur / pretty-printer AutoLISP. Le dépôt contient surtout les spécifications et le plan de travail.
+
+Documentation: [autolisp-formatter/docs/autolisp-formatter--specifications.org](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-formatter/docs/autolisp-formatter--specifications.org)
 
 ### `autolisp-defstruct`
-Prototype autour d'une implémentation `defstruct` pour AutoLISP. Le contenu actuel ressemble à des notes de conception et d'expérimentation plus qu'à une bibliothèque stabilisée.
 
-Statut: prototype exploratoire.
+Prototype autour d'une implémentation `defstruct` pour AutoLISP.
 
 Fichier principal: [autolisp-defstruct/defstruct.lsp](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-defstruct/defstruct.lsp)
 
 ### `scripts`
-Scripts utilitaires orientés documentation PDF sous Windows, notamment pour installer Pandoc + MiKTeX et lancer une génération PDF via `make`.
 
-Statut: utilitaires ciblés, probablement utilisables tels quels pour leur périmètre restreint.
+Scripts utilitaires orientés documentation PDF sous Windows.
 
-Documentation: [scripts/doc/scripts.md](/Users/pjb/works/sncf-reseau/src/outils-autolisp/scripts/doc/scripts.md)
+Documentation: [scripts/docs/scripts.md](/Users/pjb/works/sncf-reseau/src/outils-autolisp/scripts/docs/scripts.md)
 
-## Build et tests
+## Tests et commandes utiles
 
 Depuis la racine:
 
 ```bash
 make test-ci
+make test-bricscad
+make bench-bricscad
+make docs-pdf
 ```
 
-Cette cible délègue actuellement à `autolisp-script`.
+État des cibles principales:
 
-## Auteurs 
+- `make test-ci` lance actuellement `autolisp-script`, `autolisp-vector` et `autolisp-hash-table`;
+- [`autolisp-doc/Makefile`](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-doc/Makefile) expose ses propres tests via `make -C autolisp-doc test`;
+- `autolisp-script` propose aussi un backend de vérification sans CAD réel:
 
-Pascal Bourguignon <ext.pascal.bourguignon@reseau.sncf.fr>
-aka. Pascal Bourguignon <informatimago@gmail.com>
-avec l'aide de ChatGPT/Codex (5.2, 5.3, 5.4).
+```bash
+make -C autolisp-script test-fakecad
+```
 
+## Vérification récente
 
-## TODO Integrate with your tools
+Vérification effectuée localement sur les modifications récentes:
 
-* [Set up project integrations](https://fabrik.sncf.fr/gitlab/dmoe-pop/epure/es/outils-autolisp/-/settings/integrations)
+- comparaison avec `fabrik/develop`;
+- revue des fichiers modifiés et ajoutés;
+- validation de `autolisp-script` via `make -C autolisp-script test-fakecad`.
 
-## TODO Collaborate with your team
+Cette vérification couvre les chemins de chargement `loader.lsp` et les scénarios fake CAD BricsCAD / AutoCAD. Elle ne remplace pas une exécution complète sur moteurs réels.
 
-* [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+## Auteurs
 
-## TODO Test and Deploy
+Pascal Bourguignon <ext.pascal.bourguignon@reseau.sncf.fr>  
+aka Pascal Bourguignon <informatimago@gmail.com>
 
-Use the built-in continuous integration in GitLab.
-
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
-
-
-## TODO Installation
-
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## TODO Usage (for now, see subproject documentation)
-
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## TODO Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## TODO Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## TODO Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-Show your appreciation to those who have contributed to the project.
-
-## TODO Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+Avec l'aide de ChatGPT/Codex.
