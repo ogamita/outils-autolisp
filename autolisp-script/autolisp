@@ -308,6 +308,29 @@ wait_for_status_value() {
   return 124
 }
 
+wait_for_batch_process_exit() {
+  local timeout="$TIMEOUT_SECS"
+  [[ "$BRICSCAD_BATCH_LAUNCHED" -eq 1 ]] || return 0
+
+  while [[ "$timeout" -gt 0 ]]; do
+    if [[ -f "$BATCH_EXIT_FILE" ]]; then
+      if [[ -n "$BRICSCAD_BATCH_PID" ]]; then
+        wait "$BRICSCAD_BATCH_PID" 2>/dev/null || true
+      fi
+      return 0
+    fi
+    if [[ -n "$BRICSCAD_BATCH_PID" ]] && ! kill -0 "$BRICSCAD_BATCH_PID" 2>/dev/null; then
+      wait "$BRICSCAD_BATCH_PID" 2>/dev/null || true
+      return 0
+    fi
+    sleep 1
+    timeout=$((timeout - 1))
+  done
+
+  echo "ERROR: BricsCAD batch process did not exit after writing its final status within ${TIMEOUT_SECS}s." >&2
+  return 124
+}
+
 run_interactive_repl() {
   local self prompt cont_prompt line buffer case_dir stdout_file stderr_file
   declare -a repl_args=()
@@ -418,6 +441,7 @@ run_batch_interactive_repl() {
   payload=";REQ $req_id"$'\n'"'__AUTOLISP_QUIT__"$'\n'
   write_atomic_file "$INPFILE" "$payload"
   wait_for_status_value "STOP $req_id" || true
+  wait_for_batch_process_exit || return $?
   return 0
 }
 
@@ -486,11 +510,13 @@ on_interrupt() {
   INTERRUPT_COUNT=$((INTERRUPT_COUNT + 1))
   if [[ "$INTERRUPT_COUNT" -ge 2 ]]; then
     CLEANUP_WORKDIR="1"
+    kill_bricscad_batch_process || true
     echo "autolisp: second interrupt received; aborting now." >&2
     exit 130
   fi
   INTERRUPTED=1
   CLEANUP_WORKDIR="1"
+  kill_bricscad_batch_process || true
   echo "autolisp: interrupt requested; keeping workdir and finishing current handshake..." >&2
 }
 
@@ -869,7 +895,10 @@ if [[ "$ENGINE" == "bricscad" && $IS_WINDOWS -eq 1 && "$BRICSCAD_COM_MODE" != "o
     QUIT_ON_FINISH=0
   fi
 fi
-if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" ]]; then
+# En mode batch macOS, on veut terminer l'instance lancée pour les exécutions non interactives
+# afin d'éviter d'accumuler des processus BricsCAD bloqués. On conserve la session uniquement
+# pour le REPL batch (--interactive).
+if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" && "$INTERACTIVE" -eq 1 ]]; then
   QUIT_ON_FINISH=0
 fi
 
@@ -1330,14 +1359,11 @@ EOLISP
 fi
 
 SCRFILE="$WORKDIR/run.scr"
-cat >"$SCRFILE" <<EOF2
-_.COMMANDLINE
-(load "$(escape_lisp_string "$RUNLSPFILE")")
-EOF2
+{
+  printf '(load "%s")\r\n' "$(escape_lisp_string "$RUNLSPFILE")"
+} >"$SCRFILE"
 if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" ]]; then
-  cat >>"$SCRFILE" <<'EOF2'
-(command "_QUIT" "_Y")
-EOF2
+  printf '%s\r\n' '(command "_QUIT" "_Y")' >>"$SCRFILE"
 fi
 
 export OUTFILE ERRFILE STATUSFILE INPFILE
@@ -1772,6 +1798,19 @@ run_macos_bricscad_batch() {
   return 0
 }
 
+kill_bricscad_batch_process() {
+  if [[ "$BRICSCAD_BATCH_LAUNCHED" -ne 1 || -z "$BRICSCAD_BATCH_PID" ]]; then
+    return 0
+  fi
+  if kill -0 "$BRICSCAD_BATCH_PID" 2>/dev/null; then
+    kill -TERM "$BRICSCAD_BATCH_PID" 2>/dev/null || true
+    sleep 1
+    if kill -0 "$BRICSCAD_BATCH_PID" 2>/dev/null; then
+      kill -KILL "$BRICSCAD_BATCH_PID" 2>/dev/null || true
+    fi
+  fi
+}
+
 run_macos_autocad_fallback() {
   local app=""
   app="$(ls -1d /Applications/Autodesk*/AutoCAD*.app 2>/dev/null | head -n 1 || true)"
@@ -1863,6 +1902,16 @@ fi
 wait_rc=0
 if ! wait_for_status; then
   wait_rc=$?
+fi
+
+if [[ "$wait_rc" -eq 0 ]]; then
+  if ! wait_for_batch_process_exit; then
+    wait_rc=$?
+  fi
+fi
+
+if [[ "$wait_rc" -ne 0 ]]; then
+  kill_bricscad_batch_process || true
 fi
 
 if [[ "$INTERRUPTED" -eq 1 ]]; then

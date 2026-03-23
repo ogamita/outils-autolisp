@@ -1,4 +1,4 @@
-.PHONY: test-ci test-fakecad test-bricscad test-autocad docs-pdf clean
+.PHONY: test-ci test-fakecad test-bricscad test-bricscad-macos-batch test-bricscad-macos-osascript-attach test-autocad docs-pdf clean
 
 CAD ?= --bricscad
 TEST_BACKEND ?= real
@@ -19,8 +19,22 @@ test-fakecad:
 	./tests/run.sh --fake-cad $(TEST_RUN_ARGS) --timeout $(TEST_TIMEOUT) --bricscad
 	./tests/run.sh --fake-cad $(TEST_RUN_ARGS) --timeout $(TEST_TIMEOUT) --autocad
 
+UNAME_S := $(shell uname -s)
+
+ifeq ($(UNAME_S),Darwin)
+test-bricscad:
+	$(MAKE) test-bricscad-macos-batch
+	$(MAKE) test-bricscad-macos-osascript-attach
+
+test-bricscad-macos-batch:
+	./tests/run.sh $(TEST_BACKEND_FLAG) $(TEST_RUN_ARGS) --timeout $(TEST_TIMEOUT) --bricscad --bricscad-macos-mode batch
+
+test-bricscad-macos-osascript-attach:
+	./tests/run.sh $(TEST_BACKEND_FLAG) $(TEST_RUN_ARGS) --timeout $(TEST_TIMEOUT) --bricscad --bricscad-macos-mode osascript --bricscad-macos-app attach
+else
 test-bricscad:
 	./tests/run.sh $(TEST_BACKEND_FLAG) $(TEST_RUN_ARGS) --timeout $(TEST_TIMEOUT) --bricscad
+endif
 
 test-autocad:
 	./tests/run.sh $(TEST_BACKEND_FLAG) $(TEST_RUN_ARGS) --timeout $(TEST_TIMEOUT) --autocad

@@ -118,6 +118,13 @@ make bench-bricscad
 make docs-pdf
 ```
 
+Sous macOS, `make test-bricscad` sépare explicitement les runs BricsCAD:
+
+- `make test-bricscad-macos-batch`
+- `make test-bricscad-macos-osascript-attach`
+
+La cible agrégée lance d'abord `batch`, puis `osascript attach`. Le second mode suppose qu'une session BricsCAD soit déjà ouverte; pour `autolisp-script`, le runner interactif s'arrête et demande d'ouvrir BricsCAD avant de continuer.
+
 État des cibles principales:
 
 - `make test-ci` lance actuellement `autolisp-script`, `autolisp-vector` et `autolisp-hash-table`;

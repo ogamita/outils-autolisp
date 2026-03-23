@@ -171,7 +171,7 @@ Par défaut il est supprimé en fin d'exécution.
 - En mode `osascript`, le wrapper commence par envoyer `_.COMMANDLINE` puis la commande `(load ".../run-common.lsp")`, afin d'afficher et focaliser la ligne de commande avant l'injection; `--bricscad-macos-app launch` ouvre BricsCAD automatiquement avant l'injection et `--bricscad-macos-app attach` échoue si aucune instance n'est déjà ouverte.
 - En mode `batch`, le wrapper continue à faire toute l'I/O via `output.txt`, `errors.txt` et `status.txt`; BricsCAD ne fournit pas de sortie standard exploitable.
 - En mode `batch` avec `-i`, le wrapper garde une seule instance BricsCAD active et implémente un REPL via `input.lsp` + `status.txt`.
-- En mode BricsCAD macOS `batch`, le wrapper fait commencer `run.scr` par `_.COMMANDLINE` pour rendre visibles les expressions et résultats dans la fenêtre BricsCAD, puis termine par `(command "_QUIT" "_Y")` pour fermer l'instance lancée.
+- En mode BricsCAD macOS `batch`, `run.scr` charge directement `run-common.lsp` puis termine par `(command "_QUIT" "_Y")` pour fermer l'instance lancée. `_.COMMANDLINE` reste reserve au mode `osascript`; en pratique il perturbe le demarrage via `-b`.
 - Le fallback `osascript` dépend des autorisations Accessibilité et reste plus fragile qu'un lancement direct.
 - Sous BricsCAD, le workspace doit être `2D Drafting`. Le workspace `2D Drafting (Modern)` peut empêcher l'injection de la commande et provoquer un timeout avec `status.txt` restant à `__PENDING__`.
 - En cas de timeout sans aucune sortie ni erreur, le wrapper affiche un hint spécifique pour ce cas.
@@ -282,6 +282,13 @@ Variables utiles:
 - `TEST_TIMEOUT=<secondes>`
 - `TEST_BACKEND=fake` pour exécuter la suite contre le faux moteur de test
 - `TEST_RUN_ARGS=--verbose` pour afficher plus de détails en cas d'échec
+
+Sous macOS, `make test-bricscad` sépare maintenant les cas BricsCAD en deux invocations explicites:
+
+- `make test-bricscad-macos-batch`
+- `make test-bricscad-macos-osascript-attach`
+
+La cible agrégée `make test-bricscad` lance les deux. Le mode `osascript attach` exige qu'une session BricsCAD soit déjà ouverte; si ce n'est pas le cas et que le terminal est interactif, le runner affiche un message et attend que BricsCAD soit lancé avant de continuer.
 
 ### `make/env.ps1`
 

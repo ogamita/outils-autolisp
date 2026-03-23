@@ -31,7 +31,7 @@ while [[ $# -gt 0 ]]; do
         echo "fake-cad: SCRFILE not found: $SCRFILE" >&2
         exit 2
       fi
-      RUNLSPFILE="$(sed -n 's/^(load "\(.*\)")/\1/p' "$SCRFILE" | head -n 1)"
+      RUNLSPFILE="$(tr -d '\r' <"$SCRFILE" | sed -n 's/^(load "\(.*\)")/\1/p' | head -n 1)"
       if [[ -z "$RUNLSPFILE" || ! -f "$RUNLSPFILE" ]]; then
         echo "fake-cad: could not resolve run-common.lsp from $SCRFILE" >&2
         exit 2
@@ -110,7 +110,7 @@ extract_req_id() {
 }
 
 extract_input_form() {
-  sed '1d' "$INPFILE"
+  sed '1d' "$INPFILE" | tr -d '\r'
 }
 
 case "$SCENARIO" in
@@ -140,7 +140,6 @@ EOF
     printf '0\n' >"$STATUSFILE"
     ;;
   macos_batch_quit)
-    require_scr_contains '_.COMMANDLINE'
     require_scr_contains '(command "_QUIT" "_Y")'
     require_runlsp_contains '(setq *AUTOLISP_QUIT_ON_FINISH* 0)'
     cat >"$OUTFILE" <<'EOF'
