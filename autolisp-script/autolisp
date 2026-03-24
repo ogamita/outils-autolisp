@@ -305,14 +305,12 @@ batch_runner_done_without_status() {
       CLEANUP_WORKDIR="1"
       FORCE_REPORT_WORKDIR="1"
       batch_rc="$BRICSCAD_BATCH_RC"
-      echo "ERROR: BricsCAD batch process exited before writing a final status." >&2
+      autolisp_error "BricsCAD batch process exited before writing a final status."
       if [[ -n "$batch_rc" ]]; then
-        echo "ERROR: BricsCAD batch exit code: $batch_rc" >&2
+        autolisp_error "BricsCAD batch exit code: $batch_rc"
       fi
-      echo "ERROR: likely the startup script was not executed, or (load \"$RUNLSPFILE\") failed before autolisp initialized." >&2
-      if [[ -s "$WORKDIR/bricscad-stderr.txt" ]]; then
-        cat "$WORKDIR/bricscad-stderr.txt" >&2
-      fi
+      autolisp_hint "the startup script may not have run, or (load \"$RUNLSPFILE\") failed before autolisp initialized."
+      autolisp_verbose_dump_file "$WORKDIR/bricscad-stderr.txt"
       return 0
     fi
   fi
@@ -323,14 +321,12 @@ batch_runner_done_without_status() {
         CLEANUP_WORKDIR="1"
         FORCE_REPORT_WORKDIR="1"
         batch_rc="$BRICSCAD_BATCH_RC"
-        echo "ERROR: BricsCAD batch process exited before writing a final status." >&2
+        autolisp_error "BricsCAD batch process exited before writing a final status."
         if [[ -n "$batch_rc" ]]; then
-          echo "ERROR: BricsCAD batch exit code: $batch_rc" >&2
+          autolisp_error "BricsCAD batch exit code: $batch_rc"
         fi
-        echo "ERROR: likely the startup script was not executed, or (load \"$RUNLSPFILE\") failed before autolisp initialized." >&2
-        if [[ -s "$WORKDIR/bricscad-stderr.txt" ]]; then
-          cat "$WORKDIR/bricscad-stderr.txt" >&2
-        fi
+        autolisp_hint "the startup script may not have run, or (load \"$RUNLSPFILE\") failed before autolisp initialized."
+        autolisp_verbose_dump_file "$WORKDIR/bricscad-stderr.txt"
         return 0
       fi
     fi
@@ -355,13 +351,13 @@ batch_startup_stalled() {
 
   CLEANUP_WORKDIR="1"
   FORCE_REPORT_WORKDIR="1"
-  echo "ERROR: BricsCAD batch launch stayed pending for ${BRICSCAD_BATCH_STARTUP_TIMEOUT_SECS}s without running the startup script." >&2
-  echo "ERROR: status.txt is still '__PENDING__' and no output or error file was produced." >&2
+  autolisp_error "BricsCAD batch launch stayed pending for ${BRICSCAD_BATCH_STARTUP_TIMEOUT_SECS}s without running the startup script."
+  autolisp_hint "on this macOS setup, BricsCAD likely ignored the requested startup file before AutoLISP initialized."
   if [[ -n "$BRICSCAD_BATCH_COMMAND_FILE" && -f "$BRICSCAD_BATCH_COMMAND_FILE" ]]; then
-    echo "HINT: attempted launch command:" >&2
-    cat "$BRICSCAD_BATCH_COMMAND_FILE" >&2
+    autolisp_verbose_note "DETAIL: status.txt stayed '__PENDING__' and no output or error file was produced."
+    autolisp_verbose_note "DETAIL: attempted launch command:"
+    autolisp_verbose_dump_file "$BRICSCAD_BATCH_COMMAND_FILE"
   fi
-  echo "HINT: on this macOS setup, BricsCAD likely ignored the requested startup file before AutoLISP initialized." >&2
   kill_bricscad_batch_process || true
   return 0
 }
@@ -387,7 +383,7 @@ wait_for_status_value() {
     sleep 1
     timeout=$((timeout - 1))
   done
-  echo "ERROR: timeout waiting for status '$expected' after ${TIMEOUT_SECS}s" >&2
+  autolisp_error "timeout waiting for status '$expected' after ${TIMEOUT_SECS}s"
   return 124
 }
 
@@ -406,7 +402,7 @@ wait_for_protocol_ready() {
         return 0
         ;;
       FAILED*)
-        echo "ERROR: protocol runtime failed during startup: $protocol_status" >&2
+        autolisp_error "protocol runtime failed during startup: $protocol_status"
         return 1
         ;;
     esac
@@ -423,7 +419,7 @@ wait_for_protocol_ready() {
     timeout=$((timeout - 1))
   done
 
-  echo "ERROR: timeout waiting for protocol runtime readiness after ${TIMEOUT_SECS}s" >&2
+  autolisp_error "timeout waiting for protocol runtime readiness after ${TIMEOUT_SECS}s"
   return 124
 }
 
@@ -441,7 +437,7 @@ wait_for_protocol_status_prefix() {
     case "$protocol_status" in
       "$expected_prefix"|"$expected_prefix "*) return 0 ;;
       FAILED*)
-        echo "ERROR: protocol runtime failed: $protocol_status" >&2
+        autolisp_error "protocol runtime failed: $protocol_status"
         return 1
         ;;
     esac
@@ -458,7 +454,7 @@ wait_for_protocol_status_prefix() {
     timeout=$((timeout - 1))
   done
 
-  echo "ERROR: timeout waiting for protocol status '$expected_prefix' after ${TIMEOUT_SECS}s" >&2
+  autolisp_error "timeout waiting for protocol status '$expected_prefix' after ${TIMEOUT_SECS}s"
   return 124
 }
 
@@ -475,7 +471,7 @@ wait_for_batch_process_exit() {
     timeout=$((timeout - 1))
   done
 
-  echo "ERROR: BricsCAD batch process did not exit after writing its final status within ${TIMEOUT_SECS}s." >&2
+  autolisp_error "BricsCAD batch process did not exit after writing its final status within ${TIMEOUT_SECS}s."
   return 124
 }
 
@@ -750,7 +746,7 @@ wait_for_protocol_request_done() {
     fi
     if [[ "$current_status" == "WAITING-INPUT" ]]; then
       if ! protocol_feed_waiting_input; then
-        echo "ERROR: stdin closed while AutoLISP was waiting for input." >&2
+        autolisp_error "stdin closed while AutoLISP was waiting for input."
         return 1
       fi
       continue
@@ -766,7 +762,7 @@ wait_for_protocol_request_done() {
     if [[ "$start_ts" =~ ^[0-9]+$ && "$now" =~ ^[0-9]+$ ]]; then
       elapsed=$((now - start_ts))
       if [[ "$elapsed" -ge "$TIMEOUT_SECS" ]]; then
-        echo "ERROR: timeout waiting for protocol request $req_id after ${TIMEOUT_SECS}s" >&2
+        autolisp_error "timeout waiting for protocol request $req_id after ${TIMEOUT_SECS}s"
         return 124
       fi
     fi
@@ -1107,6 +1103,27 @@ autolisp_is_quiet() {
 
 autolisp_is_verbose() {
   [[ "$AUTOLISP_VERBOSITY" -ge 2 ]]
+}
+
+autolisp_error() {
+  printf 'ERROR: %s\n' "$*" >&2
+}
+
+autolisp_hint() {
+  autolisp_is_quiet && return 0
+  printf 'HINT: %s\n' "$*" >&2
+}
+
+autolisp_verbose_note() {
+  autolisp_is_verbose || return 0
+  printf '%s\n' "$*" >&2
+}
+
+autolisp_verbose_dump_file() {
+  local file="$1"
+  [[ -s "$file" ]] || return 0
+  autolisp_is_verbose || return 0
+  cat "$file" >&2
 }
 
 on_interrupt() {
@@ -1758,9 +1775,9 @@ for i in "${!ACTION_KINDS[@]}"; do
 done
 
 if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" && "$USE_REMOTE_PROTOCOL" -eq 1 && "$HAS_LOAD_ACTION" -eq 1 && "$ALLOW_UNSTABLE_MACOS_BATCH_LOAD" != "1" ]]; then
-  echo "ERROR: source.lsp is temporarily disabled for BricsCAD batch mode on macOS." >&2
-  echo "ERROR: this path is still unstable and has triggered BricsCAD crashes during debugging." >&2
-  echo "HINT: use -x for now, or set AUTOLISP_ALLOW_UNSTABLE_MACOS_BATCH_LOAD=1 to keep debugging this path." >&2
+  autolisp_error "source.lsp is temporarily disabled for BricsCAD batch mode on macOS."
+  autolisp_error "this path is still unstable and has triggered BricsCAD crashes during debugging."
+  autolisp_hint "use -x for now, or set AUTOLISP_ALLOW_UNSTABLE_MACOS_BATCH_LOAD=1 to keep debugging this path."
   exit 2
 fi
 
@@ -2959,7 +2976,7 @@ wait_for_status() {
     sleep 1
     timeout=$((timeout - 1))
   done
-  echo "ERROR: timeout waiting for CAD runner completion after ${TIMEOUT_SECS}s" >&2
+  autolisp_error "timeout waiting for CAD runner completion after ${TIMEOUT_SECS}s"
   if [[ "$ENGINE" == "bricscad" && $IS_WINDOWS -eq 0 && "$MACOS_ASYNC" -eq 1 ]]; then
     local status_trimmed has_output has_errors
     status_trimmed="$(tr -d '[:space:]' <"$STATUSFILE" 2>/dev/null || true)"
@@ -2968,7 +2985,7 @@ wait_for_status() {
     [[ -s "$OUTFILE" ]] && has_output=1
     [[ -s "$ERRFILE" ]] && has_errors=1
     if [[ "${status_trimmed:-}" == "__PENDING__" && "$has_output" -eq 0 && "$has_errors" -eq 0 ]]; then
-      echo "HINT: on macOS + BricsCAD, select the \"2D Drafting\" workspace, not \"2D Drafting (Modern)\", then retry." >&2
+      autolisp_hint "on macOS + BricsCAD, select the \"2D Drafting\" workspace, not \"2D Drafting (Modern)\", then retry."
     fi
   fi
   return 124

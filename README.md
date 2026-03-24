@@ -45,6 +45,7 @@ Points notables:
 
 - support explicite de BricsCAD macOS en mode `osascript` ou `batch`;
 - REPL interactif avec handshake fichier en mode batch;
+- niveaux de verbosité `--quiet`, normal et `--verbose`, avec annonce du moteur BricsCAD et de sa version au démarrage interactif;
 - backend `fake-cad` pour tests automatisés sans moteur réel.
 
 Documentation: [autolisp-script/docs/autolisp-script.md](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-script/docs/autolisp-script.md)

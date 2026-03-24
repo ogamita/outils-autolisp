@@ -21,18 +21,29 @@ Le script fabrique à la volée un fichier `run-common.lsp` qui:
 
 ## Utilisation
 ```bash
-autolisp [--autocad|--bricscad] [--timeout N] [--bootstrap-phase marker|core|log|full] [--bricscad-macos-mode auto|osascript|batch] [--bricscad-macos-app attach|launch] [--bricscad-macos-profile NOM] {source.lsp | -x expression}... [--dwg fichier.dwg] [--main C:MAIN]
-autolisp [--autocad|--bricscad] [--timeout N] [--bootstrap-phase marker|core|log|full] [--bricscad-macos-mode auto|osascript|batch] [--bricscad-macos-app attach|launch] [--bricscad-macos-profile NOM] -i|--interactive [--dwg fichier.dwg]
+autolisp [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--bricscad-macos-mode auto|osascript|batch] [--bricscad-macos-app attach|launch] [--bricscad-macos-profile NOM] {source.lsp | -x expression}... [--dwg fichier.dwg] [--main C:MAIN]
+autolisp [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--bricscad-macos-mode auto|osascript|batch] [--bricscad-macos-app attach|launch] [--bricscad-macos-profile NOM] -i|--interactive [--dwg fichier.dwg]
 ```
 
 ## Sémantique d'exécution
 - Les entrées `{source.lsp | -x expression}` sont traitées strictement dans l'ordre.
 - Chaque `source.lsp` est exécuté via `(load "...")`.
 - Chaque `-x expression` est lu puis évalué comme une forme AutoLISP.
-- `-i` / `--interactive` démarre un REPL: le wrapper lit une forme Lisp sur `stdin`, continue la lecture tant que le parenthésage reste incomplet, exécute la forme comme avec `-x`, affiche `STDOUT`, `STDERR` et `RESULT`, puis recommence.
+- `-i` / `--interactive` démarre un REPL: le wrapper lit une forme Lisp sur `stdin`, continue la lecture tant que le parenthésage reste incomplet, exécute la forme comme avec `-x`, affiche ensuite les sorties utilisateur et le résultat, puis recommence.
 - Le mode interactif est exclusif: il n'accepte pas de `source.lsp` ni de `-x` sur la même ligne de commande.
 - Si au moins un fichier `.lsp` a été fourni, le wrapper appelle ensuite `C:MAIN` par défaut, ou la commande passée avec `--main`.
 - Si une action échoue, le script continue à construire le résumé, puis renvoie `1`.
+
+## Verbosité
+- `--quiet`: supprime les messages d'information et les hints non essentiels; les erreurs restent visibles.
+- sans option: mode normal, avec sorties utilisateur et résultats sans labels techniques.
+- `--verbose`: affiche les labels structurés (`LOAD`, `EVAL`, `OUTPUT`, `RESULT`, `TOTAL`, etc.) ainsi que davantage de diagnostics shell.
+
+En mode interactif BricsCAD batch sur macOS, le démarrage annonce aussi le moteur effectivement lancé, par exemple:
+
+```text
+autolisp: launched BricsCAD 26.0 pid=4724
+```
 
 Exemples:
 
@@ -92,28 +103,45 @@ Le wrapper initialise lui-même le statut à `99`, exécute les actions demandé
 Autrement dit, un script LISP peut écrire son propre statut intermédiaire, mais le code de sortie final est gouverné par le wrapper.
 
 ## Format de sortie
-Le `stdout` restitué par le wrapper est structuré à partir du fichier `output.txt`.
+Le `stdout` restitué par le wrapper est reconstruit à partir de `output.txt`.
 
-En particulier, la sortie utilisateur visible (`print`, `princ`, `prin1`, `prompt`) est maintenant miroirée directement dans `output.txt` pendant les phases `load`, `eval` et `main`. Le wrapper n'a donc plus besoin de dépendre uniquement des journaux de session du CAD pour reconstruire `OUTPUT`.
+En particulier, la sortie utilisateur visible (`print`, `princ`, `prin1`, `prompt`) est miroirée directement dans `output.txt` pendant les phases `load`, `eval` et `main`.
 
-On retrouve en général:
+Par niveau de verbosité:
 
-- `LOAD <chemin>`
-- `LOADED <chemin>`
-- `EVAL <expression>`
-- `RESULT <valeur>`
-- `MAIN <commande>`
-- `MAIN-RESULT <valeur>`
-- `OUTPUT` suivi des lignes écrites par `print` / `princ` / `prin1` / `prompt`
-- `TOTAL=<n> OK=<n> FAIL=<n> ERROR=<n>`
+- `--quiet` et mode normal:
+  - affichent seulement les sorties utilisateur et les valeurs finales;
+  - n'affichent pas les labels techniques `STDOUT`, `STDERR`, `RESULT`, `LOAD`, `EVAL`, `MAIN`, `TOTAL`, etc.
+- `--verbose`:
+  - conserve le format structuré du wrapper;
+  - ajoute davantage de diagnostics shell lors des timeouts ou problèmes de lancement.
 
-Le `stderr` contient les messages écrits dans `errors.txt`, par exemple:
+Exemple normal avec `-x`:
+
+```text
+"Hi"
+3
+```
+
+Exemple `--verbose` avec `-x`:
+
+```text
+EVAL (progn (print "Hi") (+ 1 2))
+OUTPUT
+"Hi"
+RESULT 3
+TOTAL=1 OK=1 FAIL=0 ERROR=0
+```
+
+Le `stderr` contient les messages d'erreur, par exemple:
 
 - `ERROR load ...`
 - `ERROR eval ...`
 - `ERROR main ...`
 - erreurs de lancement du moteur CAD
 - timeout d'attente
+
+En mode normal et `--quiet`, ces erreurs restent concises. En `--verbose`, elles sont accompagnées des détails structurés déjà présents sur `stdout`, et des diagnostics shell supplémentaires si nécessaire.
 
 ## Répertoire de travail
 Chaque exécution crée un répertoire temporaire sous:
@@ -372,7 +400,7 @@ En CI GitLab, c'est ce backend qui est utilisé aujourd'hui.
   - fournir `--dwg` ou définir `AUTOLISP_DWG`
 - `ERROR: timeout waiting for CAD runner completion`
   - augmenter `AUTOLISP_WAIT_SECS`
-  - relancer avec `AUTOLISP_KEEP_WORKDIR=1 AUTOLISP_VERBOSE=1`
+  - relancer avec `AUTOLISP_KEEP_WORKDIR=1 AUTOLISP_VERBOSE=1` ou `--verbose`
   - inspecter ensuite `output.txt`, `errors.txt`, `status.txt` et `logs/`
 - Timeout BricsCAD macOS avec `status.txt=__PENDING__` et fichiers de sortie vides
   - vérifier que le workspace actif est `2D Drafting`
