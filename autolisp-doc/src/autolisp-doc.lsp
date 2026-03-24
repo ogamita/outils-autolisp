@@ -567,7 +567,7 @@
              "Planned:"
              "  inspect"))
     (princ cl:line)
-    (terpri)))
+    (terpri))
 
 (defun help (cl:arg / cl:matches)
   (cond

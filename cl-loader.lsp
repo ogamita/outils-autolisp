@@ -18,8 +18,13 @@
 (defun cl-path-join (cl-root cl-relative-path /)
   (strcat cl-root "/" cl-relative-path))
 
+(defun cl-loader-default-loader ()
+  (if (boundp '*clload-default-loader*)
+    *clload-default-loader*
+    'load))
+
 (defun clload (cl-path cl-options / cl-loader cl-verbose cl-result)
-  (setq cl-loader (cl-loader-option 'loader cl-options 'load))
+  (setq cl-loader (cl-loader-option 'loader cl-options (cl-loader-default-loader)))
   (setq cl-verbose (cl-loader-option 'verbose cl-options *verbose*))
   (if (findfile cl-path)
     (progn

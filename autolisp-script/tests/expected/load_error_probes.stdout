@@ -1,0 +1,18 @@
+== bad-top ==
+autolisp: launched BricsCAD 26.0 pid=PID
+ERROR protocol request 1: while loading /tmp/autolisp-load-errors.TMPDIR/bad-top.lsp (form starting at line 1) at line 2, column 11 in defun c:bad-top: extra right parenthesis on input
+
+Bye bye!
+
+== bad-outer ==
+autolisp: launched BricsCAD 26.0 pid=PID
+ERROR protocol request 1: while loading /tmp/autolisp-load-errors.TMPDIR/bad-outer.lsp (form starting at line 1) at line 1, column 1: while loading /tmp/autolisp-load-errors.TMPDIR/bad-inner.lsp (form starting at line 1) at line 2, column 13 in defun c:bad-inner: extra right parenthesis on input [load stack: /tmp/autolisp-load-errors.TMPDIR/bad-outer.lsp -> /tmp/autolisp-load-errors.TMPDIR/bad-inner.lsp]
+
+Bye bye!
+
+== bad-eof ==
+autolisp: launched BricsCAD 26.0 pid=PID
+ERROR protocol request 1: while loading /tmp/autolisp-load-errors.TMPDIR/bad-eof.lsp (form starting at line 1) at line 2, column 1 in defun c:bad-eof: unexpected end of file while reading form
+
+Bye bye!
+

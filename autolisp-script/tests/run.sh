@@ -380,20 +380,26 @@ run_stdin_case() {
   shift 6
   local -a case_env=()
   local -a env_vars=()
+  local expected_fake_invocations=""
 
   while [[ $# -gt 1 && "$1" == "--env" ]]; do
     case_env+=("$2")
     shift 2
   done
+  if [[ $# -gt 1 && "$1" == "--expect-fake-invocations" ]]; then
+    expected_fake_invocations="$2"
+    shift 2
+  fi
 
   local case_dir stdout_file stderr_file rc_file actual_rc cad_workdir_root
-  local expected_stdout_file expected_stderr_file
+  local expected_stdout_file expected_stderr_file fake_invocation_file actual_fake_invocations
   case_dir="$(mktemp -d "$TMP_DIR/${name}.XXXXXX")"
   stdout_file="$case_dir/stdout.txt"
   stderr_file="$case_dir/stderr.txt"
   rc_file="$case_dir/rc.txt"
   expected_stdout_file="$case_dir/expected.stdout"
   expected_stderr_file="$case_dir/expected.stderr"
+  fake_invocation_file="$case_dir/fake-invocations.txt"
   cad_workdir_root="$(select_cad_workdir_root "$name" "$case_dir")"
 
   materialize_expected "$expected_stdout" "$expected_stdout_file"
@@ -420,6 +426,7 @@ run_stdin_case() {
   if [[ "$USE_FAKE_CAD" -eq 1 ]]; then
     cmd_env+=(
       "AUTOLISP_FAKE_SCENARIO=$scenario"
+      "AUTOLISP_FAKE_INVOCATION_FILE=$fake_invocation_file"
       "BRICSCAD_COM_MODE=off"
       "AUTOCAD_COM_MODE=off"
     )
@@ -480,25 +487,66 @@ run_stdin_case() {
     return
   fi
 
+  if [[ -n "$expected_fake_invocations" ]]; then
+    actual_fake_invocations=0
+    if [[ -f "$fake_invocation_file" ]]; then
+      actual_fake_invocations="$(wc -l <"$fake_invocation_file" 2>/dev/null || echo 0)"
+      actual_fake_invocations="${actual_fake_invocations//[[:space:]]/}"
+    fi
+    if [[ "$actual_fake_invocations" != "$expected_fake_invocations" ]]; then
+      echo "$name KO" >&2
+      echo "FAIL $name: expected fake CAD invocations=$expected_fake_invocations got $actual_fake_invocations" >&2
+      failures=$((failures + 1))
+      echo "workdir: $cad_workdir_root" >&2
+      return
+    fi
+  fi
+
   echo "$name OK"
 }
 
 run_standard_cases() {
-  run_case \
-    "eval_prints" \
-    "eval_prints" \
-    "$SCRIPT_DIR/expected/eval_prints.stdout" \
-    "$SCRIPT_DIR/expected/empty.stderr" \
-    0 \
-    -x '(progn (print (quote "Hello World")) (print "Hiya!"))'
+  if [[ "$ENGINE_FLAG" == "--bricscad" && "$USE_FAKE_CAD" -eq 1 && "$IS_MACOS" -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_TEST_MODE" == "batch" ]]; then
+    run_case \
+      "eval_prints" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/expected/eval_prints.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_OS=Darwin \
+      --env BRICSCAD_MACOS_MODE=batch \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
+      -x '(progn (print (quote "Hello World")) (print "Hiya!"))'
 
-  run_case \
-    "eval_no_output" \
-    "eval_no_output" \
-    "$SCRIPT_DIR/expected/eval_no_output.stdout" \
-    "$SCRIPT_DIR/expected/empty.stderr" \
-    0 \
-    -x '(+ 1 2)'
+    run_case \
+      "eval_no_output" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/expected/eval_no_output.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_OS=Darwin \
+      --env BRICSCAD_MACOS_MODE=batch \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
+      -x '(+ 1 2)'
+  else
+    run_case \
+      "eval_prints" \
+      "eval_prints" \
+      "$SCRIPT_DIR/expected/eval_prints.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      -x '(progn (print (quote "Hello World")) (print "Hiya!"))'
+
+    run_case \
+      "eval_no_output" \
+      "eval_no_output" \
+      "$SCRIPT_DIR/expected/eval_no_output.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      -x '(+ 1 2)'
+  fi
 
   if [[ "$ENGINE_FLAG" == "--bricscad" && "$USE_FAKE_CAD" -eq 1 ]]; then
     run_case \
@@ -509,6 +557,8 @@ run_standard_cases() {
       0 \
       --env AUTOLISP_OS=Darwin \
       --env BRICSCAD_MACOS_MODE=batch \
+      --env AUTOLISP_REMOTE_IO_MODE=off \
+      --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
       -x '(+ 1 2)'
 
     run_case \
@@ -519,55 +569,172 @@ run_standard_cases() {
       0 \
       --env AUTOLISP_OS=Darwin \
       --env BRICSCAD_MACOS_MODE=batch \
+      --env AUTOLISP_REMOTE_IO_MODE=off \
       --env AUTOLISP_FAKE_EXPECT_PROFILE=Lisp \
       --bricscad-macos-profile Lisp \
       -x '(+ 1 2)'
+
+    run_case \
+      "macos_batch_protocol_eval" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/expected/eval_no_output.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_OS=Darwin \
+      --env BRICSCAD_MACOS_MODE=batch \
+      --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      -x '(+ 1 2)'
+
+    run_case \
+      "macos_batch_protocol_load" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/expected/load_side_effect.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_OS=Darwin \
+      --env BRICSCAD_MACOS_MODE=batch \
+      --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --env AUTOLISP_ALLOW_UNSTABLE_MACOS_BATCH_LOAD=1 \
+      "$SCRIPT_DIR/fixtures/load-side-effect.lsp"
   fi
 
-  run_case \
-    "eval_load_string" \
-    "eval_load_string" \
-    "$SCRIPT_DIR/expected/eval_load_string.stdout" \
-    "$SCRIPT_DIR/expected/empty.stderr" \
-    0 \
-    -x '(load "loader.lsp")'
+  if [[ "$ENGINE_FLAG" == "--bricscad" && "$USE_FAKE_CAD" -eq 1 && "$IS_MACOS" -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_TEST_MODE" == "batch" ]]; then
+    run_case \
+      "eval_load_string" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/expected/eval_load_string.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_OS=Darwin \
+      --env BRICSCAD_MACOS_MODE=batch \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
+      -x '(load "loader.lsp")'
 
-  run_case \
-    "load_main_default" \
-    "load_main_default" \
-    "$SCRIPT_DIR/expected/load_main_default.stdout" \
-    "$SCRIPT_DIR/expected/empty.stderr" \
-    0 \
-    "$SCRIPT_DIR/fixtures/main-default.lsp"
+    run_case \
+      "load_main_default" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/expected/load_main_default.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_OS=Darwin \
+      --env BRICSCAD_MACOS_MODE=batch \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
+      --env AUTOLISP_ALLOW_UNSTABLE_MACOS_BATCH_LOAD=1 \
+      "$SCRIPT_DIR/fixtures/main-default.lsp"
 
-  run_case \
-    "load_main_custom" \
-    "load_main_custom" \
-    "$SCRIPT_DIR/expected/load_main_custom.stdout" \
-    "$SCRIPT_DIR/expected/empty.stderr" \
-    0 \
-    "$SCRIPT_DIR/fixtures/main-custom.lsp" \
-    --main C:RUN_BASIC
+    run_case \
+      "load_main_custom" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/expected/load_main_custom.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_OS=Darwin \
+      --env BRICSCAD_MACOS_MODE=batch \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
+      --env AUTOLISP_ALLOW_UNSTABLE_MACOS_BATCH_LOAD=1 \
+      "$SCRIPT_DIR/fixtures/main-custom.lsp" \
+      --main C:RUN_BASIC
 
-  run_case \
-    "load_side_effect" \
-    "load_side_effect" \
-    "$SCRIPT_DIR/expected/load_side_effect.stdout" \
-    "$SCRIPT_DIR/expected/empty.stderr" \
-    0 \
-    "$SCRIPT_DIR/fixtures/load-side-effect.lsp"
+    run_case \
+      "load_side_effect" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/expected/load_side_effect.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_OS=Darwin \
+      --env BRICSCAD_MACOS_MODE=batch \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
+      --env AUTOLISP_ALLOW_UNSTABLE_MACOS_BATCH_LOAD=1 \
+      "$SCRIPT_DIR/fixtures/load-side-effect.lsp"
+  else
+    run_case \
+      "eval_load_string" \
+      "eval_load_string" \
+      "$SCRIPT_DIR/expected/eval_load_string.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      -x '(load "loader.lsp")'
+
+    run_case \
+      "load_main_default" \
+      "load_main_default" \
+      "$SCRIPT_DIR/expected/load_main_default.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      "$SCRIPT_DIR/fixtures/main-default.lsp"
+
+    run_case \
+      "load_main_custom" \
+      "load_main_custom" \
+      "$SCRIPT_DIR/expected/load_main_custom.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      "$SCRIPT_DIR/fixtures/main-custom.lsp" \
+      --main C:RUN_BASIC
+
+    run_case \
+      "load_side_effect" \
+      "load_side_effect" \
+      "$SCRIPT_DIR/expected/load_side_effect.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      "$SCRIPT_DIR/fixtures/load-side-effect.lsp"
+  fi
 }
 
 run_interactive_cases() {
   if [[ "$ENGINE_FLAG" == "--bricscad" && "$IS_MACOS" -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_TEST_MODE" == "batch" ]]; then
     run_stdin_case \
       "interactive_repl" \
-      "interactive_batch" \
+      "protocol_batch" \
       "$SCRIPT_DIR/fixtures/interactive-input.lsp" \
       "$SCRIPT_DIR/expected/interactive_repl.stdout" \
       "$SCRIPT_DIR/expected/empty.stderr" \
       0 \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --expect-fake-invocations 1 \
       --interactive
+
+    run_stdin_case \
+      "interactive_repl_verbose" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/fixtures/interactive-input.lsp" \
+      "$SCRIPT_DIR/expected/interactive_repl_verbose.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --expect-fake-invocations 1 \
+      --interactive \
+      --verbose
+
+    run_stdin_case \
+      "interactive_quit" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/fixtures/interactive-quit-input.lsp" \
+      "$SCRIPT_DIR/expected/interactive_quit.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --expect-fake-invocations 1 \
+      --interactive
+
+    run_stdin_case \
+      "interactive_quit_quiet" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/fixtures/interactive-quit-input.lsp" \
+      "$SCRIPT_DIR/expected/interactive_quit.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --expect-fake-invocations 1 \
+      --interactive \
+      --quiet
   else
     run_stdin_case \
       "interactive_repl" \
@@ -582,13 +749,14 @@ run_interactive_cases() {
   if [[ "$ENGINE_FLAG" == "--bricscad" && "$USE_FAKE_CAD" -eq 1 ]]; then
     run_stdin_case \
       "interactive_batch_repl" \
-      "interactive_batch" \
+      "protocol_batch" \
       "$SCRIPT_DIR/fixtures/interactive-input.lsp" \
       "$SCRIPT_DIR/expected/interactive_repl.stdout" \
       "$SCRIPT_DIR/expected/empty.stderr" \
       0 \
       --env AUTOLISP_OS=Darwin \
       --env BRICSCAD_MACOS_MODE=batch \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
       --interactive
   fi
 }

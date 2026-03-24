@@ -1,16 +1,7 @@
-STDOUT
-STDERR
-RESULT
 3
 
-STDOUT
 "Hi"
-STDERR
-RESULT
 10
 
-STDOUT
-STDERR
 ERROR eval (/ 1 0): divide by zero
-RESULT
 

@@ -17,6 +17,8 @@
 
 (outils-load-library *outils-autolisp-path*)
 
-;; (setq *outils-autolisp-path* "/Users/pjb/works/sncf-reseau/src/outils-autolisp")
-;; (setq *verbose* T)
-;; (load (strcat *outils-autolisp-path* "/loader.lsp"))
+;; (progn
+;;   (setq *outils-autolisp-path* "/Users/pjb/works/sncf-reseau/src/outils-autolisp")
+;;   (setq *verbose* T)
+;;   (load (strcat *outils-autolisp-path* "/loader.lsp")))
+

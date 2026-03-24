@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Shell-side helpers for the future remote I/O protocol.
+. "$SELF_DIR/lib/autolisp-remote-io.sh"
+
 usage() {
   cat <<'EOU'
 Usage:
-  autolisp-v4 [--autocad|--bricscad] [--timeout N] [--bootstrap-phase marker|core|log|full] [--bricscad-macos-mode auto|osascript|batch] [--bricscad-macos-app attach|launch] [--bricscad-macos-profile NAME] { source.lsp | -x expression }... [--dwg file.dwg] [--main C:MAIN]
-  autolisp-v4 [--autocad|--bricscad] [--timeout N] [--bootstrap-phase marker|core|log|full] [--bricscad-macos-mode auto|osascript|batch] [--bricscad-macos-app attach|launch] [--bricscad-macos-profile NAME] -i|--interactive [--dwg file.dwg]
+  autolisp-v4 [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--bricscad-macos-mode auto|osascript|batch] [--bricscad-macos-app attach|launch] [--bricscad-macos-profile NAME] { source.lsp | -x expression }... [--dwg file.dwg] [--main C:MAIN]
+  autolisp-v4 [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--bricscad-macos-mode auto|osascript|batch] [--bricscad-macos-app attach|launch] [--bricscad-macos-profile NAME] -i|--interactive [--dwg file.dwg]
 
 Examples:
   autolisp test.lsp
@@ -40,6 +44,7 @@ Environment overrides:
   AUTOLISP_WAIT_SECS      wait timeout for async modes / COM bridge (default: 180)
   AUTOLISP_KEEP_WORKDIR   1 to keep temporary workdir
   AUTOLISP_VERBOSE        1 for extra diagnostics
+  AUTOLISP_QUIET          1 to suppress informational messages
 
 Notes:
   - AutoCAD Core Console (accoreconsole.exe) est Windows-only dans la pratique.
@@ -58,8 +63,11 @@ BRICSCAD_EXE="${BRICSCAD_EXE:-}"
 BRICSCAD_MACOS_MODE="${BRICSCAD_MACOS_MODE:-auto}"
 BRICSCAD_MACOS_APP_MODE="${BRICSCAD_MACOS_APP_MODE:-launch}"
 BRICSCAD_MACOS_PROFILE="${BRICSCAD_MACOS_PROFILE:-}"
+AUTOLISP_REMOTE_IO_MODE="${AUTOLISP_REMOTE_IO_MODE:-auto}"
 BOOTSTRAP_PHASE="${AUTOLISP_BOOTSTRAP_PHASE:-full}"
 INTERACTIVE=0
+CLI_VERBOSE=0
+CLI_QUIET=0
 
 declare -a ACTION_KINDS=()
 declare -a ACTION_VALUES=()
@@ -129,6 +137,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     -i|--interactive)
       INTERACTIVE=1
+      shift
+      ;;
+    --verbose)
+      CLI_VERBOSE=1
+      shift
+      ;;
+    --quiet)
+      CLI_QUIET=1
       shift
       ;;
     -x)
@@ -220,7 +236,7 @@ exit(($started && !$in_string && !$in_comment && $depth == 0) ? 0 : 1);
 interactive_print_response() {
   local stdout_file="$1"
   local stderr_file="$2"
-  local stdout_block result_line
+  local stdout_block result_line emitted=0
 
   stdout_block="$(
     awk '
@@ -232,30 +248,47 @@ interactive_print_response() {
   )"
   result_line="$(awk '/^RESULT /{sub(/^RESULT /, ""); print; exit}' "$stdout_file")"
 
-  printf 'STDOUT\n'
+  if autolisp_is_verbose; then
+    printf 'STDOUT\n'
+    if [[ -n "$stdout_block" ]]; then
+      printf '%s\n' "$stdout_block"
+    fi
+
+    printf 'STDERR\n'
+    if [[ -s "$stderr_file" ]]; then
+      cat "$stderr_file"
+    fi
+
+    printf 'RESULT\n'
+    if [[ -n "$result_line" ]]; then
+      printf '%s\n' "$result_line"
+    fi
+    printf '\n'
+    return 0
+  fi
+
   if [[ -n "$stdout_block" ]]; then
     printf '%s\n' "$stdout_block"
+    emitted=1
   fi
 
-  printf 'STDERR\n'
   if [[ -s "$stderr_file" ]]; then
     cat "$stderr_file"
+    emitted=1
   fi
 
-  printf 'RESULT\n'
   if [[ -n "$result_line" ]]; then
     printf '%s\n' "$result_line"
+    emitted=1
   fi
-  printf '\n'
+
+  if [[ "$emitted" -eq 1 ]]; then
+    printf '\n'
+  fi
 }
 
 write_atomic_file() {
-  local target="$1"
-  local content="$2"
-  local tmp
-  tmp="${target}.tmp.$$.$RANDOM"
-  printf '%s' "$content" >"$tmp"
-  mv "$tmp" "$target"
+  autolisp_protocol_write_atomic_file "$1" "$2"
 }
 
 read_status_file() {
@@ -267,11 +300,11 @@ read_status_file() {
 batch_runner_done_without_status() {
   local current_status="$1"
   local batch_rc=""
-  if [[ "$BRICSCAD_BATCH_LAUNCHED" -eq 1 && -f "$BATCH_EXIT_FILE" ]]; then
+  if [[ "$BRICSCAD_BATCH_COMPLETED" -eq 1 ]]; then
     if [[ -z "$current_status" || "$current_status" == "__PENDING__" || "$current_status" == "99" ]]; then
       CLEANUP_WORKDIR="1"
       FORCE_REPORT_WORKDIR="1"
-      batch_rc="$(awk 'NF{line=$0} END{print line}' "$BATCH_EXIT_FILE" 2>/dev/null || true)"
+      batch_rc="$BRICSCAD_BATCH_RC"
       echo "ERROR: BricsCAD batch process exited before writing a final status." >&2
       if [[ -n "$batch_rc" ]]; then
         echo "ERROR: BricsCAD batch exit code: $batch_rc" >&2
@@ -283,7 +316,54 @@ batch_runner_done_without_status() {
       return 0
     fi
   fi
+  if [[ "$BRICSCAD_BATCH_LAUNCHED" -eq 1 ]]; then
+    if ! bricscad_batch_process_running; then
+      reap_bricscad_batch_process || true
+      if [[ -z "$current_status" || "$current_status" == "__PENDING__" || "$current_status" == "99" ]]; then
+        CLEANUP_WORKDIR="1"
+        FORCE_REPORT_WORKDIR="1"
+        batch_rc="$BRICSCAD_BATCH_RC"
+        echo "ERROR: BricsCAD batch process exited before writing a final status." >&2
+        if [[ -n "$batch_rc" ]]; then
+          echo "ERROR: BricsCAD batch exit code: $batch_rc" >&2
+        fi
+        echo "ERROR: likely the startup script was not executed, or (load \"$RUNLSPFILE\") failed before autolisp initialized." >&2
+        if [[ -s "$WORKDIR/bricscad-stderr.txt" ]]; then
+          cat "$WORKDIR/bricscad-stderr.txt" >&2
+        fi
+        return 0
+      fi
+    fi
+  fi
   return 1
+}
+
+batch_startup_stalled() {
+  local current_status="$1"
+  local now elapsed
+
+  [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" ]] || return 1
+  [[ "$BRICSCAD_BATCH_LAUNCHED" -eq 1 && "$BRICSCAD_BATCH_START_TS" -gt 0 ]] || return 1
+  [[ "$current_status" == "__PENDING__" ]] || return 1
+  [[ ! -s "$OUTFILE" && ! -s "$ERRFILE" ]] || return 1
+  bricscad_batch_process_running || return 1
+
+  now="$(date +%s 2>/dev/null || echo 0)"
+  [[ "$now" =~ ^[0-9]+$ ]] || return 1
+  elapsed=$((now - BRICSCAD_BATCH_START_TS))
+  [[ "$elapsed" -ge "$BRICSCAD_BATCH_STARTUP_TIMEOUT_SECS" ]] || return 1
+
+  CLEANUP_WORKDIR="1"
+  FORCE_REPORT_WORKDIR="1"
+  echo "ERROR: BricsCAD batch launch stayed pending for ${BRICSCAD_BATCH_STARTUP_TIMEOUT_SECS}s without running the startup script." >&2
+  echo "ERROR: status.txt is still '__PENDING__' and no output or error file was produced." >&2
+  if [[ -n "$BRICSCAD_BATCH_COMMAND_FILE" && -f "$BRICSCAD_BATCH_COMMAND_FILE" ]]; then
+    echo "HINT: attempted launch command:" >&2
+    cat "$BRICSCAD_BATCH_COMMAND_FILE" >&2
+  fi
+  echo "HINT: on this macOS setup, BricsCAD likely ignored the requested startup file before AutoLISP initialized." >&2
+  kill_bricscad_batch_process || true
+  return 0
 }
 
 wait_for_status_value() {
@@ -298,6 +378,9 @@ wait_for_status_value() {
     if [[ "$current" == "$expected" ]]; then
       return 0
     fi
+    if batch_startup_stalled "$current"; then
+      return 124
+    fi
     if batch_runner_done_without_status "$current"; then
       return 1
     fi
@@ -308,19 +391,84 @@ wait_for_status_value() {
   return 124
 }
 
+wait_for_protocol_ready() {
+  local timeout="$TIMEOUT_SECS"
+  local protocol_status legacy_status
+
+  while [[ "$timeout" -gt 0 ]]; do
+    if [[ "$INTERRUPTED" -eq 1 ]]; then
+      return 130
+    fi
+
+    protocol_status="$(autolisp_protocol_read_status)"
+    case "$protocol_status" in
+      READY*|WAITING-INPUT*)
+        return 0
+        ;;
+      FAILED*)
+        echo "ERROR: protocol runtime failed during startup: $protocol_status" >&2
+        return 1
+        ;;
+    esac
+
+    legacy_status="$(read_status_file)"
+    if batch_startup_stalled "$legacy_status"; then
+      return 124
+    fi
+    if batch_runner_done_without_status "$legacy_status"; then
+      return 1
+    fi
+
+    sleep 1
+    timeout=$((timeout - 1))
+  done
+
+  echo "ERROR: timeout waiting for protocol runtime readiness after ${TIMEOUT_SECS}s" >&2
+  return 124
+}
+
+wait_for_protocol_status_prefix() {
+  local expected_prefix="$1"
+  local timeout="$TIMEOUT_SECS"
+  local protocol_status legacy_status
+
+  while [[ "$timeout" -gt 0 ]]; do
+    if [[ "$INTERRUPTED" -eq 1 ]]; then
+      return 130
+    fi
+
+    protocol_status="$(autolisp_protocol_read_status)"
+    case "$protocol_status" in
+      "$expected_prefix"|"$expected_prefix "*) return 0 ;;
+      FAILED*)
+        echo "ERROR: protocol runtime failed: $protocol_status" >&2
+        return 1
+        ;;
+    esac
+
+    legacy_status="$(read_status_file)"
+    if batch_startup_stalled "$legacy_status"; then
+      return 124
+    fi
+    if batch_runner_done_without_status "$legacy_status"; then
+      return 1
+    fi
+
+    sleep 1
+    timeout=$((timeout - 1))
+  done
+
+  echo "ERROR: timeout waiting for protocol status '$expected_prefix' after ${TIMEOUT_SECS}s" >&2
+  return 124
+}
+
 wait_for_batch_process_exit() {
   local timeout="$TIMEOUT_SECS"
   [[ "$BRICSCAD_BATCH_LAUNCHED" -eq 1 ]] || return 0
 
   while [[ "$timeout" -gt 0 ]]; do
-    if [[ -f "$BATCH_EXIT_FILE" ]]; then
-      if [[ -n "$BRICSCAD_BATCH_PID" ]]; then
-        wait "$BRICSCAD_BATCH_PID" 2>/dev/null || true
-      fi
-      return 0
-    fi
-    if [[ -n "$BRICSCAD_BATCH_PID" ]] && ! kill -0 "$BRICSCAD_BATCH_PID" 2>/dev/null; then
-      wait "$BRICSCAD_BATCH_PID" 2>/dev/null || true
+    if ! bricscad_batch_process_running; then
+      reap_bricscad_batch_process || true
       return 0
     fi
     sleep 1
@@ -329,6 +477,397 @@ wait_for_batch_process_exit() {
 
   echo "ERROR: BricsCAD batch process did not exit after writing its final status within ${TIMEOUT_SECS}s." >&2
   return 124
+}
+
+PROTOCOL_REQUEST_SEQ=0
+PROTOCOL_CLIENT_REQ_ID=0
+PROTOCOL_STREAM_OUT_LINES=0
+PROTOCOL_STREAM_ERR_LINES=0
+PROTOCOL_STREAM_OUTPUT_OPEN=0
+PROTOCOL_STREAMED_OUTPUT=0
+PROTOCOL_FOREGROUND_RELAY_PID=""
+PROTOCOL_LAST_REQUEST_QUIT=0
+PROTOCOL_INTERACTIVE_HELPER_PID=""
+PROTOCOL_INTERACTIVE_HELPER_STDIN_OPEN=0
+
+protocol_new_request_slot() {
+  PROTOCOL_REQUEST_SEQ=$((PROTOCOL_REQUEST_SEQ + 1))
+  printf -v PROTOCOL_REQUEST_TAG '%03d' "$PROTOCOL_REQUEST_SEQ"
+}
+
+build_protocol_eval_request() {
+  local form_text="$1"
+  local eval_file request_file lisp_eval_file
+
+  protocol_new_request_slot
+  eval_file="$WORKDIR/protocol-eval-$PROTOCOL_REQUEST_TAG.lsp"
+  request_file="$WORKDIR/protocol-request-$PROTOCOL_REQUEST_TAG.lsp"
+  lisp_eval_file="$(to_runtime_lisp_path "$eval_file")"
+
+  printf '%s' "$form_text" >"$eval_file"
+  {
+    printf '(autolisp-request-reset)\n'
+    printf '(if (autolisp-run-eval-file 1 "%s") (autolisp-note-ok) (autolisp-note-fail))\n' \
+      "$(escape_lisp_string "$lisp_eval_file")"
+    printf '(autolisp-request-exit-code)\n'
+  } >"$request_file"
+
+  printf '%s\n' "$request_file"
+}
+
+build_protocol_actions_request() {
+  local request_file idx kind abs_src eval_src
+
+  protocol_new_request_slot
+  request_file="$WORKDIR/protocol-request-$PROTOCOL_REQUEST_TAG.lsp"
+
+  {
+    printf '(autolisp-request-reset)\n'
+    for idx in "${!ACTION_KINDS[@]}"; do
+      kind="${ACTION_KINDS[$idx]}"
+      if [[ "$kind" == "load" ]]; then
+        abs_src="${LOAD_PATHS[$idx]}"
+        printf '(if (autolisp-run-load %s "%s") (autolisp-note-ok) (autolisp-note-fail))\n' \
+          "$((idx + 1))" "$(escape_lisp_string "$abs_src")"
+      else
+        eval_src="${EVAL_PATHS[$idx]}"
+        printf '(if (autolisp-run-eval-file %s "%s") (autolisp-note-ok) (autolisp-note-fail))\n' \
+          "$((idx + 1))" "$(escape_lisp_string "$eval_src")"
+      fi
+    done
+    if [[ "$HAS_LOAD_ACTION" -eq 1 ]]; then
+      printf '(if (= *AUTOLISP_FAIL* 0) (if (autolisp-run-main %s "%s") (autolisp-note-ok) (autolisp-note-fail)))\n' \
+        "$(( ${#ACTION_KINDS[@]} + 1 ))" "$(escape_lisp_string "$MAIN")"
+    fi
+    printf '(autolisp-request-exit-code)\n'
+  } >"$request_file"
+
+  printf '%s\n' "$request_file"
+}
+
+build_protocol_noninteractive_startup_payload() {
+  local request_file payload_file lisp_request_file
+
+  request_file="$(build_protocol_actions_request)"
+  payload_file="$WORKDIR/protocol-startup.lsp"
+  lisp_request_file="$(to_runtime_lisp_path "$request_file")"
+
+  {
+    printf '(progn\n'
+    printf '  (load "%s")\n' "$(escape_lisp_string "$lisp_request_file")"
+    printf '  (setq *AUTOLISP_PROTOCOL_STOP* T)\n'
+    printf '  (if (> *AUTOLISP_FAIL* 0) 1 0))\n'
+  } >"$payload_file"
+
+  cat "$payload_file"
+}
+
+prime_protocol_noninteractive_startup() {
+  local payload
+
+  payload="$(build_protocol_noninteractive_startup_payload)"
+  autolisp_protocol_send_stdin "$payload"
+}
+
+submit_protocol_request_file() {
+  local request_file="$1"
+  local load_form lisp_request_file
+  local stream_output=1
+
+  PROTOCOL_CLIENT_REQ_ID=$((PROTOCOL_CLIENT_REQ_ID + 1))
+  PROTOCOL_LAST_REQUEST_QUIT=0
+  lisp_request_file="$(to_runtime_lisp_path "$request_file")"
+  load_form="$(printf '(load "%s")\n' "$(escape_lisp_string "$lisp_request_file")")"
+  if [[ "$INTERACTIVE" -eq 1 ]]; then
+    stream_output=0
+  fi
+  protocol_stream_request_reset
+  autolisp_protocol_send_stdin "$load_form"
+  wait_for_protocol_request_done "$PROTOCOL_CLIENT_REQ_ID" "$stream_output"
+}
+
+shutdown_protocol_session() {
+  autolisp_protocol_send_control "SHUTDOWN"
+  wait_for_protocol_status_prefix "STOPPED" || return $?
+  wait_for_batch_process_exit
+}
+
+protocol_stream_request_reset() {
+  PROTOCOL_STREAM_OUT_LINES=0
+  PROTOCOL_STREAM_ERR_LINES=0
+  PROTOCOL_STREAM_OUTPUT_OPEN=0
+}
+
+protocol_emit_out_line() {
+  local line="$1"
+
+  PROTOCOL_STREAMED_OUTPUT=1
+  if [[ -n "${PROTOCOL_STREAM_MARKER:-}" ]]; then
+    : >"$PROTOCOL_STREAM_MARKER"
+  fi
+
+  case "$line" in
+    LOAD\ *|EVAL\ *|MAIN\ *)
+      PROTOCOL_STREAM_OUTPUT_OPEN=0
+      printf '%s\n' "$line"
+      ;;
+    '<<<AUTOLISP-STDOUT>>>'*)
+      if [[ "$PROTOCOL_STREAM_OUTPUT_OPEN" -eq 0 ]]; then
+        printf 'OUTPUT\n'
+        PROTOCOL_STREAM_OUTPUT_OPEN=1
+      fi
+      printf '%s\n' "${line#<<<AUTOLISP-STDOUT>>>}"
+      ;;
+    LOADED\ *|RESULT\ *|MAIN-RESULT\ *)
+      printf '%s\n' "$line"
+      PROTOCOL_STREAM_OUTPUT_OPEN=0
+      ;;
+    *)
+      printf '%s\n' "$line"
+      ;;
+  esac
+}
+
+protocol_flush_out_updates() {
+  local total_lines new_lines line
+
+  [[ -f "$OUTFILE" ]] || return 0
+  total_lines="$(wc -l <"$OUTFILE" 2>/dev/null || echo 0)"
+  [[ "$total_lines" =~ ^[0-9]+$ ]] || total_lines=0
+  if [[ "$total_lines" -lt "$PROTOCOL_STREAM_OUT_LINES" ]]; then
+    PROTOCOL_STREAM_OUT_LINES=0
+    PROTOCOL_STREAM_OUTPUT_OPEN=0
+  fi
+  if [[ "$total_lines" -le "$PROTOCOL_STREAM_OUT_LINES" ]]; then
+    return 0
+  fi
+  new_lines="$(awk -v start="$((PROTOCOL_STREAM_OUT_LINES + 1))" 'NR >= start { print }' "$OUTFILE")"
+  while IFS= read -r line; do
+    protocol_emit_out_line "$line"
+  done <<<"$new_lines"
+  PROTOCOL_STREAM_OUT_LINES="$total_lines"
+}
+
+protocol_flush_err_updates() {
+  local total_lines new_lines line
+
+  [[ -f "$ERRFILE" ]] || return 0
+  total_lines="$(wc -l <"$ERRFILE" 2>/dev/null || echo 0)"
+  [[ "$total_lines" =~ ^[0-9]+$ ]] || total_lines=0
+  if [[ "$total_lines" -lt "$PROTOCOL_STREAM_ERR_LINES" ]]; then
+    PROTOCOL_STREAM_ERR_LINES=0
+  fi
+  if [[ "$total_lines" -le "$PROTOCOL_STREAM_ERR_LINES" ]]; then
+    return 0
+  fi
+  new_lines="$(awk -v start="$((PROTOCOL_STREAM_ERR_LINES + 1))" 'NR >= start { print }' "$ERRFILE")"
+  while IFS= read -r line; do
+    PROTOCOL_STREAMED_OUTPUT=1
+    if [[ -n "${PROTOCOL_STREAM_MARKER:-}" ]]; then
+      : >"$PROTOCOL_STREAM_MARKER"
+    fi
+    printf '%s\n' "$line" >&2
+  done <<<"$new_lines"
+  PROTOCOL_STREAM_ERR_LINES="$total_lines"
+}
+
+protocol_flush_request_updates() {
+  protocol_flush_out_updates
+  protocol_flush_err_updates
+}
+
+protocol_feed_waiting_input() {
+  local line
+
+  IFS= read -r line || return 1
+  autolisp_protocol_send_stdin "$line"$'\n'
+}
+
+wait_for_protocol_request_done() {
+  local req_id="$1"
+  local stream_output="${2:-1}"
+  local current_status=""
+  local legacy_status=""
+  local start_ts now elapsed
+
+  start_ts="$(date +%s 2>/dev/null || echo 0)"
+  while true; do
+    if [[ "$INTERRUPTED" -eq 1 ]]; then
+      return 130
+    fi
+
+    if [[ "$stream_output" -eq 1 ]]; then
+      protocol_flush_request_updates
+    fi
+    current_status="$(autolisp_protocol_read_status)"
+    if [[ "$current_status" == "DONE $req_id" || "$current_status" == "DONE $req_id "* ]]; then
+      if [[ "$current_status" == "DONE $req_id QUIT" ]]; then
+        PROTOCOL_LAST_REQUEST_QUIT=1
+      fi
+      if [[ "$stream_output" -eq 1 ]]; then
+        protocol_flush_request_updates
+      fi
+      return 0
+    fi
+    if [[ "$current_status" == "STOPPED" ]]; then
+      legacy_status="$(read_status_file)"
+      if [[ "$legacy_status" == "0" ]]; then
+        PROTOCOL_LAST_REQUEST_QUIT=1
+        return 0
+      fi
+    fi
+    if [[ "$current_status" == "FAILED READ" || "$current_status" == "STOPPED" ]]; then
+      if [[ "$stream_output" -eq 1 ]]; then
+        protocol_flush_request_updates
+      fi
+      return 1
+    fi
+    if [[ "$current_status" == "WAITING-INPUT" ]]; then
+      if ! protocol_feed_waiting_input; then
+        echo "ERROR: stdin closed while AutoLISP was waiting for input." >&2
+        return 1
+      fi
+      continue
+    fi
+    if batch_startup_stalled "$current_status"; then
+      return 124
+    fi
+    if batch_runner_done_without_status "$current_status"; then
+      return 1
+    fi
+
+    now="$(date +%s 2>/dev/null || echo 0)"
+    if [[ "$start_ts" =~ ^[0-9]+$ && "$now" =~ ^[0-9]+$ ]]; then
+      elapsed=$((now - start_ts))
+      if [[ "$elapsed" -ge "$TIMEOUT_SECS" ]]; then
+        echo "ERROR: timeout waiting for protocol request $req_id after ${TIMEOUT_SECS}s" >&2
+        return 124
+      fi
+    fi
+    sleep 0.1
+  done
+}
+
+protocol_foreground_relay_loop() {
+  local current_status=""
+  local line=""
+
+  protocol_stream_request_reset
+  while true; do
+    protocol_flush_request_updates
+    current_status="$(autolisp_protocol_read_status)"
+    case "$current_status" in
+      DONE*|STOPPED|FAILED*)
+        protocol_flush_request_updates
+        return 0
+        ;;
+      WAITING-INPUT)
+        if [[ -r /dev/tty ]]; then
+          IFS= read -r line </dev/tty || return 1
+          autolisp_protocol_send_stdin "$line"$'\n'
+          continue
+        fi
+        ;;
+    esac
+    sleep 0.1
+  done
+}
+
+start_protocol_foreground_relay() {
+  [[ "$USE_FOREGROUND_BATCH_PROTOCOL" -eq 1 ]] || return 0
+  PROTOCOL_STREAM_MARKER="$WORKDIR/protocol-streamed.flag"
+  rm -f "$PROTOCOL_STREAM_MARKER"
+  protocol_foreground_relay_loop &
+  PROTOCOL_FOREGROUND_RELAY_PID=$!
+}
+
+stop_protocol_foreground_relay() {
+  [[ -n "$PROTOCOL_FOREGROUND_RELAY_PID" ]] || return 0
+  wait "$PROTOCOL_FOREGROUND_RELAY_PID" 2>/dev/null || true
+  PROTOCOL_FOREGROUND_RELAY_PID=""
+}
+
+start_protocol_interactive_helper() {
+  [[ "$USE_REMOTE_PROTOCOL" -eq 1 && "$INTERACTIVE" -eq 1 && "$USE_FOREGROUND_BATCH_PROTOCOL" -eq 1 ]] || return 0
+  exec 9<&0
+  PROTOCOL_INTERACTIVE_HELPER_STDIN_OPEN=1
+  run_protocol_interactive_repl <&9 &
+  PROTOCOL_INTERACTIVE_HELPER_PID=$!
+}
+
+wait_protocol_interactive_helper() {
+  local rc=0
+  [[ -n "$PROTOCOL_INTERACTIVE_HELPER_PID" ]] || return 0
+  if wait "$PROTOCOL_INTERACTIVE_HELPER_PID"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  PROTOCOL_INTERACTIVE_HELPER_PID=""
+  if [[ "$PROTOCOL_INTERACTIVE_HELPER_STDIN_OPEN" -eq 1 ]]; then
+    exec 9<&-
+    PROTOCOL_INTERACTIVE_HELPER_STDIN_OPEN=0
+  fi
+  return "$rc"
+}
+
+run_protocol_noninteractive() {
+  local request_file
+
+  wait_for_protocol_ready || return $?
+  request_file="$(build_protocol_actions_request)"
+  submit_protocol_request_file "$request_file" || return $?
+  shutdown_protocol_session
+}
+
+run_protocol_interactive_repl() {
+  local prompt cont_prompt line buffer request_file rendered_file
+
+  prompt="autolisp> "
+  cont_prompt="......> "
+  wait_for_protocol_ready || return $?
+
+  buffer=""
+  while true; do
+    if [[ -t 0 ]]; then
+      if [[ -n "$buffer" ]]; then
+        IFS= read -r -p "$cont_prompt" line || break
+      else
+        IFS= read -r -p "$prompt" line || break
+      fi
+    else
+      IFS= read -r line || break
+    fi
+
+    if [[ -n "$buffer" ]]; then
+      buffer+=$'\n'
+    fi
+    buffer+="$line"
+
+    if ! interactive_form_complete "$buffer"; then
+      continue
+    fi
+
+    request_file="$(build_protocol_eval_request "$buffer")"
+    submit_protocol_request_file "$request_file" || return $?
+    rendered_file="$WORKDIR/interactive-rendered.txt"
+    render_stdout "$OUTFILE" >"$rendered_file"
+    interactive_print_response "$rendered_file" "$ERRFILE"
+    if [[ "$PROTOCOL_LAST_REQUEST_QUIT" -eq 1 ]]; then
+      printf 'Bye bye!\n'
+      wait_for_protocol_status_prefix "STOPPED" || true
+      wait_for_batch_process_exit || true
+      return 0
+    fi
+    buffer=""
+  done
+
+  if [[ -n "${buffer//[$' \t\r\n']/}" ]]; then
+    echo "autolisp: incomplete form at end of input" >&2
+    return 1
+  fi
+
+  shutdown_protocol_session
 }
 
 run_interactive_repl() {
@@ -340,6 +879,11 @@ run_interactive_repl() {
   cont_prompt="......> "
   [[ -n "$ENGINE" ]] && repl_args+=("--$ENGINE")
   repl_args+=("--timeout" "$TIMEOUT_SECS")
+  if autolisp_is_quiet; then
+    repl_args+=("--quiet")
+  elif autolisp_is_verbose; then
+    repl_args+=("--verbose")
+  fi
   [[ -n "$DWG" ]] && repl_args+=("--dwg" "$DWG")
   if [[ "$ENGINE" == "bricscad" ]]; then
     repl_args+=("--bricscad-macos-mode" "$BRICSCAD_MACOS_MODE")
@@ -494,6 +1038,7 @@ DEFAULT_AUTOLISP_WORKDIR="$SCRIPT_DIR/.autolisp-runs"
 BASE_WORKDIR=""
 CLEANUP_WORKDIR="${AUTOLISP_KEEP_WORKDIR:-0}"
 AUTOLISP_VERBOSE="${AUTOLISP_VERBOSE:-0}"
+AUTOLISP_QUIET="${AUTOLISP_QUIET:-0}"
 INTERRUPTED=0
 INTERRUPT_COUNT=0
 MACOS_ASYNC=0
@@ -503,8 +1048,40 @@ BRICSCAD_COM_CREATED=0
 BRICSCAD_COM_MODE="${BRICSCAD_COM_MODE:-auto}"
 BRICSCAD_MACOS_EFFECTIVE_MODE=""
 BRICSCAD_BATCH_PID=""
+BRICSCAD_BATCH_CHILD_PID=""
 BRICSCAD_BATCH_LAUNCHED=0
+BRICSCAD_BATCH_RC=""
+BRICSCAD_BATCH_REAPED=0
+BRICSCAD_BATCH_COMPLETED=0
+BRICSCAD_BATCH_START_TS=0
+BRICSCAD_BATCH_STARTUP_TIMEOUT_SECS="${AUTOLISP_BRICSCAD_BATCH_STARTUP_TIMEOUT:-15}"
+BRICSCAD_BATCH_COMMAND_FILE=""
+ALLOW_UNSTABLE_MACOS_BATCH_LOAD="${AUTOLISP_ALLOW_UNSTABLE_MACOS_BATCH_LOAD:-0}"
+EXPERIMENTAL_MACOS_BATCH_OPEN="${AUTOLISP_EXPERIMENTAL_MACOS_BATCH_OPEN:-0}"
 FORCE_REPORT_WORKDIR=0
+AUTOLISP_VERBOSITY=1
+BRICSCAD_LAUNCH_ANNOUNCER_PID=""
+
+if [[ "$AUTOLISP_VERBOSE" =~ ^[1-9][0-9]*$ ]]; then
+  AUTOLISP_VERBOSITY=2
+fi
+if [[ "$AUTOLISP_QUIET" == "1" ]]; then
+  AUTOLISP_VERBOSITY=0
+fi
+if [[ "$CLI_VERBOSE" -eq 1 ]]; then
+  AUTOLISP_VERBOSITY=2
+fi
+if [[ "$CLI_QUIET" -eq 1 ]]; then
+  AUTOLISP_VERBOSITY=0
+fi
+
+autolisp_is_quiet() {
+  [[ "$AUTOLISP_VERBOSITY" -le 0 ]]
+}
+
+autolisp_is_verbose() {
+  [[ "$AUTOLISP_VERBOSITY" -ge 2 ]]
+}
 
 on_interrupt() {
   INTERRUPT_COUNT=$((INTERRUPT_COUNT + 1))
@@ -524,13 +1101,35 @@ cleanup_workdir() {
   if [[ "${CLEANUP_WORKDIR}" != "1" ]]; then
     rm -rf "$WORKDIR"
   else
-    if [[ "$AUTOLISP_VERBOSE" == "1" || "$INTERRUPTED" == "1" || "$FORCE_REPORT_WORKDIR" == "1" ]]; then
+    if ! autolisp_is_quiet && [[ "$INTERRUPTED" == "1" || "$FORCE_REPORT_WORKDIR" == "1" ]]; then
       echo "autolisp: keeping workdir: $WORKDIR" >&2
     fi
   fi
 }
 trap cleanup_workdir EXIT
 trap on_interrupt INT TERM
+
+reap_bricscad_batch_process() {
+  local rc=0
+  if [[ "$BRICSCAD_BATCH_LAUNCHED" -ne 1 || "$BRICSCAD_BATCH_REAPED" -eq 1 ]]; then
+    return 0
+  fi
+  if [[ -z "$BRICSCAD_BATCH_CHILD_PID" ]]; then
+    BRICSCAD_BATCH_REAPED=1
+    return 0
+  fi
+  if wait "$BRICSCAD_BATCH_CHILD_PID" 2>/dev/null; then
+    rc=0
+  else
+    rc=$?
+    if [[ "$rc" -eq 127 ]]; then
+      rc=0
+    fi
+  fi
+  BRICSCAD_BATCH_RC="$rc"
+  BRICSCAD_BATCH_REAPED=1
+  return 0
+}
 
 find_macos_bricscad_app() {
   ls -1d /Applications/BricsCAD*.app 2>/dev/null | head -n 1 || true
@@ -546,6 +1145,192 @@ find_macos_bricscad_cli() {
   app="$(find_macos_bricscad_app)"
   if [[ -n "$app" && -x "$app/Contents/MacOS/bricscad" ]]; then
     printf '%s\n' "$app/Contents/MacOS/bricscad"
+    return 0
+  fi
+
+  return 1
+}
+
+find_macos_app_bundle_from_exe() {
+  local exe="$1"
+  if [[ "$exe" == *.app ]]; then
+    printf '%s\n' "$exe"
+    return 0
+  fi
+  if [[ "$exe" == */Contents/MacOS/* ]]; then
+    printf '%s.app\n' "${exe%/Contents/MacOS/*}"
+    return 0
+  fi
+  return 1
+}
+
+read_macos_bundle_version() {
+  local bundle="$1"
+  local plist="$bundle/Contents/Info.plist"
+  [[ -f "$plist" ]] || return 1
+  /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist" 2>/dev/null || true
+}
+
+read_bricscad_runtime_info() {
+  local product="" version="" program=""
+
+  [[ -f "${AUTOLISP_PROTOCOL_INFOFILE:-}" ]] || return 1
+  product="$(sed -n '1p' "$AUTOLISP_PROTOCOL_INFOFILE" 2>/dev/null || true)"
+  version="$(sed -n '2p' "$AUTOLISP_PROTOCOL_INFOFILE" 2>/dev/null || true)"
+  program="$(sed -n '3p' "$AUTOLISP_PROTOCOL_INFOFILE" 2>/dev/null || true)"
+  if [[ -z "$product" && -z "$version" && -z "$program" ]]; then
+    return 1
+  fi
+  printf '%s\t%s\t%s\n' "$product" "$version" "$program"
+}
+
+normalize_bricscad_version() {
+  local raw="$1"
+  local normalized=""
+
+  normalized="$(printf '%s\n' "$raw" | awk '{ print $1; exit }')"
+  if [[ -n "$normalized" ]]; then
+    printf '%s\n' "$normalized"
+    return 0
+  fi
+  [[ -n "$raw" ]] || return 1
+  printf '%s\n' "$raw"
+}
+
+bricscad_version_for_exe() {
+  local info=""
+  local exe="$1"
+  local bundle=""
+  local version=""
+
+  info="$(read_bricscad_runtime_info || true)"
+  if [[ -n "$info" ]]; then
+    version="$(printf '%s\n' "$info" | awk -F '\t' '{ print $2; exit }')"
+    normalize_bricscad_version "$version"
+    return $?
+  fi
+  bundle="$(find_macos_app_bundle_from_exe "$exe" || true)"
+  if [[ -n "$bundle" ]]; then
+    read_macos_bundle_version "$bundle"
+    return 0
+  fi
+  return 1
+}
+
+bricscad_should_announce_launch() {
+  local exe="$1"
+  [[ "$ENGINE" == "bricscad" ]] || return 1
+  autolisp_is_quiet && return 1
+  [[ "$INTERACTIVE" -eq 1 ]] || return 1
+  case "$exe" in
+    */BricsCAD*.app/Contents/MacOS/bricscad|*/BricsCAD*.app)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+emit_bricscad_launch_message() {
+  local pid="$1"
+  local exe="$2"
+  local info=""
+  local product="BricsCAD"
+  local version=""
+  local version_raw=""
+  local program=""
+  local msg=""
+
+  bricscad_should_announce_launch "$exe" || return 0
+  [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]] || return 0
+
+  info="$(read_bricscad_runtime_info || true)"
+  if [[ -n "$info" ]]; then
+    product="$(printf '%s\n' "$info" | awk -F '\t' '{ print $1; exit }')"
+    version_raw="$(printf '%s\n' "$info" | awk -F '\t' '{ print $2; exit }')"
+    version="$(normalize_bricscad_version "$version_raw" || true)"
+    program="$(printf '%s\n' "$info" | awk -F '\t' '{ print $3; exit }')"
+  else
+    version="$(bricscad_version_for_exe "$exe" || true)"
+  fi
+  [[ -n "$product" ]] || product="BricsCAD"
+  msg="autolisp: launched $product"
+  if [[ -n "$version" ]]; then
+    msg="$msg $version"
+  fi
+  msg="$msg pid=$pid"
+  if autolisp_is_verbose; then
+    if [[ -n "$version_raw" && "$version_raw" != "$version" ]]; then
+      msg="$msg acadver=\"$version_raw\""
+    fi
+    if [[ -n "$program" ]]; then
+      msg="$msg program=$program"
+    fi
+    msg="$msg profile=${BRICSCAD_MACOS_PROFILE:-default}"
+  fi
+  echo "$msg" >&2
+}
+
+launch_bricscad_announce_loop() {
+  local exe="$1"
+  local pid=""
+  local tries=0
+
+  bricscad_should_announce_launch "$exe" || return 0
+  while [[ "$tries" -lt 300 ]]; do
+    pid="$(find_bricscad_batch_pid || true)"
+    if [[ "$pid" =~ ^[0-9]+$ ]] && read_bricscad_runtime_info >/dev/null 2>&1; then
+      emit_bricscad_launch_message "$pid" "$exe"
+      return 0
+    fi
+    sleep 0.1
+    tries=$((tries + 1))
+  done
+  return 0
+}
+
+start_bricscad_launch_announcer() {
+  local exe="$1"
+  bricscad_should_announce_launch "$exe" || return 0
+  launch_bricscad_announce_loop "$exe" &
+  BRICSCAD_LAUNCH_ANNOUNCER_PID=$!
+}
+
+stop_bricscad_launch_announcer() {
+  [[ -n "$BRICSCAD_LAUNCH_ANNOUNCER_PID" ]] || return 0
+  wait "$BRICSCAD_LAUNCH_ANNOUNCER_PID" 2>/dev/null || true
+  BRICSCAD_LAUNCH_ANNOUNCER_PID=""
+}
+
+find_bricscad_batch_pid() {
+  local pid
+
+  pid="$(
+    ps -axo pid=,command= 2>/dev/null \
+      | awk -v scr="$SCRFILE" '
+          index($0, scr) {
+            sub(/^[[:space:]]+/, "", $0)
+            split($0, fields, /[[:space:]]+/)
+            print fields[1]
+            exit
+          }'
+  )"
+  if [[ "$pid" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$pid"
+    return 0
+  fi
+  return 1
+}
+
+bricscad_batch_process_running() {
+  local pid
+
+  if [[ -n "$BRICSCAD_BATCH_PID" ]] && kill -0 "$BRICSCAD_BATCH_PID" 2>/dev/null; then
+    return 0
+  fi
+
+  pid="$(find_bricscad_batch_pid || true)"
+  if [[ "$pid" =~ ^[0-9]+$ ]]; then
+    BRICSCAD_BATCH_PID="$pid"
     return 0
   fi
 
@@ -807,6 +1592,14 @@ case "$BOOTSTRAP_PHASE" in
     ;;
 esac
 
+case "$AUTOLISP_REMOTE_IO_MODE" in
+  auto|on|off) ;;
+  *)
+    echo "Invalid AUTOLISP_REMOTE_IO_MODE: $AUTOLISP_REMOTE_IO_MODE" >&2
+    exit 2
+    ;;
+esac
+
 if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 ]]; then
   BRICSCAD_MACOS_EFFECTIVE_MODE="$BRICSCAD_MACOS_MODE"
   if [[ "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "auto" ]]; then
@@ -818,28 +1611,49 @@ if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 ]]; then
   fi
 fi
 
+if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" && -z "$BRICSCAD_MACOS_PROFILE" ]]; then
+  BRICSCAD_MACOS_PROFILE="lisp"
+fi
+
+USE_REMOTE_PROTOCOL=0
+if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" && "$BOOTSTRAP_PHASE" == "full" ]]; then
+  case "$AUTOLISP_REMOTE_IO_MODE" in
+    auto|on)
+      USE_REMOTE_PROTOCOL=1
+      ;;
+  esac
+fi
+
+USE_FOREGROUND_BATCH_PROTOCOL=0
+if [[ "$USE_REMOTE_PROTOCOL" -eq 1 && "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" ]]; then
+  USE_FOREGROUND_BATCH_PROTOCOL=1
+  if [[ "$EXPERIMENTAL_MACOS_BATCH_OPEN" == "1" && "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" && "$BRICSCAD_MACOS_APP_MODE" == "launch" ]]; then
+    USE_FOREGROUND_BATCH_PROTOCOL=0
+  fi
+fi
+
 if [[ -n "${AUTOLISP_WORKDIR:-}" ]]; then
   BASE_WORKDIR="${AUTOLISP_WORKDIR}"
-elif [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" ]]; then
-  BASE_WORKDIR="${TMPDIR:-/tmp}/autolisp-runs"
 else
   BASE_WORKDIR="$DEFAULT_AUTOLISP_WORKDIR"
 fi
 mkdir -p "$BASE_WORKDIR"
 WORKDIR="$(mktemp -d "$BASE_WORKDIR/autolisp.XXXXXX")"
+autolisp_protocol_init_session "$WORKDIR"
+autolisp_protocol_export_session
+autolisp_protocol_reset_session
 
 OUTFILE="$WORKDIR/output.txt"
 ERRFILE="$WORKDIR/errors.txt"
 STATUSFILE="$WORKDIR/status.txt"
 INPFILE="$WORKDIR/input.lsp"
-BATCH_EXIT_FILE="$WORKDIR/batch-exit.txt"
 LOGDIR="$WORKDIR/logs"
 : >"$OUTFILE"
 : >"$ERRFILE"
 echo "__PENDING__" >"$STATUSFILE"
 rm -f "$INPFILE"
-rm -f "$BATCH_EXIT_FILE"
 mkdir -p "$LOGDIR"
+BRICSCAD_BATCH_COMMAND_FILE="$WORKDIR/bricscad-command.txt"
 
 LISP_OUTFILE="$(to_runtime_lisp_path "$OUTFILE")"
 LISP_ERRFILE="$(to_runtime_lisp_path "$ERRFILE")"
@@ -847,6 +1661,17 @@ LISP_STATUSFILE="$(to_runtime_lisp_path "$STATUSFILE")"
 LISP_INPFILE="$(to_runtime_lisp_path "$INPFILE")"
 LISP_LOGDIR="$(to_runtime_lisp_path "$LOGDIR")"
 LISP_RENDERFILE="$(to_runtime_lisp_path "$WORKDIR/render.txt")"
+LISP_PROTOCOL_DIR="$(to_runtime_lisp_path "$AUTOLISP_PROTOCOL_DIR")"
+LISP_PROTOCOL_STATUSFILE="$(to_runtime_lisp_path "$AUTOLISP_PROTOCOL_STATUSFILE")"
+LISP_PROTOCOL_STDINFILE="$(to_runtime_lisp_path "$AUTOLISP_PROTOCOL_STDINFILE")"
+LISP_PROTOCOL_STDOUTFILE="$(to_runtime_lisp_path "$AUTOLISP_PROTOCOL_STDOUTFILE")"
+LISP_PROTOCOL_STDERRFILE="$(to_runtime_lisp_path "$AUTOLISP_PROTOCOL_STDERRFILE")"
+LISP_PROTOCOL_CONTROLFILE="$(to_runtime_lisp_path "$AUTOLISP_PROTOCOL_CONTROLFILE")"
+LISP_PROTOCOL_HEARTBEATFILE="$(to_runtime_lisp_path "$AUTOLISP_PROTOCOL_HEARTBEATFILE")"
+LISP_PROTOCOL_READFILE="$(to_runtime_lisp_path "$AUTOLISP_PROTOCOL_READFILE")"
+LISP_PROTOCOL_INFOFILE="$(to_runtime_lisp_path "$AUTOLISP_PROTOCOL_INFOFILE")"
+PROTOCOL_RUNTIME_FILE="$SCRIPT_DIR/runtime/autolisp-remote-io.lsp"
+LISP_PROTOCOL_RUNTIME_FILE="$(to_runtime_lisp_path "$PROTOCOL_RUNTIME_FILE")"
 
 for i in "${!ACTION_KINDS[@]}"; do
   kind="${ACTION_KINDS[$i]}"
@@ -880,11 +1705,18 @@ for i in "${!ACTION_KINDS[@]}"; do
   fi
 done
 
+if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" && "$USE_REMOTE_PROTOCOL" -eq 1 && "$HAS_LOAD_ACTION" -eq 1 && "$ALLOW_UNSTABLE_MACOS_BATCH_LOAD" != "1" ]]; then
+  echo "ERROR: source.lsp is temporarily disabled for BricsCAD batch mode on macOS." >&2
+  echo "ERROR: this path is still unstable and has triggered BricsCAD crashes during debugging." >&2
+  echo "HINT: use -x for now, or set AUTOLISP_ALLOW_UNSTABLE_MACOS_BATCH_LOAD=1 to keep debugging this path." >&2
+  exit 2
+fi
+
 USE_BATCH_INTERACTIVE_REPL=0
-if [[ "$INTERACTIVE" -eq 1 && "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" ]]; then
+if [[ "$INTERACTIVE" -eq 1 && "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" && "$USE_REMOTE_PROTOCOL" -eq 0 ]]; then
   USE_BATCH_INTERACTIVE_REPL=1
 fi
-if [[ "$INTERACTIVE" -eq 1 && "$USE_BATCH_INTERACTIVE_REPL" -eq 0 ]]; then
+if [[ "$INTERACTIVE" -eq 1 && "$USE_REMOTE_PROTOCOL" -eq 0 && "$USE_BATCH_INTERACTIVE_REPL" -eq 0 ]]; then
   run_interactive_repl
   exit $?
 fi
@@ -929,14 +1761,11 @@ elif [[ "$BOOTSTRAP_PHASE" == "core" && ${#ACTION_KINDS[@]} -eq 1 && "${ACTION_K
       (close f)
       acc)))
 
-(defun autolisp-render (obj / f)
-  (setq f (open *AUTOLISP_RENDERFILE* "w"))
-  (if f
-    (progn
-      (prin1 obj f)
-      (close f)
-      (autolisp-slurp-file *AUTOLISP_RENDERFILE*))
-    "<unprintable>"))
+(defun autolisp-render (obj / rendered)
+  (setq rendered (vl-catch-all-apply 'vl-princ-to-string (list obj)))
+  (if (vl-catch-all-error-p rendered)
+    "<unprintable>"
+    rendered))
 EOLISP
     printf '(setq f (open *AUTOLISP_OUTFILE* "w"))\n'
     echo '(if f (close f))'
@@ -968,6 +1797,17 @@ else
   printf '(setq *AUTOLISP_INPFILE* "%s")\n' "$(escape_lisp_string "$LISP_INPFILE")"
   printf '(setq *AUTOLISP_LOGDIR* "%s")\n' "$(escape_lisp_string "$LISP_LOGDIR")"
   printf '(setq *AUTOLISP_RENDERFILE* "%s")\n' "$(escape_lisp_string "$LISP_RENDERFILE")"
+  printf '(setq *AUTOLISP_PROTOCOL_DIR* "%s")\n' "$(escape_lisp_string "$LISP_PROTOCOL_DIR")"
+  printf '(setq *AUTOLISP_PROTOCOL_STATUSFILE* "%s")\n' "$(escape_lisp_string "$LISP_PROTOCOL_STATUSFILE")"
+  printf '(setq *AUTOLISP_PROTOCOL_STDINFILE* "%s")\n' "$(escape_lisp_string "$LISP_PROTOCOL_STDINFILE")"
+  printf '(setq *AUTOLISP_PROTOCOL_STDOUTFILE* "%s")\n' "$(escape_lisp_string "$LISP_PROTOCOL_STDOUTFILE")"
+  printf '(setq *AUTOLISP_PROTOCOL_STDERRFILE* "%s")\n' "$(escape_lisp_string "$LISP_PROTOCOL_STDERRFILE")"
+  printf '(setq *AUTOLISP_PROTOCOL_CONTROLFILE* "%s")\n' "$(escape_lisp_string "$LISP_PROTOCOL_CONTROLFILE")"
+  printf '(setq *AUTOLISP_PROTOCOL_HEARTBEATFILE* "%s")\n' "$(escape_lisp_string "$LISP_PROTOCOL_HEARTBEATFILE")"
+  printf '(setq *AUTOLISP_PROTOCOL_READFILE* "%s")\n' "$(escape_lisp_string "$LISP_PROTOCOL_READFILE")"
+  printf '(setq *AUTOLISP_PROTOCOL_INFOFILE* "%s")\n' "$(escape_lisp_string "$LISP_PROTOCOL_INFOFILE")"
+  printf '(setq *AUTOLISP_PROTOCOL_RUNTIMEFILE* "%s")\n' "$(escape_lisp_string "$LISP_PROTOCOL_RUNTIME_FILE")"
+  printf '(setq *AUTOLISP_USE_REMOTE_PROTOCOL* %s)\n' "$USE_REMOTE_PROTOCOL"
   printf '(setq *AUTOLISP_LOGNAME* "%s")\n' "autolisp-session.log"
   printf '(setq *AUTOLISP_QUIT_ON_FINISH* %s)\n' "$QUIT_ON_FINISH"
   printf '(setq *AUTOLISP_BOOTSTRAP_PHASE* "%s")\n' "$(escape_lisp_string "$BOOTSTRAP_PHASE")"
@@ -1001,14 +1841,11 @@ else
     obj
     (autolisp-render obj)))
 
-(defun autolisp-render (obj / f)
-  (setq f (open *AUTOLISP_RENDERFILE* "w"))
-  (if f
-    (progn
-      (prin1 obj f)
-      (close f)
-      (autolisp-slurp-file *AUTOLISP_RENDERFILE*))
-    "<unprintable>"))
+(defun autolisp-render (obj / rendered)
+  (setq rendered (vl-catch-all-apply 'vl-princ-to-string (list obj)))
+  (if (vl-catch-all-error-p rendered)
+    "<unprintable>"
+    rendered))
 
 (defun autolisp-set-status (code / f)
   (setq f (open *AUTOLISP_STATUSFILE* "w"))
@@ -1031,6 +1868,22 @@ else
 
 (defun autolisp-log-err (text)
   (autolisp-write-line *AUTOLISP_ERRFILE* text))
+
+(defun autolisp-safe-getvar (name / value)
+  (setq value (vl-catch-all-apply 'getvar (list name)))
+  (if (vl-catch-all-error-p value)
+    ""
+    (autolisp-str value)))
+
+(defun autolisp-write-runtime-info (/ f)
+  (setq f (open *AUTOLISP_PROTOCOL_INFOFILE* "w"))
+  (if f
+    (progn
+      (write-line (autolisp-safe-getvar "PRODUCT") f)
+      (write-line (autolisp-safe-getvar "ACADVER") f)
+      (write-line (autolisp-safe-getvar "PROGRAM") f)
+      (close f)))
+  nil)
 
 (defun autolisp-stdout-prefix ()
   "<<<AUTOLISP-STDOUT>>>")
@@ -1060,8 +1913,295 @@ else
     (setvar "SRCHPATH" _autolisp_old_srchpath))
   (autolisp-set-status code)
   (if *AUTOLISP_QUIT_ON_FINISH*
-    (quit))
+    (autolisp-host-quit))
   code)
+
+(defun autolisp-source-scan-text (text / idx len depth in-string escape in-comment ch line col open-stack started top)
+  (setq *AUTOLISP_SOURCE_SCAN_STATE* 'empty)
+  (setq *AUTOLISP_SOURCE_SCAN_LINE* 1)
+  (setq *AUTOLISP_SOURCE_SCAN_COL* 1)
+  (setq idx 1)
+  (setq len (strlen text))
+  (setq depth 0)
+  (setq in-string nil)
+  (setq escape nil)
+  (setq in-comment nil)
+  (setq line 1)
+  (setq col 0)
+  (setq open-stack nil)
+  (setq started nil)
+  (while (and (<= idx len)
+              (/= *AUTOLISP_SOURCE_SCAN_STATE* 'extra))
+    (setq ch (substr text idx 1))
+    (cond
+      ((= ch "\n")
+       (setq line (+ line 1))
+       (setq col 0)
+       (setq in-comment nil))
+      (T
+       (setq col (+ col 1))
+       (cond
+         (in-comment
+          nil)
+         (in-string
+          (cond
+            (escape
+             (setq escape nil))
+            ((= ch "\\")
+             (setq escape T))
+            ((= ch "\"")
+             (setq in-string nil))))
+         ((= ch ";")
+          (setq in-comment T))
+         ((member ch '(" " "\t" "\r"))
+          nil)
+         (T
+          (setq started T)
+          (cond
+            ((= ch "\"")
+             (setq in-string T))
+            ((= ch "(")
+             (setq depth (+ depth 1))
+             (setq open-stack (cons (list line col) open-stack)))
+            ((= ch ")")
+             (if (> depth 0)
+               (progn
+                 (setq depth (- depth 1))
+                 (setq open-stack (cdr open-stack)))
+               (progn
+                 (setq *AUTOLISP_SOURCE_SCAN_STATE* 'extra)
+                 (setq *AUTOLISP_SOURCE_SCAN_LINE* line)
+                 (setq *AUTOLISP_SOURCE_SCAN_COL* col)))))))))
+    (setq idx (+ idx 1)))
+  (if (/= *AUTOLISP_SOURCE_SCAN_STATE* 'extra)
+    (cond
+      ((not started)
+       (setq *AUTOLISP_SOURCE_SCAN_STATE* 'empty))
+      (in-string
+       (setq *AUTOLISP_SOURCE_SCAN_STATE* 'incomplete-string)
+       (setq *AUTOLISP_SOURCE_SCAN_LINE* line)
+       (setq *AUTOLISP_SOURCE_SCAN_COL* (max 1 col)))
+      (open-stack
+       (setq top (car open-stack))
+       (setq *AUTOLISP_SOURCE_SCAN_STATE* 'incomplete)
+       (setq *AUTOLISP_SOURCE_SCAN_LINE* (car top))
+       (setq *AUTOLISP_SOURCE_SCAN_COL* (cadr top)))
+      (T
+       (setq *AUTOLISP_SOURCE_SCAN_STATE* 'complete)
+       (setq *AUTOLISP_SOURCE_SCAN_LINE* line)
+       (setq *AUTOLISP_SOURCE_SCAN_COL* (max 1 col)))))
+  *AUTOLISP_SOURCE_SCAN_STATE*)
+
+(defun autolisp-source-leading-symbols (text count / idx len ch in-comment token start tokens)
+  (setq idx 1)
+  (setq len (strlen text))
+  (setq in-comment nil)
+  (setq tokens '())
+  (while (and (<= idx len)
+              (< (length tokens) count))
+    (setq ch (substr text idx 1))
+    (cond
+      (in-comment
+       (if (= ch "\n")
+         (setq in-comment nil))
+       (setq idx (+ idx 1)))
+      ((= ch ";")
+       (setq in-comment T)
+       (setq idx (+ idx 1)))
+      ((member ch '(" " "\t" "\r" "\n" "(" ")"))
+       (setq idx (+ idx 1)))
+      (T
+       (setq start idx)
+       (while (and (<= idx len)
+                   (not (member (substr text idx 1)
+                                '(" " "\t" "\r" "\n" "(" ")" "\"" ";"))))
+         (setq idx (+ idx 1)))
+       (setq token (substr text start (- idx start)))
+       (setq tokens (append tokens (list token))))))
+  tokens)
+
+(defun autolisp-source-leading-defun-name (text / tokens)
+  (setq tokens (autolisp-source-leading-symbols text 2))
+  (if (and (= (length tokens) 2)
+           (= (strcase (car tokens)) "DEFUN"))
+    (cadr tokens)
+    nil))
+
+(defun autolisp-source-stack-text (/ paths acc)
+  (setq paths (reverse *AUTOLISP_LOAD_STACK*))
+  (setq acc "")
+  (while paths
+    (if (= acc "")
+      (setq acc (car paths))
+      (setq acc (strcat acc " -> " (car paths))))
+    (setq paths (cdr paths)))
+  acc)
+
+(defun autolisp-source-format-error (path detail line col form-start defun-name / msg stack)
+  (setq msg (strcat "while loading " path))
+  (if form-start
+    (setq msg (strcat msg " (form starting at line " (itoa form-start) ")")))
+  (if line
+    (setq msg (strcat msg " at line " (itoa line))))
+  (if col
+    (setq msg (strcat msg ", column " (itoa col))))
+  (if (and defun-name (/= defun-name ""))
+    (setq msg (strcat msg " in defun " defun-name)))
+  (setq msg (strcat msg ": " detail))
+  (setq stack (autolisp-source-stack-text))
+  (if (and stack (/= stack "") (> (length *AUTOLISP_LOAD_STACK*) 1))
+    (setq msg (strcat msg " [load stack: " stack "]")))
+  msg)
+
+(defun autolisp-effective-error-message (fallback)
+  (if (and (boundp '*AUTOLISP_LAST_ERROR_CONTEXT*)
+           *AUTOLISP_LAST_ERROR_CONTEXT*
+           (/= *AUTOLISP_LAST_ERROR_CONTEXT* ""))
+    *AUTOLISP_LAST_ERROR_CONTEXT*
+    fallback))
+
+(defun autolisp-clear-last-error-context ()
+  (setq *AUTOLISP_LAST_ERROR_CONTEXT* nil))
+
+(defun autolisp-source-pop-stack ()
+  (if *AUTOLISP_LOAD_STACK*
+    (setq *AUTOLISP_LOAD_STACK* (cdr *AUTOLISP_LOAD_STACK*)))
+  nil)
+
+(defun autolisp-source-raise (path detail line col form-start defun-name / msg)
+  (setq msg (autolisp-source-format-error path detail line col form-start defun-name))
+  (setq *AUTOLISP_LAST_ERROR_CONTEXT* msg)
+  (autolisp-source-pop-stack)
+  (error msg))
+
+(defun autolisp-source-load-failure (onfailure)
+  (if (= (type onfailure) 'SYM)
+    (eval onfailure)
+    onfailure))
+
+(defun autolisp-source-resolve-load-path (path / found)
+  (setq found (findfile path))
+  (if (not found)
+    (setq found (findfile (strcat path ".lsp"))))
+  found)
+
+(defun autolisp-source-load-core (path has-onfailure onfailure / resolved f line line-no form-text form-start-line result form-read defun-name eval-result)
+  (setq resolved (autolisp-source-resolve-load-path path))
+  (if (not resolved)
+    (if has-onfailure
+      (autolisp-source-load-failure onfailure)
+      (error (strcat "LOAD failed: \"" path "\"")))
+    (progn
+      (setq *AUTOLISP_LOAD_STACK* (cons resolved *AUTOLISP_LOAD_STACK*))
+      (setq f (open resolved "r"))
+      (if (not f)
+        (autolisp-source-raise resolved "unable to open source file" nil nil nil nil))
+      (setq line-no 0)
+      (setq form-text "")
+      (setq form-start-line nil)
+      (setq result nil)
+      (while (setq line (read-line f))
+        (setq line-no (+ line-no 1))
+        (if (= form-text "")
+          (setq form-start-line line-no))
+        (if (= form-text "")
+          (setq form-text line)
+          (setq form-text (strcat form-text "\n" line)))
+        (autolisp-source-scan-text form-text)
+        (cond
+          ((= *AUTOLISP_SOURCE_SCAN_STATE* 'extra)
+           (close f)
+           (autolisp-source-raise resolved
+                                  "extra right parenthesis on input"
+                                  *AUTOLISP_SOURCE_SCAN_LINE*
+                                  *AUTOLISP_SOURCE_SCAN_COL*
+                                  form-start-line
+                                  (autolisp-source-leading-defun-name form-text)))
+          ((= *AUTOLISP_SOURCE_SCAN_STATE* 'complete)
+           (setq defun-name (autolisp-source-leading-defun-name form-text))
+           (setq form-read (vl-catch-all-apply 'read (list form-text)))
+           (if (vl-catch-all-error-p form-read)
+             (progn
+               (close f)
+               (autolisp-source-raise resolved
+                                      (autolisp-effective-error-message
+                                        (vl-catch-all-error-message form-read))
+                                      line-no
+                                      1
+                                      form-start-line
+                                      defun-name))
+             (progn
+               (setq eval-result (vl-catch-all-apply 'autolisp-eval-request-form (list form-read)))
+               (if (vl-catch-all-error-p eval-result)
+                 (if (or *AUTOLISP_QUIT_REQUESTED*
+                         (autolisp-quit-signal-p
+                           (vl-catch-all-error-message eval-result)))
+                   (progn
+                     (close f)
+                     (autolisp-source-pop-stack)
+                     (error *AUTOLISP_QUIT_SIGNAL*))
+                   (progn
+                     (close f)
+                     (autolisp-source-raise resolved
+                                            (autolisp-effective-error-message
+                                              (vl-catch-all-error-message eval-result))
+                                            form-start-line
+                                            1
+                                            form-start-line
+                                            defun-name)))
+                 (setq result eval-result))
+               (setq form-text "")
+               (setq form-start-line nil))))))
+      (close f)
+      (if (/= form-text "")
+        (progn
+          (autolisp-source-scan-text form-text)
+          (autolisp-source-raise resolved
+                                 (if (= *AUTOLISP_SOURCE_SCAN_STATE* 'incomplete-string)
+                                   "unexpected end of file while reading string"
+                                   "unexpected end of file while reading form")
+                                 line-no
+                                 1
+                                 form-start-line
+                                 (autolisp-source-leading-defun-name form-text))))
+      (autolisp-source-pop-stack)
+      result)))
+
+(defun autolisp-source-load (path /)
+  (autolisp-source-load-core path nil nil))
+
+(defun autolisp-source-load-with-onfailure (path onfailure /)
+  (autolisp-source-load-core path T onfailure))
+
+(defun autolisp-internal-protocol-load-p (path)
+  (and (= (type path) 'STR)
+       (wcmatch path "*protocol-request-*.lsp")))
+
+(defun autolisp-load-form-p (form)
+  (and (listp form)
+       form
+       (= (type (car form)) 'SYM)
+       (= (strcase (vl-symbol-name (car form))) "LOAD")))
+
+(defun autolisp-eval-load-form (form)
+  (cond
+    ((and (= (length form) 2)
+          (autolisp-internal-protocol-load-p (cadr form)))
+     (eval form))
+    ((= (length form) 2)
+     (autolisp-source-load (cadr form)))
+    ((and (= (length form) 3)
+          (autolisp-internal-protocol-load-p (cadr form)))
+     (eval form))
+    ((= (length form) 3)
+     (autolisp-source-load-with-onfailure (cadr form) (caddr form)))
+    (T
+     (eval form))))
+
+(defun autolisp-eval-request-form (form)
+  (if (autolisp-load-form-p form)
+    (autolisp-eval-load-form form)
+    (eval form)))
 
 (defun autolisp-run-load (idx path / r olderr)
   (autolisp-mark-begin "LOAD" idx)
@@ -1070,21 +2210,30 @@ else
   (setq *AUTOLISP_ERROR_MSG* nil)
   (setq olderr *error*)
   (setq *error* autolisp-trap-error)
-  (setq r (load path))
+  (setq r (autolisp-source-load path))
   (setq *error* olderr)
   (setq *AUTOLISP_CAPTURE_STDOUT* nil)
-  (if *AUTOLISP_ERROR_MSG*
-    (progn
-      (autolisp-log-err (strcat "ERROR load " path ": " *AUTOLISP_ERROR_MSG*))
-      (autolisp-mark-end "LOAD" idx 1)
-      nil)
-    (progn
-      (autolisp-log-out (strcat "LOADED " path))
-      (autolisp-mark-end "LOAD" idx 0)
-      T)))
+  (if *AUTOLISP_QUIT_REQUESTED*
+    (error *AUTOLISP_QUIT_SIGNAL*)
+    (if (autolisp-quit-signal-p *AUTOLISP_ERROR_MSG*)
+      (error *AUTOLISP_QUIT_SIGNAL*)
+    (if *AUTOLISP_ERROR_MSG*
+      (progn
+        (autolisp-log-err
+          (strcat "ERROR load " path ": "
+                  (autolisp-effective-error-message *AUTOLISP_ERROR_MSG*)))
+        (autolisp-clear-last-error-context)
+        (autolisp-mark-end "LOAD" idx 1)
+        nil)
+      (progn
+        (autolisp-log-out (strcat "LOADED " path))
+        (autolisp-mark-end "LOAD" idx 0)
+        T)))))
 
 (defun autolisp-trap-error (msg)
-  (setq *AUTOLISP_ERROR_MSG* msg)
+  (setq *AUTOLISP_ERROR_MSG* (autolisp-effective-error-message msg))
+  (if (autolisp-quit-signal-p msg)
+    (setq *AUTOLISP_QUIT_REQUESTED* T))
   nil)
 
 (defun autolisp-run-eval-file (idx path / form-text form-read r olderr ok)
@@ -1102,26 +2251,34 @@ else
       (setq *error* autolisp-trap-error)
       (setq form-read (read form-text))
       (setq *error* olderr)
-      (if *AUTOLISP_ERROR_MSG*
-        (progn
-          (autolisp-log-err (strcat "ERROR read " form-text ": " *AUTOLISP_ERROR_MSG*))
-          (autolisp-mark-end "EXPR" idx 1))
-        (progn
-          (setq *AUTOLISP_CAPTURE_STDOUT* T)
-          (setq *AUTOLISP_ERROR_MSG* nil)
-          (setq olderr *error*)
-          (setq *error* autolisp-trap-error)
-          (setq r (eval form-read))
-          (setq *error* olderr)
-          (setq *AUTOLISP_CAPTURE_STDOUT* nil)
-          (if *AUTOLISP_ERROR_MSG*
-            (progn
-              (autolisp-log-err (strcat "ERROR eval " form-text ": " *AUTOLISP_ERROR_MSG*))
-              (autolisp-mark-end "EXPR" idx 1))
-            (progn
-              (autolisp-log-out (strcat "RESULT " (autolisp-str r)))
-              (autolisp-mark-end "EXPR" idx 0)
-              (setq ok T))))))
+      (if *AUTOLISP_QUIT_REQUESTED*
+        (error *AUTOLISP_QUIT_SIGNAL*)
+        (if (autolisp-quit-signal-p *AUTOLISP_ERROR_MSG*)
+          (error *AUTOLISP_QUIT_SIGNAL*)
+        (if *AUTOLISP_ERROR_MSG*
+          (progn
+            (autolisp-log-err (strcat "ERROR read " form-text ": " *AUTOLISP_ERROR_MSG*))
+            (autolisp-mark-end "EXPR" idx 1))
+          (progn
+            (setq *AUTOLISP_CAPTURE_STDOUT* T)
+            (setq *AUTOLISP_ERROR_MSG* nil)
+            (setq olderr *error*)
+            (setq *error* autolisp-trap-error)
+            (setq r (autolisp-eval-request-form form-read))
+            (setq *error* olderr)
+            (setq *AUTOLISP_CAPTURE_STDOUT* nil)
+            (if *AUTOLISP_QUIT_REQUESTED*
+              (error *AUTOLISP_QUIT_SIGNAL*)
+              (if (autolisp-quit-signal-p *AUTOLISP_ERROR_MSG*)
+                (error *AUTOLISP_QUIT_SIGNAL*)
+              (if *AUTOLISP_ERROR_MSG*
+                (progn
+                  (autolisp-log-err (strcat "ERROR eval " form-text ": " *AUTOLISP_ERROR_MSG*))
+                  (autolisp-mark-end "EXPR" idx 1))
+                (progn
+                  (autolisp-log-out (strcat "RESULT " (autolisp-str r)))
+                  (autolisp-mark-end "EXPR" idx 0)
+                  (setq ok T)))))))))))
   ok)
 
 (defun autolisp-run-main (idx main-name / sym-read r olderr)
@@ -1132,28 +2289,56 @@ else
   (setq *error* autolisp-trap-error)
   (setq sym-read (read main-name))
   (setq *error* olderr)
-  (if *AUTOLISP_ERROR_MSG*
-    (progn
-      (autolisp-log-err (strcat "ERROR read-main " main-name ": " *AUTOLISP_ERROR_MSG*))
-      (autolisp-mark-end "MAIN" idx 1)
-      nil)
-    (progn
-      (setq *AUTOLISP_CAPTURE_STDOUT* T)
-      (setq *AUTOLISP_ERROR_MSG* nil)
-      (setq olderr *error*)
-      (setq *error* autolisp-trap-error)
-      (setq r (sym-read))
-      (setq *error* olderr)
-      (setq *AUTOLISP_CAPTURE_STDOUT* nil)
-      (if *AUTOLISP_ERROR_MSG*
-        (progn
-          (autolisp-log-err (strcat "ERROR main " main-name ": " *AUTOLISP_ERROR_MSG*))
-          (autolisp-mark-end "MAIN" idx 1)
-          nil)
-        (progn
-          (autolisp-log-out (strcat "MAIN-RESULT " (autolisp-str r)))
-          (autolisp-mark-end "MAIN" idx 0)
-          T)))))
+  (if *AUTOLISP_QUIT_REQUESTED*
+    (error *AUTOLISP_QUIT_SIGNAL*)
+    (if (autolisp-quit-signal-p *AUTOLISP_ERROR_MSG*)
+      (error *AUTOLISP_QUIT_SIGNAL*)
+    (if *AUTOLISP_ERROR_MSG*
+      (progn
+        (autolisp-log-err (strcat "ERROR read-main " main-name ": " *AUTOLISP_ERROR_MSG*))
+        (autolisp-mark-end "MAIN" idx 1)
+        nil)
+      (progn
+        (setq *AUTOLISP_CAPTURE_STDOUT* T)
+        (setq *AUTOLISP_ERROR_MSG* nil)
+        (setq olderr *error*)
+        (setq *error* autolisp-trap-error)
+        (setq r (sym-read))
+        (setq *error* olderr)
+        (setq *AUTOLISP_CAPTURE_STDOUT* nil)
+        (if *AUTOLISP_QUIT_REQUESTED*
+          (error *AUTOLISP_QUIT_SIGNAL*)
+          (if (autolisp-quit-signal-p *AUTOLISP_ERROR_MSG*)
+            (error *AUTOLISP_QUIT_SIGNAL*)
+          (if *AUTOLISP_ERROR_MSG*
+            (progn
+              (autolisp-log-err (strcat "ERROR main " main-name ": " *AUTOLISP_ERROR_MSG*))
+              (autolisp-mark-end "MAIN" idx 1)
+              nil)
+            (progn
+              (autolisp-log-out (strcat "MAIN-RESULT " (autolisp-str r)))
+              (autolisp-mark-end "MAIN" idx 0)
+              T)))))))))
+
+(defun autolisp-host-quit ()
+  (command "_QUIT" "_Y"))
+
+(setq *AUTOLISP_QUIT_SIGNAL* "__AUTOLISP_QUIT_SIGNAL__")
+(setq *AUTOLISP_QUIT_REQUESTED* nil)
+(setq *AUTOLISP_LOAD_STACK* nil)
+(setq *AUTOLISP_LAST_ERROR_CONTEXT* nil)
+(setq *CLLOAD_DEFAULT_LOADER* 'autolisp-source-load)
+
+(defun autolisp-quit-signal-p (msg)
+  (and (= (type msg) 'STR)
+       (= msg *AUTOLISP_QUIT_SIGNAL*)))
+
+(defun quit ()
+  (setq *AUTOLISP_QUIT_REQUESTED* T)
+  (error *AUTOLISP_QUIT_SIGNAL*))
+
+(defun exit ()
+  (quit))
 
 (setq *AUTOLISP_TOTAL* 0)
 (setq *AUTOLISP_OK* 0)
@@ -1209,7 +2394,14 @@ EOLISP
       (if old-name (autolisp-safe-setvar "LOGFILENAME" old-name))
       (if old-mode (autolisp-safe-setvar "LOGFILEMODE" old-mode)))))
 
-(setq *AUTOLISP_LOG_STATE* (autolisp-log-setup))
+(setq _autolisp_log_setup_result (vl-catch-all-apply 'autolisp-log-setup nil))
+(if (vl-catch-all-error-p _autolisp_log_setup_result)
+  (progn
+    (setq *AUTOLISP_LOG_STATE* nil)
+    (autolisp-log-err
+      (strcat "WARN log-setup: "
+              (vl-catch-all-error-message _autolisp_log_setup_result))))
+  (setq *AUTOLISP_LOG_STATE* _autolisp_log_setup_result))
 EOLISP
   fi
   if [[ "$BOOTSTRAP_PHASE" == "full" ]]; then
@@ -1217,11 +2409,6 @@ EOLISP
 ;; Mirror interactive output to OUTFILE so results do not depend on CAD session logs.
 (defun print (obj)
   (autolisp-emit-user-out obj))
-
-(defun princ (obj)
-  (if obj
-    (autolisp-emit-user-out obj)
-    obj))
 
 (defun prin1 (obj)
   (autolisp-emit-user-out obj))
@@ -1263,6 +2450,22 @@ EOLISP
   (setq *AUTOLISP_FAIL* 0)
   (setq *AUTOLISP_ERROR* 0))
 
+(defun autolisp-request-reset ()
+  (autolisp-reset-file *AUTOLISP_OUTFILE*)
+  (autolisp-reset-file *AUTOLISP_ERRFILE*)
+  (autolisp-repl-reset-counters)
+  (setq *AUTOLISP_CAPTURE_STDOUT* nil)
+  (setq *AUTOLISP_ERROR_MSG* nil)
+  (setq *AUTOLISP_QUIT_REQUESTED* nil)
+  (autolisp-clear-last-error-context)
+  nil)
+
+(defun autolisp-request-exit-code ()
+  (autolisp-log-out (autolisp-summary-line))
+  (if (> *AUTOLISP_FAIL* 0)
+    1
+    0))
+
 (defun autolisp-run-repl-request (/ lines req-id form-text f form-read r)
   (setq lines (autolisp-slurp-lines *AUTOLISP_INPFILE*))
   (if (null lines)
@@ -1275,18 +2478,15 @@ EOLISP
       (autolisp-reset-file *AUTOLISP_OUTFILE*)
       (autolisp-reset-file *AUTOLISP_ERRFILE*)
       (autolisp-repl-reset-counters)
-      (setq f (open *AUTOLISP_INPFILE* "r"))
-      (if (null f)
+      (if (= form-text "")
         (progn
-          (autolisp-log-err "ERROR open request file: unable to reopen input")
+          (autolisp-log-err "ERROR read repl request: empty input")
           (autolisp-note-fail)
           (autolisp-log-out (autolisp-summary-line))
           (autolisp-set-status-text (strcat "READY " req-id))
           T)
         (progn
-          (read-line f)
-          (setq form-read (vl-catch-all-apply 'read (list f)))
-          (close f)
+          (setq form-read (vl-catch-all-apply 'read (list form-text)))
           (vl-file-delete *AUTOLISP_INPFILE*)
           (if (vl-catch-all-error-p form-read)
             (progn
@@ -1326,7 +2526,15 @@ EOLISP
   (command "_QUIT" "_Y"))
 EOLISP
   fi
-  if [[ "$INTERACTIVE" -eq 1 && "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" ]]; then
+  cat <<'EOLISP'
+(autolisp-write-runtime-info)
+EOLISP
+  if [[ "$USE_REMOTE_PROTOCOL" -eq 1 ]]; then
+    cat <<'EOLISP'
+(load *AUTOLISP_PROTOCOL_RUNTIMEFILE*)
+(autolisp-protocol-server-loop)
+EOLISP
+  elif [[ "$INTERACTIVE" -eq 1 && "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" ]]; then
     cat <<'EOLISP'
 (autolisp-repl-loop)
 EOLISP
@@ -1360,13 +2568,27 @@ fi
 
 SCRFILE="$WORKDIR/run.scr"
 {
-  printf '(load "%s")\r\n' "$(escape_lisp_string "$RUNLSPFILE")"
+  if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" ]]; then
+    printf '%s\n' '._COMMANDLINE'
+    printf '(load "%s")\n' "$(escape_lisp_string "$RUNLSPFILE")"
+  else
+    printf '(load "%s")\n' "$(escape_lisp_string "$RUNLSPFILE")"
+  fi
 } >"$SCRFILE"
 if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" ]]; then
-  printf '%s\r\n' '(command "_QUIT" "_Y")' >>"$SCRFILE"
+  printf '%s\n' '._QUIT _Y' >>"$SCRFILE"
 fi
 
 export OUTFILE ERRFILE STATUSFILE INPFILE
+
+if [[ "$USE_FOREGROUND_BATCH_PROTOCOL" -eq 1 ]]; then
+  if [[ "$INTERACTIVE" -eq 0 ]]; then
+    prime_protocol_noninteractive_startup
+    start_protocol_foreground_relay
+  fi
+fi
+
+start_protocol_interactive_helper
 
 write_windows_autocad_vbs() {
   local vbs="$WORKDIR/bridge-autocad.vbs"
@@ -1676,6 +2898,9 @@ wait_for_status() {
     if [[ -n "$s" && "$s" != "__PENDING__" && "$s" != "99" ]]; then
       return 0
     fi
+    if batch_startup_stalled "$s"; then
+      return 124
+    fi
     if batch_runner_done_without_status "$s"; then
       return 1
     fi
@@ -1779,7 +3004,11 @@ OSA
 
 run_macos_bricscad_batch() {
   local exe="$1"
+  local app=""
   local -a cmd=()
+  local -a open_cmd=()
+  local -a launch_cmd=()
+  local rc=0
   if [[ -z "$exe" || ! -f "$exe" ]]; then
     echo "BricsCAD CLI executable not found. Set BRICSCAD_EXE or install BricsCAD in /Applications." >&2
     return 3
@@ -1788,27 +3017,90 @@ run_macos_bricscad_batch() {
   if [[ -n "$BRICSCAD_MACOS_PROFILE" ]]; then
     cmd+=("-P" "$BRICSCAD_MACOS_PROFILE")
   fi
-  cmd+=("-b" "$SCRFILE")
-  (
-    "${cmd[@]}" >"$WORKDIR/bricscad-stdout.txt" 2>"$WORKDIR/bricscad-stderr.txt"
-    { printf '%s\n' "$?" >"$BATCH_EXIT_FILE"; } 2>/dev/null || true
-  ) &
+  cmd+=("-B" "$SCRFILE")
+  if [[ "$EXPERIMENTAL_MACOS_BATCH_OPEN" == "1" && "$USE_REMOTE_PROTOCOL" -eq 1 && "$BRICSCAD_MACOS_APP_MODE" == "launch" && "$exe" == */Contents/MacOS/bricscad ]]; then
+    app="$(find_macos_bricscad_app)"
+    if [[ -n "$app" ]]; then
+      open_cmd=(/usr/bin/open -n -a "$app" --args)
+      if [[ -n "$BRICSCAD_MACOS_PROFILE" ]]; then
+        open_cmd+=("-P" "$BRICSCAD_MACOS_PROFILE")
+      fi
+      open_cmd+=("-B" "$SCRFILE")
+      printf '%q ' "${open_cmd[@]}" >"$BRICSCAD_BATCH_COMMAND_FILE"
+      printf '\n' >>"$BRICSCAD_BATCH_COMMAND_FILE"
+      MACOS_ASYNC=1
+      BRICSCAD_BATCH_LAUNCHED=1
+      BRICSCAD_BATCH_REAPED=1
+      BRICSCAD_BATCH_COMPLETED=0
+      BRICSCAD_BATCH_RC=""
+      BRICSCAD_BATCH_PID=""
+      BRICSCAD_BATCH_CHILD_PID=""
+      BRICSCAD_BATCH_START_TS="$(date +%s 2>/dev/null || echo 0)"
+      "${open_cmd[@]}" >"$WORKDIR/bricscad-stdout.txt" 2>"$WORKDIR/bricscad-stderr.txt" || rc=$?
+      if [[ "$rc" -ne 0 ]]; then
+        BRICSCAD_BATCH_RC="$rc"
+        BRICSCAD_BATCH_COMPLETED=1
+        return 0
+      fi
+      BRICSCAD_BATCH_PID="$(find_bricscad_batch_pid || true)"
+      emit_bricscad_launch_message "$BRICSCAD_BATCH_PID" "$exe"
+      return 0
+    fi
+  fi
+  if [[ "$USE_FOREGROUND_BATCH_PROTOCOL" -eq 1 ]]; then
+    printf '%q ' "${cmd[@]}" >"$BRICSCAD_BATCH_COMMAND_FILE"
+    printf '\n' >>"$BRICSCAD_BATCH_COMMAND_FILE"
+    BRICSCAD_BATCH_LAUNCHED=1
+    BRICSCAD_BATCH_REAPED=1
+    BRICSCAD_BATCH_COMPLETED=0
+    BRICSCAD_BATCH_RC=""
+    BRICSCAD_BATCH_PID=""
+    BRICSCAD_BATCH_CHILD_PID=""
+    BRICSCAD_BATCH_START_TS="$(date +%s 2>/dev/null || echo 0)"
+    start_bricscad_launch_announcer "$exe"
+    "${cmd[@]}" >"$WORKDIR/bricscad-stdout.txt" 2>"$WORKDIR/bricscad-stderr.txt" || rc=$?
+    stop_bricscad_launch_announcer
+    BRICSCAD_BATCH_RC="$rc"
+    BRICSCAD_BATCH_COMPLETED=1
+    return 0
+  fi
+  launch_cmd=("${cmd[@]}")
+  if [[ -x /usr/bin/script ]]; then
+    launch_cmd=(/usr/bin/script -q "$WORKDIR/bricscad-typescript.txt" "${cmd[@]}")
+  fi
+  printf '%q ' "${launch_cmd[@]}" >"$BRICSCAD_BATCH_COMMAND_FILE"
+  printf '\n' >>"$BRICSCAD_BATCH_COMMAND_FILE"
+  "${launch_cmd[@]}" >"$WORKDIR/bricscad-stdout.txt" 2>"$WORKDIR/bricscad-stderr.txt" &
   BRICSCAD_BATCH_PID=$!
+  BRICSCAD_BATCH_CHILD_PID="$BRICSCAD_BATCH_PID"
   BRICSCAD_BATCH_LAUNCHED=1
+  BRICSCAD_BATCH_REAPED=0
+  BRICSCAD_BATCH_COMPLETED=0
+  BRICSCAD_BATCH_RC=""
+  BRICSCAD_BATCH_START_TS="$(date +%s 2>/dev/null || echo 0)"
+  emit_bricscad_launch_message "$BRICSCAD_BATCH_PID" "$exe"
   return 0
 }
 
 kill_bricscad_batch_process() {
-  if [[ "$BRICSCAD_BATCH_LAUNCHED" -ne 1 || -z "$BRICSCAD_BATCH_PID" ]]; then
+  local pid=""
+
+  if [[ "$BRICSCAD_BATCH_LAUNCHED" -ne 1 ]]; then
     return 0
   fi
-  if kill -0 "$BRICSCAD_BATCH_PID" 2>/dev/null; then
-    kill -TERM "$BRICSCAD_BATCH_PID" 2>/dev/null || true
+  if [[ -n "$BRICSCAD_BATCH_PID" ]]; then
+    pid="$BRICSCAD_BATCH_PID"
+  else
+    pid="$(find_bricscad_batch_pid || true)"
+  fi
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    kill -TERM "$pid" 2>/dev/null || true
     sleep 1
-    if kill -0 "$BRICSCAD_BATCH_PID" 2>/dev/null; then
-      kill -KILL "$BRICSCAD_BATCH_PID" 2>/dev/null || true
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -KILL "$pid" 2>/dev/null || true
     fi
   fi
+  reap_bricscad_batch_process || true
 }
 
 run_macos_autocad_fallback() {
@@ -1888,10 +3180,7 @@ case "$ENGINE" in
     ;;
 esac
 
-if [[ "$USE_BATCH_INTERACTIVE_REPL" -eq 1 ]]; then
-  run_batch_interactive_repl
-  exit $?
-fi
+stop_protocol_foreground_relay
 
 if [[ "$MACOS_ASYNC" -eq 1 ]]; then
   if [[ -z "${AUTOLISP_KEEP_WORKDIR:-}" ]]; then
@@ -1900,13 +3189,36 @@ if [[ "$MACOS_ASYNC" -eq 1 ]]; then
 fi
 
 wait_rc=0
-if ! wait_for_status; then
-  wait_rc=$?
-fi
-
-if [[ "$wait_rc" -eq 0 ]]; then
-  if ! wait_for_batch_process_exit; then
+if [[ "$USE_REMOTE_PROTOCOL" -eq 1 ]]; then
+  if [[ "$INTERACTIVE" -eq 1 && "$USE_FOREGROUND_BATCH_PROTOCOL" -eq 1 ]]; then
+    if ! wait_protocol_interactive_helper; then
+      wait_rc=$?
+    fi
+  elif [[ "$INTERACTIVE" -eq 1 ]]; then
+    run_protocol_interactive_repl
+    exit $?
+  fi
+  if [[ "$INTERACTIVE" -eq 1 ]]; then
+    :
+  elif [[ "$USE_FOREGROUND_BATCH_PROTOCOL" -eq 1 ]]; then
+    if ! wait_for_status; then
+      wait_rc=$?
+    fi
+  elif ! run_protocol_noninteractive; then
     wait_rc=$?
+  fi
+elif [[ "$USE_BATCH_INTERACTIVE_REPL" -eq 1 ]]; then
+  run_batch_interactive_repl
+  exit $?
+else
+  if ! wait_for_status; then
+    wait_rc=$?
+  fi
+
+  if [[ "$wait_rc" -eq 0 ]]; then
+    if ! wait_for_batch_process_exit; then
+      wait_rc=$?
+    fi
   fi
 fi
 
@@ -1918,10 +3230,19 @@ if [[ "$INTERRUPTED" -eq 1 ]]; then
   exit 130
 fi
 
-LOGFILE_FOUND="$(find_log_file)"
-SESSION_OUTPUT_FILE="$(find_session_output_file || true)"
-render_stdout "$OUTFILE" "$SESSION_OUTPUT_FILE" || cat "$OUTFILE" || true
-cat "$ERRFILE" >&2 || true
+if [[ "$USE_REMOTE_PROTOCOL" -eq 1 && "$INTERACTIVE" -eq 1 ]]; then
+  if [[ "$wait_rc" -eq 124 ]]; then
+    exit 124
+  fi
+  exit "$wait_rc"
+fi
+
+if [[ ! -f "${PROTOCOL_STREAM_MARKER:-}" ]]; then
+  LOGFILE_FOUND="$(find_log_file)"
+  SESSION_OUTPUT_FILE="$(find_session_output_file || true)"
+  render_stdout "$OUTFILE" "$SESSION_OUTPUT_FILE" || cat "$OUTFILE" || true
+  cat "$ERRFILE" >&2 || true
+fi
 
 if [[ "$wait_rc" -eq 124 ]]; then
   exit 124
