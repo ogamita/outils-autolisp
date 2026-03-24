@@ -1,6 +1,3 @@
-EVAL (progn (print (quote "Hello World")) (print "Hiya!"))
-OUTPUT
 "Hello World"
 "Hiya!"
-RESULT Hiya!
-TOTAL=1 OK=1 FAIL=0 ERROR=0
+Hiya!

@@ -530,6 +530,70 @@ run_standard_cases() {
       --env AUTOLISP_REMOTE_IO_MODE=on \
       --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
       -x '(+ 1 2)'
+
+    run_case \
+      "eval_prints_verbose" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/expected/eval_prints_verbose.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_OS=Darwin \
+      --env BRICSCAD_MACOS_MODE=batch \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
+      -x '(progn (print (quote "Hello World")) (print "Hiya!"))' \
+      --verbose
+
+    run_case \
+      "eval_no_output_quiet" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/expected/eval_no_output.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_OS=Darwin \
+      --env BRICSCAD_MACOS_MODE=batch \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
+      -x '(+ 1 2)' \
+      --quiet
+
+    run_case \
+      "eval_error" \
+      "protocol_batch" \
+      "/dev/null" \
+      "$SCRIPT_DIR/expected/eval_error.stderr" \
+      1 \
+      --env AUTOLISP_OS=Darwin \
+      --env BRICSCAD_MACOS_MODE=batch \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
+      -x '(/ 1 0)'
+
+    run_case \
+      "eval_error_verbose" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/expected/eval_error_verbose.stdout" \
+      "$SCRIPT_DIR/expected/eval_error.stderr" \
+      1 \
+      --env AUTOLISP_OS=Darwin \
+      --env BRICSCAD_MACOS_MODE=batch \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
+      -x '(/ 1 0)' \
+      --verbose
+
+    run_case \
+      "eval_error_quiet" \
+      "protocol_batch" \
+      "/dev/null" \
+      "$SCRIPT_DIR/expected/eval_error.stderr" \
+      1 \
+      --env AUTOLISP_OS=Darwin \
+      --env BRICSCAD_MACOS_MODE=batch \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
+      -x '(/ 1 0)' \
+      --quiet
   else
     run_case \
       "eval_prints" \
@@ -625,6 +689,20 @@ run_standard_cases() {
       --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
       --env AUTOLISP_ALLOW_UNSTABLE_MACOS_BATCH_LOAD=1 \
       "$SCRIPT_DIR/fixtures/main-default.lsp"
+
+    run_case \
+      "load_main_default_verbose" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/expected/load_main_default_verbose.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_OS=Darwin \
+      --env BRICSCAD_MACOS_MODE=batch \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
+      --env AUTOLISP_ALLOW_UNSTABLE_MACOS_BATCH_LOAD=1 \
+      "$SCRIPT_DIR/fixtures/main-default.lsp" \
+      --verbose
 
     run_case \
       "load_main_custom" \

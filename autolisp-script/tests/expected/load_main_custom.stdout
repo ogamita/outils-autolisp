@@ -1,7 +1,2 @@
-LOAD @ROOT_DIR@/tests/fixtures/main-custom.lsp
-LOADED @ROOT_DIR@/tests/fixtures/main-custom.lsp
-MAIN C:RUN_BASIC
-OUTPUT
 "From custom main"
-MAIN-RESULT 7
-TOTAL=2 OK=2 FAIL=0 ERROR=0
+7

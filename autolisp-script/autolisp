@@ -609,17 +609,43 @@ protocol_emit_out_line() {
   case "$line" in
     LOAD\ *|EVAL\ *|MAIN\ *)
       PROTOCOL_STREAM_OUTPUT_OPEN=0
-      printf '%s\n' "$line"
+      if autolisp_is_verbose; then
+        printf '%s\n' "$line"
+      fi
       ;;
     '<<<AUTOLISP-STDOUT>>>'*)
-      if [[ "$PROTOCOL_STREAM_OUTPUT_OPEN" -eq 0 ]]; then
+      if autolisp_is_verbose && [[ "$PROTOCOL_STREAM_OUTPUT_OPEN" -eq 0 ]]; then
         printf 'OUTPUT\n'
         PROTOCOL_STREAM_OUTPUT_OPEN=1
       fi
       printf '%s\n' "${line#<<<AUTOLISP-STDOUT>>>}"
       ;;
-    LOADED\ *|RESULT\ *|MAIN-RESULT\ *)
-      printf '%s\n' "$line"
+    LOADED\ *)
+      if autolisp_is_verbose; then
+        printf '%s\n' "$line"
+      fi
+      PROTOCOL_STREAM_OUTPUT_OPEN=0
+      ;;
+    RESULT\ *)
+      if autolisp_is_verbose; then
+        printf '%s\n' "$line"
+      else
+        printf '%s\n' "${line#RESULT }"
+      fi
+      PROTOCOL_STREAM_OUTPUT_OPEN=0
+      ;;
+    MAIN-RESULT\ *)
+      if autolisp_is_verbose; then
+        printf '%s\n' "$line"
+      else
+        printf '%s\n' "${line#MAIN-RESULT }"
+      fi
+      PROTOCOL_STREAM_OUTPUT_OPEN=0
+      ;;
+    TOTAL=*)
+      if autolisp_is_verbose; then
+        printf '%s\n' "$line"
+      fi
       PROTOCOL_STREAM_OUTPUT_OPEN=0
       ;;
     *)
@@ -851,7 +877,7 @@ run_protocol_interactive_repl() {
     request_file="$(build_protocol_eval_request "$buffer")"
     submit_protocol_request_file "$request_file" || return $?
     rendered_file="$WORKDIR/interactive-rendered.txt"
-    render_stdout "$OUTFILE" >"$rendered_file"
+    render_stdout "$OUTFILE" "" 1 >"$rendered_file"
     interactive_print_response "$rendered_file" "$ERRFILE"
     if [[ "$PROTOCOL_LAST_REQUEST_QUIT" -eq 1 ]]; then
       printf 'Bye bye!\n'
@@ -971,7 +997,7 @@ run_batch_interactive_repl() {
     fi
 
     rendered_file="$WORKDIR/interactive-rendered.txt"
-    render_stdout "$OUTFILE" >"$rendered_file"
+    render_stdout "$OUTFILE" "" 1 >"$rendered_file"
     interactive_print_response "$rendered_file" "$ERRFILE"
     buffer=""
   done
@@ -1484,14 +1510,15 @@ find_session_output_file() {
 render_stdout() {
   local outfile="$1"
   local sessionfile="${2:-}"
+  local verbose_mode="${3:-$CLI_VERBOSE}"
 
-  awk -v sessionfile="$sessionfile" '
+  awk -v sessionfile="$sessionfile" -v verbose_mode="$verbose_mode" '
   function append_output_line(line) {
     pending_output = pending_output line "\n"
   }
   function flush_output(    n, arr, i) {
     if (pending_output == "") return
-    print "OUTPUT"
+    if (verbose_mode == "1") print "OUTPUT"
     n = split(pending_output, arr, "\n")
     for (i = 1; i <= n; i++) {
       if (arr[i] != "") print arr[i]
@@ -1530,28 +1557,53 @@ render_stdout() {
   /^LOAD / {
     action_idx++
     pending_output = block_lines["LOAD:" action_idx]
-    print
+    if (verbose_mode == "1") print
     next
   }
   /^EVAL / {
     action_idx++
     pending_output = block_lines["EXPR:" action_idx]
-    print
+    if (verbose_mode == "1") print
     next
   }
   /^MAIN / {
     action_idx++
     pending_output = block_lines["MAIN:" action_idx]
-    print
+    if (verbose_mode == "1") print
     next
   }
   /^<<<AUTOLISP-STDOUT>>>/ {
     append_output_line(substr($0, 22))
     next
   }
-  /^LOADED / || /^RESULT / || /^MAIN-RESULT / {
+  /^LOADED / {
     flush_output()
-    print
+    if (verbose_mode == "1") print
+    next
+  }
+  /^RESULT / {
+    flush_output()
+    if (verbose_mode == "1") {
+      print
+    } else {
+      sub(/^RESULT /, "", $0)
+      print
+    }
+    next
+  }
+  /^MAIN-RESULT / {
+    flush_output()
+    if (verbose_mode == "1") {
+      print
+    } else {
+      sub(/^MAIN-RESULT /, "", $0)
+      print
+    }
+    next
+  }
+  /^TOTAL=/ {
+    flush_output()
+    if (verbose_mode == "1") print
     next
   }
   {
@@ -3240,7 +3292,7 @@ fi
 if [[ ! -f "${PROTOCOL_STREAM_MARKER:-}" ]]; then
   LOGFILE_FOUND="$(find_log_file)"
   SESSION_OUTPUT_FILE="$(find_session_output_file || true)"
-  render_stdout "$OUTFILE" "$SESSION_OUTPUT_FILE" || cat "$OUTFILE" || true
+  render_stdout "$OUTFILE" "$SESSION_OUTPUT_FILE" "$CLI_VERBOSE" || cat "$OUTFILE" || true
   cat "$ERRFILE" >&2 || true
 fi
 
