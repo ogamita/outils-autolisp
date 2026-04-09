@@ -43,7 +43,7 @@ Wrapper CLI pour exécuter du code AutoLISP dans BricsCAD ou AutoCAD, capturer `
 
 Points notables:
 
-- support explicite de BricsCAD macOS en mode `osascript` ou `batch`;
+- support explicite de BricsCAD macOS en mode `automation` ou `batch`;
 - REPL interactif avec handshake fichier en mode batch;
 - niveaux de verbosité `--quiet`, normal et `--verbose`, avec annonce du moteur BricsCAD et de sa version au démarrage interactif;
 - backend `fake-cad` pour tests automatisés sans moteur réel.
@@ -122,9 +122,9 @@ make docs-pdf
 Sous macOS, `make test-bricscad` sépare explicitement les runs BricsCAD:
 
 - `make test-bricscad-macos-batch`
-- `make test-bricscad-macos-osascript-attach`
+- `make test-bricscad-macos-automation-attach`
 
-La cible agrégée lance d'abord `batch`, puis `osascript attach`. Le second mode suppose qu'une session BricsCAD soit déjà ouverte; pour `autolisp-script`, le runner interactif s'arrête et demande d'ouvrir BricsCAD avant de continuer.
+La cible agrégée lance d'abord `batch`, puis `automation attach`. Le second mode suppose qu'une session BricsCAD soit déjà ouverte; pour `autolisp-script`, le runner interactif s'arrête et demande d'ouvrir BricsCAD avant de continuer.
 
 État des cibles principales:
 

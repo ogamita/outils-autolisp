@@ -8,8 +8,8 @@ SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 usage() {
   cat <<'EOU'
 Usage:
-  autolisp-v4 [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--bricscad-macos-mode auto|osascript|batch] [--bricscad-macos-app attach|launch] [--bricscad-macos-profile NAME] { source.lsp | -x expression }... [--dwg file.dwg] [--main C:MAIN]
-  autolisp-v4 [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--bricscad-macos-mode auto|osascript|batch] [--bricscad-macos-app attach|launch] [--bricscad-macos-profile NAME] -i|--interactive [--dwg file.dwg]
+  autolisp-v4 [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--mode automation|batch] [--backend attach|launch] [--bricscad-macos-profile NAME] { source.lsp | -x expression }... [--dwg file.dwg] [--main C:MAIN]
+  autolisp-v4 [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--mode automation|batch] [--backend attach|launch] [--bricscad-macos-profile NAME] -i|--interactive [--dwg file.dwg]
 
 Examples:
   autolisp test.lsp
@@ -34,8 +34,8 @@ Environment overrides:
   AUTOCAD_COM_MODE        auto | attach | launch | off   (Windows + AutoCAD only)
   AUTOCAD_EXE             Path to acad.exe / acadlt.exe  (Windows)
   BRICSCAD_EXE            Path to bricscad.exe      (Windows)
-  BRICSCAD_MACOS_MODE     auto | osascript | batch  (macOS + BricsCAD only)
-  BRICSCAD_MACOS_APP_MODE attach | launch           (macOS + BricsCAD + osascript only)
+  AUTOLISP_MODE           auto | automation | batch
+  AUTOLISP_BACKEND        attach | launch
   BRICSCAD_MACOS_PROFILE  BricsCAD profile name     (macOS + BricsCAD batch only)
   AUTOLISP_BOOTSTRAP_PHASE marker | core | log | full
   AUTOLISP_DWG            Default DWG for AutoCAD Core Console if --dwg not provided
@@ -60,8 +60,8 @@ TIMEOUT_SECS="${AUTOLISP_WAIT_SECS:-${AUTOLISP_TIMEOUT:-180}}"
 AUTOCAD_COM_MODE="${AUTOCAD_COM_MODE:-auto}"
 AUTOCAD_EXE="${AUTOCAD_EXE:-}"
 BRICSCAD_EXE="${BRICSCAD_EXE:-}"
-BRICSCAD_MACOS_MODE="${BRICSCAD_MACOS_MODE:-auto}"
-BRICSCAD_MACOS_APP_MODE="${BRICSCAD_MACOS_APP_MODE:-launch}"
+CAD_MODE="${AUTOLISP_MODE:-auto}"
+CAD_BACKEND="${AUTOLISP_BACKEND:-launch}"
 BRICSCAD_MACOS_PROFILE="${BRICSCAD_MACOS_PROFILE:-}"
 AUTOLISP_REMOTE_IO_MODE="${AUTOLISP_REMOTE_IO_MODE:-auto}"
 BOOTSTRAP_PHASE="${AUTOLISP_BOOTSTRAP_PHASE:-full}"
@@ -100,22 +100,22 @@ while [[ $# -gt 0 ]]; do
       BOOTSTRAP_PHASE="$2"
       shift 2
       ;;
-    --bricscad-macos-mode)
+    --mode)
       if [[ $# -lt 2 ]]; then
-        echo "Missing value after --bricscad-macos-mode" >&2
+        echo "Missing value after --mode" >&2
         usage
         exit 2
       fi
-      BRICSCAD_MACOS_MODE="$2"
+      CAD_MODE="$2"
       shift 2
       ;;
-    --bricscad-macos-app)
+    --backend)
       if [[ $# -lt 2 ]]; then
-        echo "Missing value after --bricscad-macos-app" >&2
+        echo "Missing value after --backend" >&2
         usage
         exit 2
       fi
-      BRICSCAD_MACOS_APP_MODE="$2"
+      CAD_BACKEND="$2"
       shift 2
       ;;
     --bricscad-macos-profile)
@@ -907,12 +907,9 @@ run_interactive_repl() {
     repl_args+=("--verbose")
   fi
   [[ -n "$DWG" ]] && repl_args+=("--dwg" "$DWG")
-  if [[ "$ENGINE" == "bricscad" ]]; then
-    repl_args+=("--bricscad-macos-mode" "$BRICSCAD_MACOS_MODE")
-    repl_args+=("--bricscad-macos-app" "$BRICSCAD_MACOS_APP_MODE")
-    if [[ -n "$BRICSCAD_MACOS_PROFILE" ]]; then
-      repl_args+=("--bricscad-macos-profile" "$BRICSCAD_MACOS_PROFILE")
-    fi
+  repl_args+=("--mode" "$CAD_MODE" "--backend" "$CAD_BACKEND")
+  if [[ "$ENGINE" == "bricscad" && -n "$BRICSCAD_MACOS_PROFILE" ]]; then
+    repl_args+=("--bricscad-macos-profile" "$BRICSCAD_MACOS_PROFILE")
   fi
 
   buffer=""
@@ -1077,6 +1074,17 @@ BRICSCAD_BATCH_REAPED=0
 BRICSCAD_BATCH_COMPLETED=0
 BRICSCAD_BATCH_START_TS=0
 BRICSCAD_BATCH_STARTUP_TIMEOUT_SECS="${AUTOLISP_BRICSCAD_BATCH_STARTUP_TIMEOUT:-15}"
+
+case "$CAD_MODE" in
+  automation)
+    AUTOCAD_COM_MODE="$CAD_BACKEND"
+    BRICSCAD_COM_MODE="$CAD_BACKEND"
+    ;;
+  batch)
+    AUTOCAD_COM_MODE="off"
+    BRICSCAD_COM_MODE="off"
+    ;;
+esac
 BRICSCAD_BATCH_COMMAND_FILE=""
 ALLOW_UNSTABLE_MACOS_BATCH_LOAD="${AUTOLISP_ALLOW_UNSTABLE_MACOS_BATCH_LOAD:-0}"
 EXPERIMENTAL_MACOS_BATCH_OPEN="${AUTOLISP_EXPERIMENTAL_MACOS_BATCH_OPEN:-0}"
@@ -1637,18 +1645,18 @@ declare -a LOAD_PATHS=()
 declare -a EVAL_PATHS=()
 HAS_LOAD_ACTION=0
 
-case "$BRICSCAD_MACOS_MODE" in
-  auto|osascript|batch) ;;
+case "$CAD_MODE" in
+  auto|automation|batch) ;;
   *)
-    echo "Invalid BRICSCAD_MACOS_MODE: $BRICSCAD_MACOS_MODE" >&2
+    echo "Invalid CAD mode: $CAD_MODE" >&2
     exit 2
     ;;
 esac
 
-case "$BRICSCAD_MACOS_APP_MODE" in
+case "$CAD_BACKEND" in
   attach|launch) ;;
   *)
-    echo "Invalid BRICSCAD_MACOS_APP_MODE: $BRICSCAD_MACOS_APP_MODE" >&2
+    echo "Invalid CAD backend: $CAD_BACKEND" >&2
     exit 2
     ;;
 esac
@@ -1670,12 +1678,12 @@ case "$AUTOLISP_REMOTE_IO_MODE" in
 esac
 
 if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 ]]; then
-  BRICSCAD_MACOS_EFFECTIVE_MODE="$BRICSCAD_MACOS_MODE"
+  BRICSCAD_MACOS_EFFECTIVE_MODE="$CAD_MODE"
   if [[ "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "auto" ]]; then
     if find_macos_bricscad_cli >/dev/null 2>&1; then
       BRICSCAD_MACOS_EFFECTIVE_MODE="batch"
     else
-      BRICSCAD_MACOS_EFFECTIVE_MODE="osascript"
+      BRICSCAD_MACOS_EFFECTIVE_MODE="automation"
     fi
   fi
 fi
@@ -1685,7 +1693,7 @@ if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_M
 fi
 
 USE_REMOTE_PROTOCOL=0
-if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" && "$BOOTSTRAP_PHASE" == "full" ]]; then
+if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && ( "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" || "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "automation" ) && "$BOOTSTRAP_PHASE" == "full" ]]; then
   case "$AUTOLISP_REMOTE_IO_MODE" in
     auto|on)
       USE_REMOTE_PROTOCOL=1
@@ -1696,7 +1704,7 @@ fi
 USE_FOREGROUND_BATCH_PROTOCOL=0
 if [[ "$USE_REMOTE_PROTOCOL" -eq 1 && "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" ]]; then
   USE_FOREGROUND_BATCH_PROTOCOL=1
-  if [[ "$EXPERIMENTAL_MACOS_BATCH_OPEN" == "1" && "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" && "$BRICSCAD_MACOS_APP_MODE" == "launch" ]]; then
+  if [[ "$EXPERIMENTAL_MACOS_BATCH_OPEN" == "1" && "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" && "$CAD_BACKEND" == "launch" ]]; then
     USE_FOREGROUND_BATCH_PROTOCOL=0
   fi
 fi
@@ -1766,6 +1774,7 @@ for i in "${!ACTION_KINDS[@]}"; do
     if [[ $already_present -eq 0 ]]; then
       SEARCH_DIRS+=("$abs_dir")
     fi
+    EVAL_PATHS+=("")
   else
     LOAD_PATHS+=("")
     eval_file="$WORKDIR/eval-$((i + 1)).lsp"
@@ -1791,10 +1800,8 @@ if [[ "$INTERACTIVE" -eq 1 && "$USE_REMOTE_PROTOCOL" -eq 0 && "$USE_BATCH_INTERA
 fi
 
 QUIT_ON_FINISH=1
-if [[ "$ENGINE" == "bricscad" && $IS_WINDOWS -eq 1 && "$BRICSCAD_COM_MODE" != "off" ]]; then
-  if [[ "$BRICSCAD_COM_MODE" == "attach" ]]; then
-    QUIT_ON_FINISH=0
-  fi
+if [[ "$CAD_BACKEND" == "attach" ]]; then
+  QUIT_ON_FINISH=0
 fi
 # En mode batch macOS, on veut terminer l'instance lancée pour les exécutions non interactives
 # afin d'éviter d'accumuler des processus BricsCAD bloqués. On conserve la session uniquement
@@ -1968,6 +1975,15 @@ else
                          (strcat (autolisp-stdout-prefix)
                                  (autolisp-stdout-text obj))))
   obj)
+
+;; Fallback for BricsCAD builds where the project-specific LispFunction is not
+;; loaded yet. The real EPURELIB.dll definition can still replace this later.
+(defun get_new_guid (/ stamp)
+  (if (not (boundp '*AUTOLISP_GUID_SEQ*))
+    (setq *AUTOLISP_GUID_SEQ* 0))
+  (setq *AUTOLISP_GUID_SEQ* (+ *AUTOLISP_GUID_SEQ* 1))
+  (setq stamp (rtos (getvar "DATE") 2 8))
+  (strcat "AUTO-" stamp "-" (itoa *AUTOLISP_GUID_SEQ*)))
 
 (defun autolisp-mark-begin (kind idx)
   nil)
@@ -2372,7 +2388,7 @@ else
         (setq *AUTOLISP_ERROR_MSG* nil)
         (setq olderr *error*)
         (setq *error* autolisp-trap-error)
-        (setq r (sym-read))
+        (setq r (funcall sym-read))
         (setq *error* olderr)
         (setq *AUTOLISP_CAPTURE_STDOUT* nil)
         (if *AUTOLISP_QUIT_REQUESTED*
@@ -2637,14 +2653,14 @@ fi
 
 SCRFILE="$WORKDIR/run.scr"
 {
-  if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" ]]; then
+  if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 ]]; then
     printf '%s\n' '._COMMANDLINE'
     printf '(load "%s")\n' "$(escape_lisp_string "$RUNLSPFILE")"
   else
     printf '(load "%s")\n' "$(escape_lisp_string "$RUNLSPFILE")"
   fi
 } >"$SCRFILE"
-if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" ]]; then
+if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 ]]; then
   printf '%s\n' '._QUIT _Y' >>"$SCRFILE"
 fi
 
@@ -3031,6 +3047,22 @@ run_windows_bricscad() {
 
 run_macos_bricscad_fallback() {
   local app=""
+  if [[ -n "${BRICSCAD_EXE:-}" && -x "${BRICSCAD_EXE}" && "${BRICSCAD_EXE}" != *.app && "${BRICSCAD_EXE}" != */Contents/MacOS/* ]]; then
+    if [[ "$USE_REMOTE_PROTOCOL" -eq 1 ]]; then
+      MACOS_ASYNC=1
+      BRICSCAD_BATCH_LAUNCHED=1
+      BRICSCAD_BATCH_REAPED=0
+      BRICSCAD_BATCH_COMPLETED=0
+      BRICSCAD_BATCH_RC=""
+      BRICSCAD_BATCH_START_TS="$(date +%s 2>/dev/null || echo 0)"
+      "${BRICSCAD_EXE}" -B "$SCRFILE" >"$WORKDIR/bricscad-stdout.txt" 2>"$WORKDIR/bricscad-stderr.txt" &
+      BRICSCAD_BATCH_PID=$!
+      BRICSCAD_BATCH_CHILD_PID="$BRICSCAD_BATCH_PID"
+    else
+      "${BRICSCAD_EXE}" "$RUNLSPFILE" >"$WORKDIR/bricscad-stdout.txt" 2>"$WORKDIR/bricscad-stderr.txt" || true
+    fi
+    return 0
+  fi
   app="$(find_macos_bricscad_app)"
   if [[ -z "$app" ]]; then
     echo "BricsCAD.app not found in /Applications (macOS fallback)." >&2
@@ -3041,10 +3073,10 @@ run_macos_bricscad_fallback() {
   MACOS_ASYNC=1
   local lisp_cmd
   lisp_cmd="(load \"${RUNLSPFILE}\")"
-  if [[ "$BRICSCAD_MACOS_APP_MODE" == "launch" ]]; then
+  if [[ "$CAD_BACKEND" == "launch" ]]; then
     /usr/bin/open -a "$app" >/dev/null 2>&1 || true
   elif ! macos_app_running "$appname"; then
-    echo "BricsCAD is not running. Relaunch with --bricscad-macos-app launch or start BricsCAD first." >&2
+    echo "BricsCAD is not running. Relaunch with --backend launch or start BricsCAD first." >&2
     return 3
   fi
   /usr/bin/osascript - "$appname" "$lisp_cmd" <<'OSA' || true
@@ -3087,7 +3119,7 @@ run_macos_bricscad_batch() {
     cmd+=("-P" "$BRICSCAD_MACOS_PROFILE")
   fi
   cmd+=("-B" "$SCRFILE")
-  if [[ "$EXPERIMENTAL_MACOS_BATCH_OPEN" == "1" && "$USE_REMOTE_PROTOCOL" -eq 1 && "$BRICSCAD_MACOS_APP_MODE" == "launch" && "$exe" == */Contents/MacOS/bricscad ]]; then
+  if [[ "$EXPERIMENTAL_MACOS_BATCH_OPEN" == "1" && "$USE_REMOTE_PROTOCOL" -eq 1 && "$CAD_BACKEND" == "launch" && "$exe" == */Contents/MacOS/bricscad ]]; then
     app="$(find_macos_bricscad_app)"
     if [[ -n "$app" ]]; then
       open_cmd=(/usr/bin/open -n -a "$app" --args)
@@ -3228,7 +3260,7 @@ case "$ENGINE" in
           batch)
             run_macos_bricscad_batch "$(find_macos_bricscad_cli || true)" || true
             ;;
-          osascript)
+          automation)
             run_macos_bricscad_fallback || true
             ;;
           *)
@@ -3306,7 +3338,7 @@ if [[ "$USE_REMOTE_PROTOCOL" -eq 1 && "$INTERACTIVE" -eq 1 ]]; then
   exit "$wait_rc"
 fi
 
-if [[ ! -f "${PROTOCOL_STREAM_MARKER:-}" ]]; then
+if [[ ! -f "${PROTOCOL_STREAM_MARKER:-}" && "$PROTOCOL_STREAMED_OUTPUT" -eq 0 ]]; then
   LOGFILE_FOUND="$(find_log_file)"
   SESSION_OUTPUT_FILE="$(find_session_output_file || true)"
   render_stdout "$OUTFILE" "$SESSION_OUTPUT_FILE" "$CLI_VERBOSE" || cat "$OUTFILE" || true

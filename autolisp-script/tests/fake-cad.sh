@@ -2,6 +2,7 @@
 set -euo pipefail
 
 PROFILE_NAME="${AUTOLISP_FAKE_EXPECT_PROFILE:-}"
+PROFILE_OPTIONAL="${AUTOLISP_FAKE_PROFILE_OPTIONAL:-0}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -58,9 +59,13 @@ if [[ -z "${RUNLSPFILE:-}" ]]; then
   exit 2
 fi
 
-if [[ -n "$PROFILE_NAME" && "${ACTUAL_PROFILE:-}" != "$PROFILE_NAME" ]]; then
-  echo "fake-cad: expected profile '$PROFILE_NAME', got '${ACTUAL_PROFILE:-}'" >&2
-  exit 2
+if [[ -n "$PROFILE_NAME" ]]; then
+  if [[ -z "${ACTUAL_PROFILE:-}" && "$PROFILE_OPTIONAL" == "1" ]]; then
+    :
+  elif [[ "${ACTUAL_PROFILE:-}" != "$PROFILE_NAME" ]]; then
+    echo "fake-cad: expected profile '$PROFILE_NAME', got '${ACTUAL_PROFILE:-}'" >&2
+    exit 2
+  fi
 fi
 SCENARIO="${AUTOLISP_FAKE_SCENARIO:-}"
 OUTFILE="${OUTFILE:?missing OUTFILE}"
@@ -211,6 +216,13 @@ EOF
       : >"$ERRFILE"
       return 88
       ;;
+    "(get_new_guid)")
+      cat >"$OUTFILE" <<'EOF'
+"AUTO-FAKE-GUID"
+EOF
+      : >"$ERRFILE"
+      return 0
+      ;;
   esac
 
   printf 'fake-cad: unexpected protocol eval form:\n%s\n' "$form" >&2
@@ -219,6 +231,22 @@ EOF
 
 protocol_emit_load_result() {
   local request_file="$1"
+  if grep -Eq 'autolisp-run-load 1 ".*/tests/fixtures/load-side-effect\.lsp"' "$request_file" \
+    && grep -Eq 'autolisp-run-eval-file 2 ".*eval-2\.lsp"' "$request_file"; then
+    cat >"$OUTFILE" <<EOF
+LOAD $ROOT_DIR/tests/fixtures/load-side-effect.lsp
+<<<AUTOLISP-STDOUT>>>"Loaded fixture"
+LOADED $ROOT_DIR/tests/fixtures/load-side-effect.lsp
+EVAL (+ 1 2)
+RESULT 3
+MAIN C:MAIN
+MAIN-RESULT OK
+TOTAL=3 OK=3 FAIL=0 ERROR=0
+EOF
+    : >"$ERRFILE"
+    return 0
+  fi
+
   if grep -Eq 'autolisp-run-load 1 ".*/tests/fixtures/main-default\.lsp"' "$request_file"; then
     cat >"$OUTFILE" <<EOF
 LOAD $ROOT_DIR/tests/fixtures/main-default.lsp
@@ -394,6 +422,19 @@ EOF
 EVAL (load "loader.lsp")
 RESULT "loader.lsp"
 TOTAL=1 OK=1 FAIL=0 ERROR=0
+EOF
+    : >"$ERRFILE"
+    printf '0\n' >"$STATUSFILE"
+    ;;
+  eval_get_new_guid)
+    require_runlsp_contains '(defun get_new_guid'
+    if [[ "$(extract_eval_form)" != '(get_new_guid)' ]]; then
+      printf 'fake-cad: expected (get_new_guid), got:\n' >&2
+      extract_eval_form >&2 || true
+      exit 5
+    fi
+    cat >"$OUTFILE" <<'EOF'
+"AUTO-FAKE-GUID"
 EOF
     : >"$ERRFILE"
     printf '0\n' >"$STATUSFILE"

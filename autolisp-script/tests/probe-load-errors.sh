@@ -58,9 +58,9 @@ run_probe() {
 }
 
 COMMON_ARGS=(
-  --bricscad-macos-mode
+  --mode
   batch
-  --bricscad-macos-app
+  --backend
   launch
 )
 

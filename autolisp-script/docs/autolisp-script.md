@@ -21,8 +21,8 @@ Le script fabrique à la volée un fichier `run-common.lsp` qui:
 
 ## Utilisation
 ```bash
-autolisp [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--bricscad-macos-mode auto|osascript|batch] [--bricscad-macos-app attach|launch] [--bricscad-macos-profile NOM] {source.lsp | -x expression}... [--dwg fichier.dwg] [--main C:MAIN]
-autolisp [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--bricscad-macos-mode auto|osascript|batch] [--bricscad-macos-app attach|launch] [--bricscad-macos-profile NOM] -i|--interactive [--dwg fichier.dwg]
+autolisp [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--mode automation|batch] [--backend attach|launch] [--bricscad-macos-profile NOM] {source.lsp | -x expression}... [--dwg fichier.dwg] [--main C:MAIN]
+autolisp [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--mode automation|batch] [--backend attach|launch] [--bricscad-macos-profile NOM] -i|--interactive [--dwg fichier.dwg]
 ```
 
 ## Sémantique d'exécution
@@ -166,8 +166,8 @@ Par défaut il est supprimé en fin d'exécution.
 - `AUTOCAD_COM_MODE`: `auto`, `attach`, `launch`, `off`
 - `AUTOCAD_EXE`: chemin vers `acad.exe` ou `acadlt.exe`
 - `BRICSCAD_EXE`: chemin vers `bricscad.exe`
-- `BRICSCAD_MACOS_MODE`: `auto`, `osascript`, `batch`
-- `BRICSCAD_MACOS_APP_MODE`: `attach`, `launch`
+- `AUTOLISP_MODE`: `auto`, `automation`, `batch`
+- `AUTOLISP_BACKEND`: `attach`, `launch`
 - `BRICSCAD_MACOS_PROFILE`: nom du profil BricsCAD pour le mode batch macOS
 - `AUTOLISP_BOOTSTRAP_PHASE`: `marker`, `core`, `log`, `full`
 - `BRICSCAD_COM_MODE`: `auto`, `attach`, `launch`, `off`
@@ -193,14 +193,14 @@ Par défaut il est supprimé en fin d'exécution.
 
 ### macOS
 - BricsCAD expose maintenant deux modes explicites:
-  - `--bricscad-macos-mode osascript`: envoie `(load ".../run-common.lsp")` à une session GUI via `osascript`
-  - `--bricscad-macos-mode batch`: lance une nouvelle instance avec `-b run.scr`
+  - `--mode automation`: envoie `(load ".../run-common.lsp")` à une session GUI via `osascript`
+  - `--mode batch`: lance une nouvelle instance avec `-b run.scr`
 - `--bricscad-macos-profile NOM` ajoute `-P NOM` au lancement batch macOS pour imposer un profil BricsCAD stable.
-- En mode `osascript`, le wrapper commence par envoyer `_.COMMANDLINE` puis la commande `(load ".../run-common.lsp")`, afin d'afficher et focaliser la ligne de commande avant l'injection; `--bricscad-macos-app launch` ouvre BricsCAD automatiquement avant l'injection et `--bricscad-macos-app attach` échoue si aucune instance n'est déjà ouverte.
+- En mode `automation`, le wrapper commence par envoyer `_.COMMANDLINE` puis la commande `(load ".../run-common.lsp")`, afin d'afficher et focaliser la ligne de commande avant l'injection; `--backend launch` ouvre BricsCAD automatiquement avant l'injection et `--backend attach` échoue si aucune instance n'est déjà ouverte.
 - En mode `batch`, le wrapper continue à faire toute l'I/O via `output.txt`, `errors.txt` et `status.txt`; BricsCAD ne fournit pas de sortie standard exploitable.
 - En mode `batch` avec `-i`, le wrapper garde une seule instance BricsCAD active et implémente un REPL via `input.lsp` + `status.txt`.
-- En mode BricsCAD macOS `batch`, `run.scr` charge directement `run-common.lsp` puis termine par `(command "_QUIT" "_Y")` pour fermer l'instance lancée. `_.COMMANDLINE` reste reserve au mode `osascript`; en pratique il perturbe le demarrage via `-b`.
-- Le fallback `osascript` dépend des autorisations Accessibilité et reste plus fragile qu'un lancement direct.
+- En mode BricsCAD macOS `batch`, `run.scr` charge directement `run-common.lsp` puis termine par `(command "_QUIT" "_Y")` pour fermer l'instance lancée. `_.COMMANDLINE` reste réservé au mode `automation`; en pratique il perturbe le démarrage via `-b`.
+- Le bootstrap `automation` dépend des autorisations Accessibilité et reste plus fragile qu'un lancement direct.
 - Sous BricsCAD, le workspace doit être `2D Drafting`. Le workspace `2D Drafting (Modern)` peut empêcher l'injection de la commande et provoquer un timeout avec `status.txt` restant à `__PENDING__`.
 - En cas de timeout sans aucune sortie ni erreur, le wrapper affiche un hint spécifique pour ce cas.
 
@@ -227,19 +227,19 @@ BricsCAD avec la commande par défaut:
 BricsCAD macOS en batch:
 
 ```bash
-./autolisp --bricscad --bricscad-macos-mode batch ./autolisp.lsp
+./autolisp --bricscad --mode batch ./autolisp.lsp
 ```
 
 BricsCAD macOS en batch avec profil dédié:
 
 ```bash
-./autolisp --bricscad --bricscad-macos-mode batch --bricscad-macos-profile Lisp ./autolisp.lsp
+./autolisp --bricscad --mode batch --bricscad-macos-profile Lisp ./autolisp.lsp
 ```
 
 BricsCAD macOS en attachement à une session déjà lancée:
 
 ```bash
-./autolisp --bricscad --bricscad-macos-mode osascript --bricscad-macos-app attach ./autolisp.lsp
+./autolisp --bricscad --mode automation --backend attach ./autolisp.lsp
 ```
 
 BricsCAD avec expression inline:
@@ -314,9 +314,9 @@ Variables utiles:
 Sous macOS, `make test-bricscad` sépare maintenant les cas BricsCAD en deux invocations explicites:
 
 - `make test-bricscad-macos-batch`
-- `make test-bricscad-macos-osascript-attach`
+- `make test-bricscad-macos-automation-attach`
 
-La cible agrégée `make test-bricscad` lance les deux. Le mode `osascript attach` exige qu'une session BricsCAD soit déjà ouverte; si ce n'est pas le cas et que le terminal est interactif, le runner affiche un message et attend que BricsCAD soit lancé avant de continuer.
+La cible agrégée `make test-bricscad` lance les deux. Le mode `automation attach` exige qu'une session BricsCAD soit déjà ouverte; si ce n'est pas le cas et que le terminal est interactif, le runner affiche un message et attend que BricsCAD soit lancé avant de continuer.
 
 ### `make/env.ps1`
 
@@ -368,7 +368,7 @@ Son rôle est de simuler l'appel du wrapper vers un exécutable CAD sans lancer 
 Ce backend ne teste pas:
 
 - l'intégration réelle avec BricsCAD ou AutoCAD
-- `osascript` sur macOS
+- le bootstrap `automation` sur macOS
 - COM sous Windows
 - les particularités UI ou workspace des applications CAD
 

@@ -90,10 +90,10 @@ find_macos_bricscad_cli() {
   return 1
 }
 
-find_bricscad_macos_mode_arg() {
+find_mode_arg() {
   local i
   for ((i = 0; i < ${#CAD_ARGS[@]}; i++)); do
-    if [[ "${CAD_ARGS[$i]}" == "--bricscad-macos-mode" && $((i + 1)) -lt ${#CAD_ARGS[@]} ]]; then
+    if [[ "${CAD_ARGS[$i]}" == "--mode" && $((i + 1)) -lt ${#CAD_ARGS[@]} ]]; then
       printf '%s\n' "${CAD_ARGS[$((i + 1))]}"
       return 0
     fi
@@ -101,10 +101,10 @@ find_bricscad_macos_mode_arg() {
   return 1
 }
 
-find_bricscad_macos_app_mode_arg() {
+find_backend_arg() {
   local i
   for ((i = 0; i < ${#CAD_ARGS[@]}; i++)); do
-    if [[ "${CAD_ARGS[$i]}" == "--bricscad-macos-app" && $((i + 1)) -lt ${#CAD_ARGS[@]} ]]; then
+    if [[ "${CAD_ARGS[$i]}" == "--backend" && $((i + 1)) -lt ${#CAD_ARGS[@]} ]]; then
       printf '%s\n' "${CAD_ARGS[$((i + 1))]}"
       return 0
     fi
@@ -140,7 +140,7 @@ prompt_for_bricscad_launch() {
   fi
 
   if [[ -t 0 && -t 1 ]]; then
-    echo "tests/run.sh: BricsCAD doit etre lance pour le mode osascript attach." >&2
+    echo "tests/run.sh: BricsCAD doit etre lance pour le mode automation attach." >&2
     echo "tests/run.sh: Ouvre \"$appname\", verifie le workspace \"2D Drafting\", puis appuie sur Entree pour continuer (Ctrl-C pour annuler)." >&2
     read -r
     if macos_bricscad_running; then
@@ -148,12 +148,12 @@ prompt_for_bricscad_launch() {
     fi
   fi
 
-  echo "tests/run.sh: BricsCAD n'est pas lance. Relance apres avoir ouvert \"$appname\", ou utilise --bricscad-macos-mode batch." >&2
+  echo "tests/run.sh: BricsCAD n'est pas lance. Relance apres avoir ouvert \"$appname\", ou utilise --mode batch." >&2
   return 1
 }
 
-BRICSCAD_MACOS_MODE_ARG="$(find_bricscad_macos_mode_arg || true)"
-BRICSCAD_MACOS_APP_MODE_ARG="$(find_bricscad_macos_app_mode_arg || true)"
+CAD_MODE_ARG="$(find_mode_arg || true)"
+CAD_BACKEND_ARG="$(find_backend_arg || true)"
 
 detect_engine_exe() {
   case "$ENGINE_FLAG" in
@@ -162,7 +162,7 @@ detect_engine_exe() {
         printf '%s\n' "$BRICSCAD_EXE"
         return 0
       fi
-      if [[ "$IS_MACOS" -eq 1 && "${BRICSCAD_MACOS_MODE_ARG:-auto}" != "osascript" ]]; then
+      if [[ "$IS_MACOS" -eq 1 && "${CAD_MODE_ARG:-auto}" != "automation" ]]; then
         find_macos_bricscad_cli
         return $?
       fi
@@ -184,22 +184,31 @@ else
   DETECTED_ENGINE_EXE="$(detect_engine_exe || true)"
 fi
 
-BRICSCAD_MACOS_EFFECTIVE_TEST_MODE="${BRICSCAD_MACOS_MODE_ARG:-}"
+BRICSCAD_MACOS_EFFECTIVE_TEST_MODE="${CAD_MODE_ARG:-}"
 if [[ "$ENGINE_FLAG" == "--bricscad" && "$IS_MACOS" -eq 1 ]]; then
   if [[ -z "$BRICSCAD_MACOS_EFFECTIVE_TEST_MODE" || "$BRICSCAD_MACOS_EFFECTIVE_TEST_MODE" == "auto" ]]; then
     if [[ -n "$DETECTED_ENGINE_EXE" ]]; then
       BRICSCAD_MACOS_EFFECTIVE_TEST_MODE="batch"
     else
-      BRICSCAD_MACOS_EFFECTIVE_TEST_MODE="osascript"
+      BRICSCAD_MACOS_EFFECTIVE_TEST_MODE="automation"
     fi
   fi
+fi
+
+USE_BRICSCAD_MACOS_PROTOCOL_TESTS=0
+if [[ "$ENGINE_FLAG" == "--bricscad" && "$IS_MACOS" -eq 1 && "$USE_FAKE_CAD" -eq 1 ]]; then
+  case "$BRICSCAD_MACOS_EFFECTIVE_TEST_MODE" in
+    batch|automation)
+      USE_BRICSCAD_MACOS_PROTOCOL_TESTS=1
+      ;;
+  esac
 fi
 
 CURRENT_CAD_ARGS=("${CAD_ARGS[@]}")
 if [[ "$ENGINE_FLAG" == "--bricscad" && "$IS_MACOS" -eq 1 ]]; then
   CURRENT_SUITE_LABEL="macos/${BRICSCAD_MACOS_EFFECTIVE_TEST_MODE:-auto}"
-  if [[ "$BRICSCAD_MACOS_EFFECTIVE_TEST_MODE" == "osascript" ]]; then
-    CURRENT_SUITE_LABEL+="/${BRICSCAD_MACOS_APP_MODE_ARG:-launch}"
+  if [[ "$BRICSCAD_MACOS_EFFECTIVE_TEST_MODE" == "automation" ]]; then
+    CURRENT_SUITE_LABEL+="/${CAD_BACKEND_ARG:-launch}"
   fi
 fi
 if [[ "$ENGINE_FLAG" == "--bricscad" && "$IS_MACOS" -eq 1 && "$USE_FAKE_CAD" -ne 1 ]]; then
@@ -208,7 +217,7 @@ if [[ "$ENGINE_FLAG" == "--bricscad" && "$IS_MACOS" -eq 1 && "$USE_FAKE_CAD" -ne
     echo "tests/run.sh: Definis BRICSCAD_EXE ou installe BricsCAD dans /Applications." >&2
     exit 2
   fi
-  if [[ "$BRICSCAD_MACOS_EFFECTIVE_TEST_MODE" == "osascript" && "${BRICSCAD_MACOS_APP_MODE_ARG:-launch}" == "attach" ]]; then
+  if [[ "$BRICSCAD_MACOS_EFFECTIVE_TEST_MODE" == "automation" && "${CAD_BACKEND_ARG:-launch}" == "attach" ]]; then
     prompt_for_bricscad_launch || exit 2
   fi
 fi
@@ -310,6 +319,9 @@ run_case() {
       "BRICSCAD_COM_MODE=off"
       "AUTOCAD_COM_MODE=off"
     )
+    if [[ "$ENGINE_FLAG" == "--bricscad" && "$IS_MACOS" -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_TEST_MODE" == "automation" ]]; then
+      cmd_env+=("AUTOLISP_FAKE_PROFILE_OPTIONAL=1")
+    fi
   fi
 
   env_vars=("${cmd_env[@]}")
@@ -506,7 +518,7 @@ run_stdin_case() {
 }
 
 run_standard_cases() {
-  if [[ "$ENGINE_FLAG" == "--bricscad" && "$USE_FAKE_CAD" -eq 1 && "$IS_MACOS" -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_TEST_MODE" == "batch" ]]; then
+  if [[ "$USE_BRICSCAD_MACOS_PROTOCOL_TESTS" -eq 1 ]]; then
     run_case \
       "eval_prints" \
       "protocol_batch" \
@@ -612,7 +624,7 @@ run_standard_cases() {
       -x '(+ 1 2)'
   fi
 
-  if [[ "$ENGINE_FLAG" == "--bricscad" && "$USE_FAKE_CAD" -eq 1 ]]; then
+  if [[ "$ENGINE_FLAG" == "--bricscad" && "$USE_FAKE_CAD" -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_TEST_MODE" == "batch" ]]; then
     run_case \
       "macos_batch_quit" \
       "macos_batch_quit" \
@@ -664,7 +676,7 @@ run_standard_cases() {
       "$SCRIPT_DIR/fixtures/load-side-effect.lsp"
   fi
 
-  if [[ "$ENGINE_FLAG" == "--bricscad" && "$USE_FAKE_CAD" -eq 1 && "$IS_MACOS" -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_TEST_MODE" == "batch" ]]; then
+  if [[ "$USE_BRICSCAD_MACOS_PROTOCOL_TESTS" -eq 1 ]]; then
     run_case \
       "eval_load_string" \
       "protocol_batch" \
@@ -676,6 +688,18 @@ run_standard_cases() {
       --env AUTOLISP_REMOTE_IO_MODE=on \
       --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
       -x '(load "loader.lsp")'
+
+    run_case \
+      "eval_get_new_guid" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/expected/eval_get_new_guid.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_OS=Darwin \
+      --env BRICSCAD_MACOS_MODE=batch \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
+      -x '(get_new_guid)'
 
     run_case \
       "load_main_default" \
@@ -730,6 +754,20 @@ run_standard_cases() {
       --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
       --env AUTOLISP_ALLOW_UNSTABLE_MACOS_BATCH_LOAD=1 \
       "$SCRIPT_DIR/fixtures/load-side-effect.lsp"
+
+    run_case \
+      "load_then_eval" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/expected/load_then_eval.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_OS=Darwin \
+      --env BRICSCAD_MACOS_MODE=batch \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
+      --env AUTOLISP_ALLOW_UNSTABLE_MACOS_BATCH_LOAD=1 \
+      "$SCRIPT_DIR/fixtures/load-side-effect.lsp" \
+      -x '(+ 1 2)'
   else
     run_case \
       "eval_load_string" \
@@ -767,7 +805,7 @@ run_standard_cases() {
 }
 
 run_interactive_cases() {
-  if [[ "$ENGINE_FLAG" == "--bricscad" && "$IS_MACOS" -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_TEST_MODE" == "batch" ]]; then
+  if [[ "$ENGINE_FLAG" == "--bricscad" && "$IS_MACOS" -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_TEST_MODE" != "auto" ]]; then
     run_stdin_case \
       "interactive_repl" \
       "protocol_batch" \
@@ -824,7 +862,7 @@ run_interactive_cases() {
       --interactive
   fi
 
-  if [[ "$ENGINE_FLAG" == "--bricscad" && "$USE_FAKE_CAD" -eq 1 ]]; then
+  if [[ "$USE_BRICSCAD_MACOS_PROTOCOL_TESTS" -eq 1 ]]; then
     run_stdin_case \
       "interactive_batch_repl" \
       "protocol_batch" \
