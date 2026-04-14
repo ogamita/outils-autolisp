@@ -2653,12 +2653,7 @@ fi
 
 SCRFILE="$WORKDIR/run.scr"
 {
-  if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 ]]; then
-    printf '%s\n' '._COMMANDLINE'
-    printf '(load "%s")\n' "$(escape_lisp_string "$RUNLSPFILE")"
-  else
-    printf '(load "%s")\n' "$(escape_lisp_string "$RUNLSPFILE")"
-  fi
+  printf '(load "%s")\n' "$(escape_lisp_string "$RUNLSPFILE")"
 } >"$SCRFILE"
 if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 ]]; then
   printf '%s\n' '._QUIT _Y' >>"$SCRFILE"
@@ -3079,23 +3074,48 @@ run_macos_bricscad_fallback() {
     echo "BricsCAD is not running. Relaunch with --backend launch or start BricsCAD first." >&2
     return 3
   fi
-  /usr/bin/osascript - "$appname" "$lisp_cmd" <<'OSA' || true
-on run argv
-  set appName to item 1 of argv
-  set lispCmd to item 2 of argv
-  delay 1
+/usr/bin/osascript \
+    - "$appname" "$lisp_cmd" \
+    "${AUTOLISP_MACOS_BRICSCAD_RESET_ESCAPES:-6}" \
+    "${AUTOLISP_MACOS_BRICSCAD_RESET_DELAY_SECS:-0.25}" \
+    "${AUTOLISP_MACOS_BRICSCAD_COMMAND_DELAY_SECS:-0.4}" <<'OSA' || true
+on resetBricscadUI(appName, resetEscapes, resetDelay, commandDelay)
+  tell application appName to activate
   tell application "System Events"
     tell process appName
       set frontmost to true
+      if (count of windows) > 0 then
+        try
+          perform action "AXRaise" of window 1
+        end try
+      end if
     end tell
-    key code 53
-    key code 53
-    delay 0.15
+    delay commandDelay
+    repeat resetEscapes times
+      key code 53
+      delay resetDelay
+    end repeat
     keystroke "_.COMMANDLINE"
     key code 36
-    delay 0.2
-    key code 53
-    delay 0.1
+    delay commandDelay
+    repeat 2 times
+      key code 53
+      delay resetDelay
+    end repeat
+    delay commandDelay
+  end tell
+end resetBricscadUI
+
+on run argv
+  set appName to item 1 of argv
+  set lispCmd to item 2 of argv
+  set resetEscapes to (item 3 of argv) as integer
+  set resetDelay to (item 4 of argv) as real
+  set commandDelay to (item 5 of argv) as real
+
+  delay 1
+  resetBricscadUI(appName, resetEscapes, resetDelay, commandDelay)
+  tell application "System Events"
     keystroke lispCmd
     key code 36
   end tell
