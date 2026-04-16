@@ -21,9 +21,16 @@ Le script fabrique à la volée un fichier `run-common.lsp` qui:
 
 ## Utilisation
 ```bash
-autolisp [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--mode automation|batch] [--backend attach|launch] [--bricscad-macos-profile NOM] {source.lsp | -x expression}... [--dwg fichier.dwg] [--main C:MAIN]
-autolisp [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--mode automation|batch] [--backend attach|launch] [--bricscad-macos-profile NOM] -i|--interactive [--dwg fichier.dwg]
+autolisp [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--mode automation|batch] [--backend attach|launch] [--bricscad-macos-profile NOM] [--epure] {source.lsp | -x expression}... [--dwg fichier.dwg] [--main C:MAIN]
+autolisp [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--mode automation|batch] [--backend attach|launch] [--bricscad-macos-profile NOM] [--epure] -i|--interactive [--dwg fichier.dwg]
 ```
+
+## Options notables
+- `--epure`: sous MS-Windows, charge EPURE avant le script principal.
+- Avec `--bricscad`, le wrapper lance BricsCAD avec le profil `Epure` puis exécute `%APPDATA%\sncf\epure\epure 2022_b\control_path_epure_2022.scr` avant `run.scr`.
+- Avec `--autocad`, le wrapper lance AutoCAD avec le profil `Epure` puis exécute `%APPDATA%\sncf\epure\epure 2022\control_path_epure_2022.scr` avant `run.scr`.
+- `--epure` n'a pas d'effet hors Windows.
+- Avec AutoCAD, `--epure` requiert `AUTOCAD_EXE`, car `accoreconsole.exe` ne permet pas ce bootstrap de profil.
 
 ## Sémantique d'exécution
 - Les entrées `{source.lsp | -x expression}` sont traitées strictement dans l'ordre.
@@ -50,6 +57,7 @@ Exemples:
 ```bash
 ./autolisp test.lsp
 ./autolisp lib1.lsp lib2.lsp --main C:RUN
+./autolisp --bricscad --epure test.lsp
 ./autolisp -x '(princ (+ 1 2))'
 ./autolisp init.lsp -x '(setq *x* 42)' test.lsp
 ./autolisp --interactive
@@ -172,6 +180,7 @@ Par défaut il est supprimé en fin d'exécution.
 - `AUTOLISP_BOOTSTRAP_PHASE`: `marker`, `core`, `log`, `full`
 - `BRICSCAD_COM_MODE`: `auto`, `attach`, `launch`, `off`
 - `AUTOLISP_DWG`: DWG par défaut pour AutoCAD Core Console
+- `AUTOLISP_EPURE=1`: active le comportement de `--epure`
 - `AUTOLISP_TIMEOUT`: ancien nom de timeout, encore accepté
 - `AUTOLISP_WAIT_SECS`: timeout d'attente global, défaut `180`
 - `AUTOLISP_WORKDIR`: racine des exécutions temporaires
@@ -185,11 +194,14 @@ Par défaut il est supprimé en fin d'exécution.
   - tente d'abord un pont COM via `cscript`
   - sinon lance `AUTOCAD_EXE /b`
   - sinon bascule sur `accoreconsole.exe` avec `/i <dwg> /s <script>`
+  - avec `--epure`, désactive le pont COM et lance `AUTOCAD_EXE /p Epure /b <run.scr>`
 - BricsCAD:
   - tente un pont COM via `cscript`
   - sinon lance `bricscad.exe /B`
+  - avec `--epure`, désactive le pont COM et lance `bricscad.exe /P Epure /B <run.scr>`
   - en mode COM, le wrapper envoie maintenant exactement `(load ".../run-common.lsp")` suivi d'un retour chariot, sans suffixe parasite
 - En mode COM `attach`, le wrapper n'ordonne pas la fermeture de BricsCAD à la fin.
+- Quand `--epure` est actif, `run.scr` commence par le bootstrap EPURE puis charge le script AutoLISP généré par le wrapper.
 
 ### macOS
 - BricsCAD expose maintenant deux modes explicites:

@@ -14,6 +14,7 @@ Usage:
 Examples:
   autolisp test.lsp
   autolisp lib1.lsp lib2.lsp --main C:RUN
+  autolisp --bricscad --epure test.lsp
   autolisp -x '(princ (+ 1 2))'
   autolisp init.lsp -x '(setq *x* 42)' test.lsp
   autolisp --interactive
@@ -28,6 +29,14 @@ Outputs:
   stdout  -> contenu de OUTFILE
   stderr  -> contenu de ERRFILE
   exit    -> code lu dans STATUSFILE
+
+Options:
+  --epure                 Sous Windows, charge EPURE avant le script principal.
+                          BricsCAD: lance /P Epure avec le bootstrap
+                          %APPDATA%\sncf\epure\epure 2022_b\control_path_epure_2022.scr
+                          AutoCAD: lance /p Epure avec le bootstrap
+                          %APPDATA%\sncf\epure\epure 2022\control_path_epure_2022.scr
+                          Avec AutoCAD, cette option requiert AUTOCAD_EXE.
 
 Environment overrides:
   AUTOCAD_ACCORECONSOLE   Path to accoreconsole.exe (Windows)
@@ -49,6 +58,7 @@ Environment overrides:
 
 Notes:
   - AutoCAD Core Console (accoreconsole.exe) est Windows-only dans la pratique.
+  - --epure n'a d'effet que sous Windows.
   - Sous Windows + BricsCAD, le script peut utiliser un pont COM autonome généré dans le workdir.
   - Sous macOS, le fallback reste piloté par UI scripting et dépend des autorisations Accessibilité.
 EOU
