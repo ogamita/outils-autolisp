@@ -8,8 +8,8 @@ SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 usage() {
   cat <<'EOU'
 Usage:
-  autolisp-v4 [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--mode automation|batch] [--backend attach|launch] [--bricscad-macos-profile NAME] { source.lsp | -x expression }... [--dwg file.dwg] [--main C:MAIN]
-  autolisp-v4 [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--mode automation|batch] [--backend attach|launch] [--bricscad-macos-profile NAME] -i|--interactive [--dwg file.dwg]
+  autolisp-v4 [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--mode automation|batch] [--backend attach|launch] [--bricscad-macos-profile NAME] [--epure] { source.lsp | -x expression }... [--dwg file.dwg] [--main C:MAIN]
+  autolisp-v4 [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--mode automation|batch] [--backend attach|launch] [--bricscad-macos-profile NAME] [--epure] -i|--interactive [--dwg file.dwg]
 
 Examples:
   autolisp test.lsp
@@ -40,6 +40,7 @@ Environment overrides:
   AUTOLISP_BOOTSTRAP_PHASE marker | core | log | full
   AUTOLISP_DWG            Default DWG for AutoCAD Core Console if --dwg not provided
   BRICSCAD_COM_MODE       auto | attach | launch | off   (Windows + BricsCAD only)
+  AUTOLISP_EPURE         1 to launch CAD with EPURE on Windows
   AUTOLISP_TIMEOUT        Legacy timeout override in seconds
   AUTOLISP_WAIT_SECS      wait timeout for async modes / COM bridge (default: 180)
   AUTOLISP_KEEP_WORKDIR   1 to keep temporary workdir
@@ -63,6 +64,7 @@ BRICSCAD_EXE="${BRICSCAD_EXE:-}"
 CAD_MODE="${AUTOLISP_MODE:-auto}"
 CAD_BACKEND="${AUTOLISP_BACKEND:-launch}"
 BRICSCAD_MACOS_PROFILE="${BRICSCAD_MACOS_PROFILE:-}"
+EPURE_REQUESTED="${AUTOLISP_EPURE:-0}"
 AUTOLISP_REMOTE_IO_MODE="${AUTOLISP_REMOTE_IO_MODE:-auto}"
 BOOTSTRAP_PHASE="${AUTOLISP_BOOTSTRAP_PHASE:-full}"
 INTERACTIVE=0
@@ -126,6 +128,10 @@ while [[ $# -gt 0 ]]; do
       fi
       BRICSCAD_MACOS_PROFILE="$2"
       shift 2
+      ;;
+    --epure)
+      EPURE_REQUESTED=1
+      shift
       ;;
     --dwg)
       DWG="${2:-}"
@@ -911,6 +917,9 @@ run_interactive_repl() {
   if [[ "$ENGINE" == "bricscad" && -n "$BRICSCAD_MACOS_PROFILE" ]]; then
     repl_args+=("--bricscad-macos-profile" "$BRICSCAD_MACOS_PROFILE")
   fi
+  if [[ "$EPURE_REQUESTED" == "1" ]]; then
+    repl_args+=("--epure")
+  fi
 
   buffer=""
   while true; do
@@ -1085,6 +1094,15 @@ case "$CAD_MODE" in
     BRICSCAD_COM_MODE="off"
     ;;
 esac
+
+if [[ "$EPURE_REQUESTED" == "1" && $IS_WINDOWS -eq 1 ]]; then
+  if [[ "$ENGINE" == "bricscad" ]]; then
+    BRICSCAD_COM_MODE="off"
+  elif [[ "$ENGINE" == "autocad" ]]; then
+    AUTOCAD_COM_MODE="off"
+  fi
+fi
+
 BRICSCAD_BATCH_COMMAND_FILE=""
 ALLOW_UNSTABLE_MACOS_BATCH_LOAD="${AUTOLISP_ALLOW_UNSTABLE_MACOS_BATCH_LOAD:-0}"
 EXPERIMENTAL_MACOS_BATCH_OPEN="${AUTOLISP_EXPERIMENTAL_MACOS_BATCH_OPEN:-0}"
@@ -1443,6 +1461,20 @@ to_windows_path() {
   fi
 }
 
+to_unix_path() {
+  local p="$1"
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -u "$p"
+  elif [[ "$p" =~ ^([A-Za-z]):\\(.*)$ ]]; then
+    local drive rest
+    drive="${BASH_REMATCH[1]}"
+    rest="${BASH_REMATCH[2]//\\//}"
+    printf '/%s/%s' "${drive,,}" "$rest"
+  else
+    printf '%s' "$p"
+  fi
+}
+
 to_runtime_lisp_path() {
   local p="$1"
   if [[ $IS_WINDOWS -eq 1 ]]; then
@@ -1455,6 +1487,53 @@ escape_vbs_string() {
   local s="$1"
   s=${s//\"/\"\"}
   printf '%s' "$s"
+}
+
+windows_epure_control_script() {
+  local engine="$1"
+  local appdata="${APPDATA:-}"
+  local relative=""
+  local candidate=""
+
+  if [[ -z "$appdata" ]] && command -v cmd.exe >/dev/null 2>&1; then
+    appdata="$(cmd.exe /c 'echo %APPDATA%' 2>/dev/null | tr -d '\r' || true)"
+  fi
+  [[ -n "$appdata" ]] || return 1
+
+  case "$engine" in
+    bricscad)
+      relative="sncf\\epure\\epure 2022_b\\control_path_epure_2022.scr"
+      ;;
+    autocad)
+      relative="sncf\\epure\\epure 2022\\control_path_epure_2022.scr"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  candidate="$appdata\\$relative"
+  if [[ -f "$(to_unix_path "$candidate")" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+  return 1
+}
+
+windows_cad_workdir() {
+  local exe="$1"
+  local exe_unix=""
+  local exe_dir=""
+  local candidate=""
+
+  exe_unix="$(to_unix_path "$exe")"
+  exe_dir="$(dirname "$exe_unix")"
+  candidate="$exe_dir/UserDataCache"
+  if [[ -d "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+  printf '%s\n' "$exe_dir"
 }
 
 find_log_file() {
@@ -2653,6 +2732,14 @@ fi
 
 SCRFILE="$WORKDIR/run.scr"
 {
+  if [[ $IS_WINDOWS -eq 1 && "$EPURE_REQUESTED" == "1" ]]; then
+    EPURE_CONTROL_SCRIPT="$(windows_epure_control_script "$ENGINE" || true)"
+    if [[ -z "$EPURE_CONTROL_SCRIPT" ]]; then
+      autolisp_error "unable to find the EPURE bootstrap script for ${ENGINE} under %APPDATA%\\sncf\\epure."
+      exit 2
+    fi
+    printf '._SCRIPT\n%s\n' "$(to_runtime_lisp_path "$EPURE_CONTROL_SCRIPT")"
+  fi
   printf '(load "%s")\n' "$(escape_lisp_string "$RUNLSPFILE")"
 } >"$SCRFILE"
 if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 ]]; then
@@ -2781,6 +2868,9 @@ EOFVBS
 }
 
 run_windows_autocad() {
+  local win_scrfile=""
+  local epure_control=""
+  local workdir=""
   if [[ "$AUTOCAD_COM_MODE" != "off" ]]; then
     local cscript=""
     if command -v cscript >/dev/null 2>&1; then
@@ -2799,8 +2889,27 @@ run_windows_autocad() {
   fi
 
   if [[ -n "$AUTOCAD_EXE" && -f "$AUTOCAD_EXE" ]]; then
+    if [[ "$EPURE_REQUESTED" == "1" ]]; then
+      epure_control="$(windows_epure_control_script autocad || true)"
+      if [[ -z "$epure_control" ]]; then
+        echo "EPURE bootstrap script not found in %APPDATA%\\sncf\\epure\\epure 2022." >&2
+        return 2
+      fi
+      win_scrfile="$(to_windows_path "$SCRFILE")"
+      workdir="$(windows_cad_workdir "$AUTOCAD_EXE")"
+      (
+        cd "$workdir"
+        "$AUTOCAD_EXE" /p Epure /b "$win_scrfile" >"$WORKDIR/autocad-stdout.txt" 2>"$WORKDIR/autocad-stderr.txt"
+      ) || true
+      return 0
+    fi
     "$AUTOCAD_EXE" /b "$RUNLSPFILE" >"$WORKDIR/autocad-stdout.txt" 2>"$WORKDIR/autocad-stderr.txt" || true
     return 0
+  fi
+
+  if [[ "$EPURE_REQUESTED" == "1" ]]; then
+    echo "--epure on AutoCAD requires AUTOCAD_EXE (acad.exe)." >&2
+    return 2
   fi
 
   local acc="${AUTOCAD_ACCORECONSOLE:-}"
@@ -3004,6 +3113,8 @@ wait_for_status() {
 
 run_windows_bricscad() {
   local exe="${BRICSCAD_EXE:-}"
+  local win_scrfile=""
+  local workdir=""
   if [[ -z "$exe" ]]; then
     exe="$(ls -1 "/c/Program Files"*/Bricsys/*/bricscad.exe 2>/dev/null | head -n 1 || true)"
   fi
@@ -3037,7 +3148,21 @@ run_windows_bricscad() {
     echo "bricscad.exe not found. Set BRICSCAD_EXE." >&2
     return 3
   fi
-  "$exe" /B "$SCRFILE" >"$WORKDIR/bricscad-stdout.txt" 2>"$WORKDIR/bricscad-stderr.txt" || true
+  win_scrfile="$(to_windows_path "$SCRFILE")"
+  if [[ "$EPURE_REQUESTED" == "1" ]]; then
+    epure_control="$(windows_epure_control_script bricscad || true)"
+    if [[ -z "$epure_control" ]]; then
+      echo "EPURE bootstrap script not found in %APPDATA%\\sncf\\epure\\epure 2022_b." >&2
+      return 2
+    fi
+    workdir="$(windows_cad_workdir "$exe")"
+    (
+      cd "$workdir"
+      "$exe" /P Epure /B "$win_scrfile" >"$WORKDIR/bricscad-stdout.txt" 2>"$WORKDIR/bricscad-stderr.txt"
+    ) || true
+    return 0
+  fi
+  "$exe" /B "$win_scrfile" >"$WORKDIR/bricscad-stdout.txt" 2>"$WORKDIR/bricscad-stderr.txt" || true
 }
 
 run_macos_bricscad_fallback() {
