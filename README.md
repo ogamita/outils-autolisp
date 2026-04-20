@@ -126,6 +126,8 @@ Sous macOS, `make test-bricscad` sépare explicitement les runs BricsCAD:
 
 La cible agrégée lance d'abord `batch`, puis `automation attach`. Le second mode suppose qu'une session BricsCAD soit déjà ouverte; pour `autolisp-script`, le runner interactif s'arrête et demande d'ouvrir BricsCAD avant de continuer.
 
+En mode BricsCAD macOS `batch`, les `source.lsp` sont maintenant autorisés par défaut. Le wrapper essaie aussi de transformer une erreur fatale de bootstrap ou de `load` en échec propre avec journalisation et sortie explicite de BricsCAD, pour éviter une session bloquée en `BOOTING`.
+
 État des cibles principales:
 
 - `make test-ci` lance actuellement `autolisp-script`, `autolisp-vector` et `autolisp-hash-table`;

@@ -1114,7 +1114,6 @@ if [[ "$EPURE_REQUESTED" == "1" && $IS_WINDOWS -eq 1 ]]; then
 fi
 
 BRICSCAD_BATCH_COMMAND_FILE=""
-ALLOW_UNSTABLE_MACOS_BATCH_LOAD="${AUTOLISP_ALLOW_UNSTABLE_MACOS_BATCH_LOAD:-0}"
 EXPERIMENTAL_MACOS_BATCH_OPEN="${AUTOLISP_EXPERIMENTAL_MACOS_BATCH_OPEN:-0}"
 FORCE_REPORT_WORKDIR=0
 AUTOLISP_VERBOSITY=1
@@ -1872,13 +1871,6 @@ for i in "${!ACTION_KINDS[@]}"; do
   fi
 done
 
-if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" && "$USE_REMOTE_PROTOCOL" -eq 1 && "$HAS_LOAD_ACTION" -eq 1 && "$ALLOW_UNSTABLE_MACOS_BATCH_LOAD" != "1" ]]; then
-  autolisp_error "source.lsp is temporarily disabled for BricsCAD batch mode on macOS."
-  autolisp_error "this path is still unstable and has triggered BricsCAD crashes during debugging."
-  autolisp_hint "use -x for now, or set AUTOLISP_ALLOW_UNSTABLE_MACOS_BATCH_LOAD=1 to keep debugging this path."
-  exit 2
-fi
-
 USE_BATCH_INTERACTIVE_REPL=0
 if [[ "$INTERACTIVE" -eq 1 && "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" && "$USE_REMOTE_PROTOCOL" -eq 0 ]]; then
   USE_BATCH_INTERACTIVE_REPL=1
@@ -1977,6 +1969,50 @@ else
   printf '(setq *AUTOLISP_QUIT_ON_FINISH* %s)\n' "$QUIT_ON_FINISH"
   printf '(setq *AUTOLISP_BOOTSTRAP_PHASE* "%s")\n' "$(escape_lisp_string "$BOOTSTRAP_PHASE")"
   cat <<'EOLISP'
+(defun autolisp-bootstrap-append-line (path text / f)
+  (if (and (= (type path) 'STR)
+           (/= path ""))
+    (progn
+      (setq f (open path "a"))
+      (if f
+        (progn
+          (write-line text f)
+          (close f))))))
+
+(defun autolisp-bootstrap-write-line (path text / f)
+  (if (and (= (type path) 'STR)
+           (/= path ""))
+    (progn
+      (setq f (open path "w"))
+      (if f
+        (progn
+          (write-line text f)
+          (close f))))))
+
+(defun autolisp-bootstrap-render-error (err / msg)
+  (cond
+    ((and (= (type err) 'STR)
+          (/= err ""))
+     err)
+    ((and (fboundp 'vl-catch-all-error-message)
+          (not (vl-catch-all-error-p
+                 (setq msg (vl-catch-all-apply 'vl-catch-all-error-message
+                                               (list err))))))
+     msg)
+    (T
+     "<bootstrap failure>")))
+
+(defun autolisp-bootstrap-mark-fatal (phase err / msg)
+  (setq msg (autolisp-bootstrap-render-error err))
+  (autolisp-bootstrap-append-line *AUTOLISP_ERRFILE*
+                                  (strcat "ERROR " phase ": " msg))
+  (autolisp-bootstrap-write-line *AUTOLISP_STATUSFILE* "1")
+  (autolisp-bootstrap-write-line *AUTOLISP_PROTOCOL_STATUSFILE*
+                                 (strcat "FAILED " phase))
+  (if *AUTOLISP_QUIT_ON_FINISH*
+    (vl-catch-all-apply 'command (list "_QUIT" "_Y")))
+  1)
+
 (defun autolisp-write-line (path text / f)
   (setq f (open path "a"))
   (if f
@@ -2705,14 +2741,19 @@ EOLISP
 EOLISP
   if [[ "$USE_REMOTE_PROTOCOL" -eq 1 ]]; then
     cat <<'EOLISP'
-(load *AUTOLISP_PROTOCOL_RUNTIMEFILE*)
-(autolisp-protocol-server-loop)
+(defun autolisp-main-entry ()
+  (load *AUTOLISP_PROTOCOL_RUNTIMEFILE*)
+  (autolisp-protocol-server-loop))
 EOLISP
   elif [[ "$INTERACTIVE" -eq 1 && "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" ]]; then
     cat <<'EOLISP'
-(autolisp-repl-loop)
+(defun autolisp-main-entry ()
+  (autolisp-repl-loop))
 EOLISP
   else
+    cat <<'EOLISP'
+(defun autolisp-main-entry ()
+EOLISP
     for i in "${!ACTION_KINDS[@]}"; do
       kind="${ACTION_KINDS[$i]}"
       value="${ACTION_VALUES[$i]}"
@@ -2734,9 +2775,15 @@ EOLISP
 (autolisp-log-out (autolisp-summary-line))
 (if (> *AUTOLISP_FAIL* 0)
   (autolisp-finish 1)
-  (autolisp-finish 0))
+  (autolisp-finish 0)))
 EOLISP
   fi
+  cat <<'EOLISP'
+(setq _autolisp_main_result (vl-catch-all-apply 'autolisp-main-entry nil))
+(if (vl-catch-all-error-p _autolisp_main_result)
+  (autolisp-bootstrap-mark-fatal "bootstrap" _autolisp_main_result)
+  _autolisp_main_result)
+EOLISP
 } >"$RUNLSPFILE"
 fi
 

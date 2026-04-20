@@ -210,6 +210,7 @@ Par défaut il est supprimé en fin d'exécution.
 - `--bricscad-macos-profile NOM` ajoute `-P NOM` au lancement batch macOS pour imposer un profil BricsCAD stable.
 - En mode `automation`, le wrapper commence par envoyer `_.COMMANDLINE` puis la commande `(load ".../run-common.lsp")`, afin d'afficher et focaliser la ligne de commande avant l'injection; `--backend launch` ouvre BricsCAD automatiquement avant l'injection et `--backend attach` échoue si aucune instance n'est déjà ouverte.
 - En mode `batch`, le wrapper continue à faire toute l'I/O via `output.txt`, `errors.txt` et `status.txt`; BricsCAD ne fournit pas de sortie standard exploitable.
+- En mode `batch`, les `source.lsp` sont à nouveau autorisés par défaut. Les erreurs fatales pendant le bootstrap ou pendant un `load` essaient maintenant d'écrire `status.txt`, de journaliser l'erreur et de quitter explicitement BricsCAD pour éviter une session bloquée en `BOOTING`.
 - En mode `batch` avec `-i`, le wrapper garde une seule instance BricsCAD active et implémente un REPL via `input.lsp` + `status.txt`.
 - En mode BricsCAD macOS `batch`, `run.scr` charge directement `run-common.lsp` puis termine par `(command "_QUIT" "_Y")` pour fermer l'instance lancée. `_.COMMANDLINE` reste réservé au mode `automation`; en pratique il perturbe le démarrage via `-b`.
 - Le bootstrap `automation` dépend des autorisations Accessibilité et reste plus fragile qu'un lancement direct.

@@ -672,7 +672,6 @@ run_standard_cases() {
       --env BRICSCAD_MACOS_MODE=batch \
       --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
       --env AUTOLISP_REMOTE_IO_MODE=on \
-      --env AUTOLISP_ALLOW_UNSTABLE_MACOS_BATCH_LOAD=1 \
       "$SCRIPT_DIR/fixtures/load-side-effect.lsp"
   fi
 
@@ -711,7 +710,6 @@ run_standard_cases() {
       --env BRICSCAD_MACOS_MODE=batch \
       --env AUTOLISP_REMOTE_IO_MODE=on \
       --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
-      --env AUTOLISP_ALLOW_UNSTABLE_MACOS_BATCH_LOAD=1 \
       "$SCRIPT_DIR/fixtures/main-default.lsp"
 
     run_case \
@@ -724,7 +722,6 @@ run_standard_cases() {
       --env BRICSCAD_MACOS_MODE=batch \
       --env AUTOLISP_REMOTE_IO_MODE=on \
       --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
-      --env AUTOLISP_ALLOW_UNSTABLE_MACOS_BATCH_LOAD=1 \
       "$SCRIPT_DIR/fixtures/main-default.lsp" \
       --verbose
 
@@ -738,7 +735,6 @@ run_standard_cases() {
       --env BRICSCAD_MACOS_MODE=batch \
       --env AUTOLISP_REMOTE_IO_MODE=on \
       --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
-      --env AUTOLISP_ALLOW_UNSTABLE_MACOS_BATCH_LOAD=1 \
       "$SCRIPT_DIR/fixtures/main-custom.lsp" \
       --main C:RUN_BASIC
 
@@ -752,7 +748,6 @@ run_standard_cases() {
       --env BRICSCAD_MACOS_MODE=batch \
       --env AUTOLISP_REMOTE_IO_MODE=on \
       --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
-      --env AUTOLISP_ALLOW_UNSTABLE_MACOS_BATCH_LOAD=1 \
       "$SCRIPT_DIR/fixtures/load-side-effect.lsp"
 
     run_case \
@@ -765,7 +760,6 @@ run_standard_cases() {
       --env BRICSCAD_MACOS_MODE=batch \
       --env AUTOLISP_REMOTE_IO_MODE=on \
       --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
-      --env AUTOLISP_ALLOW_UNSTABLE_MACOS_BATCH_LOAD=1 \
       "$SCRIPT_DIR/fixtures/load-side-effect.lsp" \
       -x '(+ 1 2)'
   else
