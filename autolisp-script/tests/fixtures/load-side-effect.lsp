@@ -1,4 +1,4 @@
-(print "Loaded fixture")
+(princ "Loaded fixture")
 
 (defun C:MAIN ()
   "OK")

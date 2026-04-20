@@ -1,7 +1,8 @@
-autolisp 1.0.3
+autolisp 1.0.4
 3
 
 "Hi"
 10
 
 ERROR eval (/ 1 0): divide by zero
+

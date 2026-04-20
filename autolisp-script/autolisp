@@ -2667,6 +2667,9 @@ EOLISP
 (defun print (obj)
   (autolisp-emit-user-out obj))
 
+(defun princ (obj)
+  (autolisp-emit-user-out obj))
+
 (defun prin1 (obj)
   (autolisp-emit-user-out obj))
 
