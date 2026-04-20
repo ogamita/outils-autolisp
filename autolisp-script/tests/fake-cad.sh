@@ -159,6 +159,33 @@ protocol_finish_request() {
 
 protocol_emit_eval_result() {
   local form="$1"
+  local load_path
+
+  if [[ "$form" =~ ^\(load[[:space:]]+\"(.*)\"\)$ ]]; then
+    load_path="${BASH_REMATCH[1]}"
+    load_path="${load_path//\\\"/\"}"
+    load_path="${load_path//\\\\/\\}"
+    case "$load_path" in
+      *load-side-effect.lsp)
+        cat >"$OUTFILE" <<EOF
+EVAL (load "$load_path")
+<<<AUTOLISP-STDOUT>>>Loaded fixture
+RESULT "$load_path"
+TOTAL=1 OK=1 FAIL=0 ERROR=0
+EOF
+        ;;
+      *)
+        cat >"$OUTFILE" <<EOF
+EVAL (load "$load_path")
+RESULT "$load_path"
+TOTAL=1 OK=1 FAIL=0 ERROR=0
+EOF
+        ;;
+    esac
+    : >"$ERRFILE"
+    return 0
+  fi
+
   case "$form" in
     "(+ 1 2)")
       cat >"$OUTFILE" <<'EOF'
@@ -201,45 +228,6 @@ EOF
       : >"$ERRFILE"
       return 0
       ;;
-    '(load "load-side-effect.lsp")')
-      cat >"$OUTFILE" <<'EOF'
-EVAL (load "load-side-effect.lsp")
-<<<AUTOLISP-STDOUT>>>Loaded fixture
-RESULT "load-side-effect.lsp"
-TOTAL=1 OK=1 FAIL=0 ERROR=0
-EOF
-      : >"$ERRFILE"
-      return 0
-      ;;
-    '(load "misc/src/cat.lsp")')
-      cat >"$OUTFILE" <<'EOF'
-EVAL (load "misc/src/cat.lsp")
-RESULT "misc/src/cat.lsp"
-TOTAL=1 OK=1 FAIL=0 ERROR=0
-EOF
-      : >"$ERRFILE"
-      return 0
-      ;;
-    '(cat "misc/tests/cat-sample.lsp")')
-      cat >"$OUTFILE" <<'EOF'
-EVAL (cat "misc/tests/cat-sample.lsp")
-<<<AUTOLISP-STDOUT>>>(princ "Hello essai!")
-<<<AUTOLISP-STDOUT>>>
-<<<AUTOLISP-STDOUT>>>(princ)
-<<<AUTOLISP-STDOUT>>>
-<<<AUTOLISP-STDOUT>>>(setq *essai* '(value-of *essai*))
-<<<AUTOLISP-STDOUT>>>
-<<<AUTOLISP-STDOUT>>>(defun essai ()
-<<<AUTOLISP-STDOUT>>>  (list 'in 'essai *essai*))
-<<<AUTOLISP-STDOUT>>>
-<<<AUTOLISP-STDOUT>>>(princ "Bye essai!")
-<<<AUTOLISP-STDOUT>>>(princ)
-RESULT nil
-TOTAL=1 OK=1 FAIL=0 ERROR=0
-EOF
-      : >"$ERRFILE"
-      return 0
-      ;;
     "(/ 1 0)")
       cat >"$OUTFILE" <<'EOF'
 EVAL (/ 1 0)
@@ -268,87 +256,32 @@ EOF
   return 5
 }
 
-protocol_emit_load_result() {
+protocol_emit_main_result() {
   local request_file="$1"
-  if grep -Eq 'autolisp-run-load 1 ".*/tests/fixtures/load-side-effect\.lsp"' "$request_file" \
-    && grep -Eq 'autolisp-run-eval-file 2 ".*eval-2\.lsp"' "$request_file"; then
-    cat >"$OUTFILE" <<EOF
-LOAD $ROOT_DIR/tests/fixtures/load-side-effect.lsp
-<<<AUTOLISP-STDOUT>>>Loaded fixture
-LOADED $ROOT_DIR/tests/fixtures/load-side-effect.lsp
-EVAL (+ 1 2)
-RESULT 3
-MAIN C:MAIN
-MAIN-RESULT OK
-TOTAL=3 OK=3 FAIL=0 ERROR=0
-EOF
-    : >"$ERRFILE"
-    return 0
-  fi
 
-  if grep -Eq 'autolisp-run-load 1 ".*/misc/tests/cat-output\.lsp"' "$request_file"; then
+  if grep -Eq 'autolisp-run-main [0-9]+ "C:RUN_BASIC"' "$request_file"; then
     cat >"$OUTFILE" <<EOF
-LOAD $ROOT_DIR/../misc/tests/cat-output.lsp
-<<<AUTOLISP-STDOUT>>>(princ "Hello essai!")
-<<<AUTOLISP-STDOUT>>>
-<<<AUTOLISP-STDOUT>>>(princ)
-<<<AUTOLISP-STDOUT>>>
-<<<AUTOLISP-STDOUT>>>(setq *essai* '(value-of *essai*))
-<<<AUTOLISP-STDOUT>>>
-<<<AUTOLISP-STDOUT>>>(defun essai ()
-<<<AUTOLISP-STDOUT>>>  (list 'in 'essai *essai*))
-<<<AUTOLISP-STDOUT>>>
-<<<AUTOLISP-STDOUT>>>(princ "Bye essai!")
-<<<AUTOLISP-STDOUT>>>(princ)
-LOADED $ROOT_DIR/../misc/tests/cat-output.lsp
-MAIN C:MAIN
-MAIN-RESULT OK
-TOTAL=2 OK=2 FAIL=0 ERROR=0
-EOF
-    : >"$ERRFILE"
-    return 0
-  fi
-
-  if grep -Eq 'autolisp-run-load 1 ".*/tests/fixtures/main-default\.lsp"' "$request_file"; then
-    cat >"$OUTFILE" <<EOF
-LOAD $ROOT_DIR/tests/fixtures/main-default.lsp
-LOADED $ROOT_DIR/tests/fixtures/main-default.lsp
-MAIN C:MAIN
-<<<AUTOLISP-STDOUT>>>"From MAIN"
-MAIN-RESULT Done
-TOTAL=2 OK=2 FAIL=0 ERROR=0
-EOF
-    : >"$ERRFILE"
-    return 0
-  fi
-
-  if grep -Eq 'autolisp-run-load 1 ".*/tests/fixtures/main-custom\.lsp"' "$request_file"; then
-    cat >"$OUTFILE" <<EOF
-LOAD $ROOT_DIR/tests/fixtures/main-custom.lsp
-LOADED $ROOT_DIR/tests/fixtures/main-custom.lsp
 MAIN C:RUN_BASIC
-<<<AUTOLISP-STDOUT>>>"From custom main"
+<<<AUTOLISP-STDOUT>>>From custom main
 MAIN-RESULT 7
-TOTAL=2 OK=2 FAIL=0 ERROR=0
+TOTAL=1 OK=1 FAIL=0 ERROR=0
 EOF
     : >"$ERRFILE"
     return 0
   fi
 
-  if grep -Eq 'autolisp-run-load 1 ".*/tests/fixtures/load-side-effect\.lsp"' "$request_file"; then
+  if grep -Eq 'autolisp-run-main [0-9]+ "C:MAIN"' "$request_file"; then
     cat >"$OUTFILE" <<EOF
-LOAD $ROOT_DIR/tests/fixtures/load-side-effect.lsp
-<<<AUTOLISP-STDOUT>>>Loaded fixture
-LOADED $ROOT_DIR/tests/fixtures/load-side-effect.lsp
 MAIN C:MAIN
-MAIN-RESULT OK
-TOTAL=2 OK=2 FAIL=0 ERROR=0
+<<<AUTOLISP-STDOUT>>>From MAIN
+MAIN-RESULT Done
+TOTAL=1 OK=1 FAIL=0 ERROR=0
 EOF
     : >"$ERRFILE"
     return 0
   fi
 
-  printf 'fake-cad: unexpected protocol load request in %s\n' "$request_file" >&2
+  printf 'fake-cad: unexpected protocol main request in %s\n' "$request_file" >&2
   return 5
 }
 
@@ -409,8 +342,8 @@ run_protocol_batch() {
           exit 0
         fi
         protocol_finish_request "$req_id" "$rc"
-      elif grep -Eq 'autolisp-run-load 1 ".*(tests/fixtures/|misc/tests/cat-output\.lsp)' "$request_file"; then
-        if protocol_emit_load_result "$request_file"; then
+      elif grep -Eq 'autolisp-run-main [0-9]+ ".*"' "$request_file"; then
+        if protocol_emit_main_result "$request_file"; then
           rc=0
         else
           rc=$?

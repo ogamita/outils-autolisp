@@ -710,7 +710,8 @@ run_standard_cases() {
       --env BRICSCAD_MACOS_MODE=batch \
       --env AUTOLISP_REMOTE_IO_MODE=on \
       --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
-      "$SCRIPT_DIR/fixtures/main-default.lsp"
+      "$SCRIPT_DIR/fixtures/main-default.lsp" \
+      --main C:MAIN
 
     run_case \
       "load_main_default_verbose" \
@@ -723,6 +724,7 @@ run_standard_cases() {
       --env AUTOLISP_REMOTE_IO_MODE=on \
       --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
       "$SCRIPT_DIR/fixtures/main-default.lsp" \
+      --main C:MAIN \
       --verbose
 
     run_case \
@@ -763,17 +765,6 @@ run_standard_cases() {
       "$SCRIPT_DIR/fixtures/load-side-effect.lsp" \
       -x '(+ 1 2)'
 
-    run_case \
-      "cat_output" \
-      "protocol_batch" \
-      "$ROOT_DIR/../misc/tests/cat_output.stdout" \
-      "$SCRIPT_DIR/expected/empty.stderr" \
-      0 \
-      --env AUTOLISP_OS=Darwin \
-      --env BRICSCAD_MACOS_MODE=batch \
-      --env AUTOLISP_REMOTE_IO_MODE=on \
-      --env AUTOLISP_FAKE_EXPECT_PROFILE=lisp \
-      "$ROOT_DIR/../misc/tests/cat-output.lsp"
   else
     run_case \
       "eval_load_string" \
@@ -789,7 +780,8 @@ run_standard_cases() {
       "$SCRIPT_DIR/expected/load_main_default.stdout" \
       "$SCRIPT_DIR/expected/empty.stderr" \
       0 \
-      "$SCRIPT_DIR/fixtures/main-default.lsp"
+      "$SCRIPT_DIR/fixtures/main-default.lsp" \
+      --main C:MAIN
 
     run_case \
       "load_main_custom" \

@@ -77,6 +77,7 @@ EOU
 ENGINE=""
 DWG=""
 MAIN="C:MAIN"
+MAIN_REQUESTED=0
 TIMEOUT_SECS="${AUTOLISP_WAIT_SECS:-${AUTOLISP_TIMEOUT:-180}}"
 AUTOCAD_COM_MODE="${AUTOCAD_COM_MODE:-auto}"
 AUTOCAD_EXE="${AUTOCAD_EXE:-}"
@@ -164,6 +165,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --main)
       MAIN="${2:-}"
+      MAIN_REQUESTED=1
       shift 2
       ;;
     -i|--interactive)
@@ -512,6 +514,7 @@ wait_for_batch_process_exit() {
 }
 
 PROTOCOL_REQUEST_SEQ=0
+PROTOCOL_REQUEST_SEQFILE=""
 PROTOCOL_CLIENT_REQ_ID=0
 PROTOCOL_STREAM_OUT_LINES=0
 PROTOCOL_STREAM_ERR_LINES=0
@@ -523,8 +526,19 @@ PROTOCOL_INTERACTIVE_HELPER_PID=""
 PROTOCOL_INTERACTIVE_HELPER_STDIN_OPEN=0
 
 protocol_new_request_slot() {
-  PROTOCOL_REQUEST_SEQ=$((PROTOCOL_REQUEST_SEQ + 1))
-  printf -v PROTOCOL_REQUEST_TAG '%03d' "$PROTOCOL_REQUEST_SEQ"
+  local seq=0
+
+  if [[ -n "$PROTOCOL_REQUEST_SEQFILE" && -f "$PROTOCOL_REQUEST_SEQFILE" ]]; then
+    seq="$(awk 'NF{line=$0} END{print line}' "$PROTOCOL_REQUEST_SEQFILE" 2>/dev/null || echo 0)"
+  fi
+  if ! [[ "$seq" =~ ^[0-9]+$ ]]; then
+    seq=0
+  fi
+  seq=$((seq + 1))
+  if [[ -n "$PROTOCOL_REQUEST_SEQFILE" ]]; then
+    printf '%s\n' "$seq" >"$PROTOCOL_REQUEST_SEQFILE"
+  fi
+  printf -v PROTOCOL_REQUEST_TAG '%03d' "$seq"
 }
 
 build_protocol_eval_request() {
@@ -577,6 +591,22 @@ build_protocol_actions_request() {
   printf '%s\n' "$request_file"
 }
 
+build_protocol_main_request() {
+  local request_file
+
+  protocol_new_request_slot
+  request_file="$WORKDIR/protocol-request-$PROTOCOL_REQUEST_TAG.lsp"
+
+  {
+    printf '(autolisp-request-reset)\n'
+    printf '(if (= *AUTOLISP_FAIL* 0) (if (autolisp-run-main %s "%s") (autolisp-note-ok) (autolisp-note-fail)))\n' \
+      "$(( ${#ACTION_KINDS[@]} + 1 ))" "$(escape_lisp_string "$MAIN")"
+    printf '(autolisp-request-exit-code)\n'
+  } >"$request_file"
+
+  printf '%s\n' "$request_file"
+}
+
 build_protocol_noninteractive_startup_payload() {
   local request_file payload_file lisp_request_file
 
@@ -610,12 +640,13 @@ submit_protocol_request_file() {
   PROTOCOL_LAST_REQUEST_QUIT=0
   lisp_request_file="$(to_runtime_lisp_path "$request_file")"
   load_form="$(printf '(load "%s")\n' "$(escape_lisp_string "$lisp_request_file")")"
-  if [[ "$INTERACTIVE" -eq 1 ]]; then
-    stream_output=0
-  fi
+  stream_output=0
   protocol_stream_request_reset
   autolisp_protocol_send_stdin "$load_form"
   wait_for_protocol_request_done "$PROTOCOL_CLIENT_REQ_ID" "$stream_output"
+  if [[ "$INTERACTIVE" -eq 0 ]]; then
+    protocol_flush_request_updates
+  fi
 }
 
 shutdown_protocol_session() {
@@ -841,6 +872,7 @@ start_protocol_foreground_relay() {
 
 stop_protocol_foreground_relay() {
   [[ -n "$PROTOCOL_FOREGROUND_RELAY_PID" ]] || return 0
+  kill "$PROTOCOL_FOREGROUND_RELAY_PID" 2>/dev/null || true
   wait "$PROTOCOL_FOREGROUND_RELAY_PID" 2>/dev/null || true
   PROTOCOL_FOREGROUND_RELAY_PID=""
 }
@@ -870,11 +902,23 @@ wait_protocol_interactive_helper() {
 }
 
 run_protocol_noninteractive() {
-  local request_file
+  local request_file kind form_text
 
   wait_for_protocol_ready || return $?
-  request_file="$(build_protocol_actions_request)"
-  submit_protocol_request_file "$request_file" || return $?
+  for idx in "${!ACTION_KINDS[@]}"; do
+    kind="${ACTION_KINDS[$idx]}"
+    if [[ "$kind" == "load" ]]; then
+      form_text="(load \"$(escape_lisp_string "${ACTION_VALUES[$idx]}")\")"
+    else
+      form_text="${ACTION_VALUES[$idx]}"
+    fi
+    request_file="$(build_protocol_eval_request "$form_text")"
+    submit_protocol_request_file "$request_file" || return $?
+  done
+  if [[ "$MAIN_REQUESTED" -eq 1 ]]; then
+    request_file="$(build_protocol_main_request)"
+    submit_protocol_request_file "$request_file" || return $?
+  fi
   shutdown_protocol_session
 }
 
@@ -1058,14 +1102,6 @@ fi
 if [[ "$INTERACTIVE" -eq 1 && "$BOOTSTRAP_PHASE" != "full" ]]; then
   echo "Interactive mode requires --bootstrap-phase full." >&2
   exit 2
-fi
-
-if [[ ${#ACTION_KINDS[@]} -eq 0 ]]; then
-  if [[ "$INTERACTIVE" -ne 1 ]]; then
-    echo "Missing input: provide at least one source.lsp or -x expression" >&2
-    usage
-    exit 2
-  fi
 fi
 
 OS="${AUTOLISP_OS:-$(uname -s || true)}"
@@ -1827,6 +1863,8 @@ else
 fi
 mkdir -p "$BASE_WORKDIR"
 WORKDIR="$(mktemp -d "$BASE_WORKDIR/autolisp.XXXXXX")"
+PROTOCOL_REQUEST_SEQFILE="$WORKDIR/protocol-request-seq.txt"
+rm -f "$PROTOCOL_REQUEST_SEQFILE"
 autolisp_protocol_init_session "$WORKDIR"
 autolisp_protocol_export_session
 autolisp_protocol_reset_session
@@ -2896,13 +2934,6 @@ fi
 
 export OUTFILE ERRFILE STATUSFILE INPFILE
 
-if [[ "$USE_FOREGROUND_BATCH_PROTOCOL" -eq 1 ]]; then
-  if [[ "$INTERACTIVE" -eq 0 ]]; then
-    prime_protocol_noninteractive_startup
-    start_protocol_foreground_relay
-  fi
-fi
-
 start_protocol_interactive_helper
 
 write_windows_autocad_vbs() {
@@ -3445,17 +3476,15 @@ run_macos_bricscad_batch() {
     printf '%q ' "${cmd[@]}" >"$BRICSCAD_BATCH_COMMAND_FILE"
     printf '\n' >>"$BRICSCAD_BATCH_COMMAND_FILE"
     BRICSCAD_BATCH_LAUNCHED=1
-    BRICSCAD_BATCH_REAPED=1
+    BRICSCAD_BATCH_REAPED=0
     BRICSCAD_BATCH_COMPLETED=0
     BRICSCAD_BATCH_RC=""
     BRICSCAD_BATCH_PID=""
     BRICSCAD_BATCH_CHILD_PID=""
     BRICSCAD_BATCH_START_TS="$(date +%s 2>/dev/null || echo 0)"
-    start_bricscad_launch_announcer "$exe"
-    "${cmd[@]}" >"$WORKDIR/bricscad-stdout.txt" 2>"$WORKDIR/bricscad-stderr.txt" || rc=$?
-    stop_bricscad_launch_announcer
-    BRICSCAD_BATCH_RC="$rc"
-    BRICSCAD_BATCH_COMPLETED=1
+    "${cmd[@]}" >"$WORKDIR/bricscad-stdout.txt" 2>"$WORKDIR/bricscad-stderr.txt" &
+    BRICSCAD_BATCH_PID=$!
+    BRICSCAD_BATCH_CHILD_PID="$BRICSCAD_BATCH_PID"
     return 0
   fi
   launch_cmd=("${cmd[@]}")
@@ -3574,8 +3603,6 @@ case "$ENGINE" in
     ;;
 esac
 
-stop_protocol_foreground_relay
-
 if [[ "$MACOS_ASYNC" -eq 1 ]]; then
   if [[ -z "${AUTOLISP_KEEP_WORKDIR:-}" ]]; then
     CLEANUP_WORKDIR="1"
@@ -3591,13 +3618,6 @@ if [[ "$USE_REMOTE_PROTOCOL" -eq 1 ]]; then
   elif [[ "$INTERACTIVE" -eq 1 ]]; then
     run_protocol_interactive_repl
     exit $?
-  fi
-  if [[ "$INTERACTIVE" -eq 1 ]]; then
-    :
-  elif [[ "$USE_FOREGROUND_BATCH_PROTOCOL" -eq 1 ]]; then
-    if ! wait_for_status; then
-      wait_rc=$?
-    fi
   elif ! run_protocol_noninteractive; then
     wait_rc=$?
   fi
@@ -3619,6 +3639,8 @@ fi
 if [[ "$wait_rc" -ne 0 ]]; then
   kill_bricscad_batch_process || true
 fi
+
+stop_protocol_foreground_relay
 
 if [[ "$INTERRUPTED" -eq 1 ]]; then
   exit 130

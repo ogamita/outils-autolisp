@@ -1,2 +1,2 @@
 Loaded fixture
-OK
+"@ROOT_DIR@/tests/fixtures/load-side-effect.lsp"
