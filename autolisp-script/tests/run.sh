@@ -870,6 +870,28 @@ run_interactive_cases() {
       --env AUTOLISP_REMOTE_IO_MODE=on \
       --expect-fake-invocations 1 \
       --interactive
+
+    run_stdin_case \
+      "interactive_princ" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/fixtures/interactive-princ-input.lsp" \
+      "$SCRIPT_DIR/expected/interactive_princ.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --expect-fake-invocations 1 \
+      --interactive
+
+    run_stdin_case \
+      "interactive_load_princ_trailing" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/fixtures/interactive-load-princ-input.lsp" \
+      "$SCRIPT_DIR/expected/interactive_load_princ.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --expect-fake-invocations 1 \
+      --interactive
   else
     run_stdin_case \
       "interactive_repl" \

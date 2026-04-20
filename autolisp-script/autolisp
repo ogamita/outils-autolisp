@@ -2838,7 +2838,7 @@ EOLISP
               (progn
                 (autolisp-log-out (strcat "EVAL " form-text))
                 (setq *AUTOLISP_CAPTURE_STDOUT* T)
-                (setq r (vl-catch-all-apply 'eval (list form-read)))
+                (setq r (vl-catch-all-apply 'eval (list (autolisp-normalize-princ-call form-read))))
                 (setq *AUTOLISP_CAPTURE_STDOUT* nil)
                 (if (vl-catch-all-error-p r)
                   (progn

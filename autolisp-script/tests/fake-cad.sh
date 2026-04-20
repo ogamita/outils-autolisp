@@ -174,6 +174,15 @@ RESULT "$load_path"
 TOTAL=1 OK=1 FAIL=0 ERROR=0
 EOF
         ;;
+      *princ-trailing.lsp)
+        cat >"$OUTFILE" <<EOF
+EVAL (load "$load_path")
+<<<AUTOLISP-STDOUT>>>Loaded princ fixture
+<<<AUTOLISP-STDOUT>>>
+RESULT "$load_path"
+TOTAL=1 OK=1 FAIL=0 ERROR=0
+EOF
+        ;;
       *)
         cat >"$OUTFILE" <<EOF
 EVAL (load "$load_path")
@@ -191,6 +200,26 @@ EOF
       cat >"$OUTFILE" <<'EOF'
 EVAL (+ 1 2)
 RESULT 3
+TOTAL=1 OK=1 FAIL=0 ERROR=0
+EOF
+      : >"$ERRFILE"
+      return 0
+      ;;
+    "(princ)")
+      cat >"$OUTFILE" <<'EOF'
+EVAL (princ)
+<<<AUTOLISP-STDOUT>>>
+RESULT nil
+TOTAL=1 OK=1 FAIL=0 ERROR=0
+EOF
+      : >"$ERRFILE"
+      return 0
+      ;;
+    "(princ \"abc\")")
+      cat >"$OUTFILE" <<'EOF'
+EVAL (princ "abc")
+<<<AUTOLISP-STDOUT>>>abc
+RESULT nil
 TOTAL=1 OK=1 FAIL=0 ERROR=0
 EOF
       : >"$ERRFILE"
@@ -400,6 +429,7 @@ TOTAL=1 OK=1 FAIL=0 ERROR=0
 EOF
     : >"$ERRFILE"
     printf '0\n' >"$STATUSFILE"
+    sleep 0.1
     ;;
   protocol_batch)
     run_protocol_batch
@@ -532,6 +562,28 @@ EOF
           cat >"$OUTFILE" <<'EOF'
 EVAL (+ 1 2)
 RESULT 3
+TOTAL=1 OK=1 FAIL=0 ERROR=0
+EOF
+          : >"$ERRFILE"
+          rm -f "$INPFILE"
+          printf 'READY %s\n' "$req_id" >"$STATUSFILE"
+          ;;
+        "(princ)")
+          cat >"$OUTFILE" <<'EOF'
+EVAL (princ)
+<<<AUTOLISP-STDOUT>>>
+RESULT nil
+TOTAL=1 OK=1 FAIL=0 ERROR=0
+EOF
+          : >"$ERRFILE"
+          rm -f "$INPFILE"
+          printf 'READY %s\n' "$req_id" >"$STATUSFILE"
+          ;;
+        "(princ \"abc\")")
+          cat >"$OUTFILE" <<'EOF'
+EVAL (princ "abc")
+<<<AUTOLISP-STDOUT>>>abc
+RESULT nil
 TOTAL=1 OK=1 FAIL=0 ERROR=0
 EOF
           : >"$ERRFILE"

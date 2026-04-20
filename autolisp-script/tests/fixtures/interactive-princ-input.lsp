@@ -1,0 +1,2 @@
+(princ)
+(princ "abc")
