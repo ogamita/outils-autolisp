@@ -4,12 +4,22 @@ set -euo pipefail
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Shell-side helpers for the future remote I/O protocol.
 . "$SELF_DIR/lib/autolisp-remote-io.sh"
+VERSION_FILE="$SELF_DIR/VERSION.TXT"
+if [[ -f "$VERSION_FILE" ]]; then
+  # shellcheck source=/dev/null
+  . "$VERSION_FILE"
+fi
+
+autolisp_version_string() {
+  printf 'autolisp %s.%s.%s\n' "${VERSION_MAJOR:-0}" "${VERSION_MINOR:-0}" "${VERSION_PATCH:-0}"
+}
 
 usage() {
   cat <<'EOU'
 Usage:
   autolisp-v4 [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--mode automation|batch] [--backend attach|launch] [--bricscad-macos-profile NAME] [--epure] { source.lsp | -x expression }... [--dwg file.dwg] [--main C:MAIN]
   autolisp-v4 [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--mode automation|batch] [--backend attach|launch] [--bricscad-macos-profile NAME] [--epure] -i|--interactive [--dwg file.dwg]
+  autolisp-v4 --version
 
 Examples:
   autolisp test.lsp
@@ -80,6 +90,7 @@ BOOTSTRAP_PHASE="${AUTOLISP_BOOTSTRAP_PHASE:-full}"
 INTERACTIVE=0
 CLI_VERBOSE=0
 CLI_QUIET=0
+VERSION_ONLY=0
 
 declare -a ACTION_KINDS=()
 declare -a ACTION_VALUES=()
@@ -143,6 +154,10 @@ while [[ $# -gt 0 ]]; do
       EPURE_REQUESTED=1
       shift
       ;;
+    --version)
+      VERSION_ONLY=1
+      shift
+      ;;
     --dwg)
       DWG="${2:-}"
       shift 2
@@ -198,6 +213,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "$VERSION_ONLY" -eq 1 ]]; then
+  autolisp_version_string
+  exit 0
+fi
 
 interactive_form_complete() {
   local form="$1"
@@ -956,7 +976,7 @@ run_interactive_repl() {
     stdout_file="$case_dir/stdout.txt"
     stderr_file="$case_dir/stderr.txt"
 
-    "$self" "${repl_args[@]}" -x "$buffer" >"$stdout_file" 2>"$stderr_file" || true
+    AUTOLISP_SUPPRESS_VERSION_BANNER=1 "$self" "${repl_args[@]}" -x "$buffer" >"$stdout_file" 2>"$stderr_file" || true
     interactive_print_response "$stdout_file" "$stderr_file"
     rm -rf "$case_dir"
     buffer=""
@@ -1023,7 +1043,9 @@ run_batch_interactive_repl() {
   payload=";REQ $req_id"$'\n'"'__AUTOLISP_QUIT__"$'\n'
   write_atomic_file "$INPFILE" "$payload"
   wait_for_status_value "STOP $req_id" || true
-  wait_for_batch_process_exit || return $?
+  # BricsCAD macOS batch shutdown is crash-prone, so terminate the launched PID
+  # from the wrapper instead of asking BricsCAD to run its own _QUIT path.
+  kill_bricscad_batch_process || true
   return 0
 }
 
@@ -1880,6 +1902,12 @@ if [[ "$INTERACTIVE" -eq 1 && "$USE_REMOTE_PROTOCOL" -eq 0 && "$USE_BATCH_INTERA
   exit $?
 fi
 
+if [[ "$INTERACTIVE" -eq 1 && "${AUTOLISP_SUPPRESS_VERSION_BANNER:-0}" != "1" ]]; then
+  if ! autolisp_is_quiet; then
+    autolisp_version_string
+  fi
+fi
+
 QUIT_ON_FINISH=1
 if [[ "$CAD_BACKEND" == "attach" ]]; then
   QUIT_ON_FINISH=0
@@ -1912,6 +1940,7 @@ elif [[ "$BOOTSTRAP_PHASE" == "core" && ${#ACTION_KINDS[@]} -eq 1 && "${ACTION_K
     (progn
       (setq acc "")
       (while (setq line (read-line f))
+        (setq line (vl-string-translate "\r" "" line))
         (if (= acc "")
           (setq acc line)
           (setq acc (strcat acc "\n" line))))
@@ -2031,6 +2060,7 @@ else
     (progn
       (setq acc "")
       (while (setq line (read-line f))
+        (setq line (vl-string-translate "\r" "" line))
         (if (= acc "")
           (setq acc line)
           (setq acc (strcat acc "\n" line))))
@@ -2295,7 +2325,7 @@ else
     (setq found (findfile (strcat path ".lsp"))))
   found)
 
-(defun autolisp-source-load-core (path has-onfailure onfailure / resolved f line line-no form-text form-start-line result form-read defun-name eval-result)
+(defun autolisp-source-load-core-impl (path has-onfailure onfailure / resolved f line line-no form-text form-start-line result form-read defun-name eval-result capture-old)
   (setq resolved (autolisp-source-resolve-load-path path))
   (if (not resolved)
     (if has-onfailure
@@ -2311,6 +2341,7 @@ else
       (setq form-start-line nil)
       (setq result nil)
       (while (setq line (read-line f))
+        (setq line (vl-string-translate "\r" "" line))
         (setq line-no (+ line-no 1))
         (if (= form-text "")
           (setq form-start-line line-no))
@@ -2341,7 +2372,10 @@ else
                                       form-start-line
                                       defun-name))
              (progn
+               (setq capture-old *AUTOLISP_CAPTURE_STDOUT*)
+               (setq *AUTOLISP_CAPTURE_STDOUT* T)
                (setq eval-result (vl-catch-all-apply 'autolisp-eval-request-form (list form-read)))
+               (setq *AUTOLISP_CAPTURE_STDOUT* capture-old)
                (if (vl-catch-all-error-p eval-result)
                  (if (or *AUTOLISP_QUIT_REQUESTED*
                          (autolisp-quit-signal-p
@@ -2374,14 +2408,17 @@ else
                                  1
                                  form-start-line
                                  (autolisp-source-leading-defun-name form-text))))
+      ;; The documented LOAD contract is to return the loaded filename on
+      ;; success, not the last evaluated form.
+      (setq result resolved)
       (autolisp-source-pop-stack)
       result)))
 
 (defun autolisp-source-load (path /)
-  (autolisp-source-load-core path nil nil))
+  (autolisp-source-load-core-impl path nil nil))
 
 (defun autolisp-source-load-with-onfailure (path onfailure /)
-  (autolisp-source-load-core path T onfailure))
+  (autolisp-source-load-core-impl path T onfailure))
 
 (defun autolisp-internal-protocol-load-p (path)
   (and (= (type path) 'STR)
@@ -2635,6 +2672,7 @@ EOLISP
     (progn
       (setq acc '())
       (while (setq line (read-line f))
+        (setq line (vl-string-translate "\r" "" line))
         (setq acc (cons line acc)))
       (close f)
       (reverse acc))))
@@ -2733,7 +2771,10 @@ EOLISP
       (autolisp-sleep-ms 100))
     (if (not (autolisp-run-repl-request))
       (setq keep-going nil)))
-  (command "_QUIT" "_Y"))
+  ;; BricsCAD macOS batch quit can crash inside its own _QUIT handler.
+  ;; Let the wrapper stop the launched process instead.
+  (if *AUTOLISP_QUIT_ON_FINISH*
+    (command "_QUIT" "_Y")))
 EOLISP
   fi
   cat <<'EOLISP'

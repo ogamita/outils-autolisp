@@ -41,6 +41,7 @@
 ;;;   (cat '("abc.txt" "def.txt" "ghi.txt"))
 ;;;
 ;;; La fonction retourne silencieusement nil après l'affichage.
+(setq cat 'cat)
 (defun cat (arg / paths)
   (setq paths (cat--normalize-paths arg))
   (foreach path paths

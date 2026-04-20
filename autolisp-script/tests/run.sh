@@ -801,6 +801,16 @@ run_standard_cases() {
 run_interactive_cases() {
   if [[ "$ENGINE_FLAG" == "--bricscad" && "$IS_MACOS" -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_TEST_MODE" != "auto" ]]; then
     run_stdin_case \
+      "version" \
+      "protocol_batch" \
+      "/dev/null" \
+      "$SCRIPT_DIR/expected/version.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --expect-fake-invocations 0 \
+      --version
+
+    run_stdin_case \
       "interactive_repl" \
       "protocol_batch" \
       "$SCRIPT_DIR/fixtures/interactive-input.lsp" \
@@ -838,13 +848,24 @@ run_interactive_cases() {
       "interactive_quit_quiet" \
       "protocol_batch" \
       "$SCRIPT_DIR/fixtures/interactive-quit-input.lsp" \
-      "$SCRIPT_DIR/expected/interactive_quit.stdout" \
+      "$SCRIPT_DIR/expected/interactive_quit_quiet.stdout" \
       "$SCRIPT_DIR/expected/empty.stderr" \
       0 \
       --env AUTOLISP_REMOTE_IO_MODE=on \
       --expect-fake-invocations 1 \
       --interactive \
       --quiet
+
+    run_stdin_case \
+      "interactive_load" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/fixtures/interactive-load-input.lsp" \
+      "$SCRIPT_DIR/expected/interactive_load.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --expect-fake-invocations 1 \
+      --interactive
   else
     run_stdin_case \
       "interactive_repl" \
