@@ -1,0 +1,44 @@
+#+TITLE: Manuel utilisateur
+#+AUTHOR: OpenAI
+#+LANGUAGE: fr
+#+OPTIONS: toc:2 num:t
+
+* Objet
+
+Ce document décrit l'API publique de la bibliothèque =misc=.
+
+* Chargement
+
+Pour charger la fonction =cat= :
+
+#+begin_src lisp
+(load "src/cat.lsp")
+#+end_src
+
+* API publique
+
+** =(cat arg)=
+
+Affiche le contenu d'un ou plusieurs fichiers texte, dans le style de la
+commande Unix =cat=.
+
+L'argument =arg= peut être :
+
+- une chaîne, pour afficher un seul fichier ;
+- une liste de chaînes, pour afficher plusieurs fichiers dans l'ordre.
+
+Exemples :
+
+#+begin_src lisp
+(cat "abc.txt")
+
+(cat '("abc.txt" "def.txt"))
+
+(cat '("abc.txt" "def.txt" "ghi.txt"))
+#+end_src
+
+Comportement :
+
+- chaque fichier est ouvert en lecture puis affiché ligne par ligne ;
+- si un fichier ne peut pas être ouvert, un message est affiché ;
+- la fonction retourne silencieusement avec =(princ)=.
