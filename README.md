@@ -26,10 +26,14 @@ Le dépôt utilise deux familles de repères:
 
 Il peut donc exister, en parallèle, une branche `version-1` ou `release-1.0` qui avance avec la série 1.0, et des tags immuables `v1.0.x` qui marquent les versions publiées.
 
+Pour éviter toute ambiguïté avec les branches, les anciens tags de suivi ont été renommés `tag-version-1` et `tag-release-1.0`.
+
 | Repère | Nature | Rôle |
 | --- | --- | --- |
 | `version-1` | branche | suit l'état courant de la série 1 |
 | `release-1.0` | branche | suit l'état courant de la branche de maintenance 1.0 |
+| `tag-version-1` | tag figé | tag de suivi associé à la branche `version-1` |
+| `tag-release-1.0` | tag figé | tag de suivi associé à la branche `release-1.0` |
 | `v1.0.0` | tag figé | premier jalon stable identifié pour la série 1.0 |
 | `v1.0.10` | tag figé | état actuel de référence de la série 1.0 dans ce dépôt |
 
