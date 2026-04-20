@@ -1,0 +1,12 @@
+(princ "Hello essai!")
+
+(princ)
+
+(setq *essai* '(value-of *essai*))
+
+(defun essai ()
+  (list 'in 'essai *essai*))
+
+(princ "Bye essai!")
+(princ)
+OK

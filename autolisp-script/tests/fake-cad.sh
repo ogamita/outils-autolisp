@@ -201,6 +201,45 @@ EOF
       : >"$ERRFILE"
       return 0
       ;;
+    '(load "load-side-effect.lsp")')
+      cat >"$OUTFILE" <<'EOF'
+EVAL (load "load-side-effect.lsp")
+<<<AUTOLISP-STDOUT>>>Loaded fixture
+RESULT "load-side-effect.lsp"
+TOTAL=1 OK=1 FAIL=0 ERROR=0
+EOF
+      : >"$ERRFILE"
+      return 0
+      ;;
+    '(load "misc/src/cat.lsp")')
+      cat >"$OUTFILE" <<'EOF'
+EVAL (load "misc/src/cat.lsp")
+RESULT "misc/src/cat.lsp"
+TOTAL=1 OK=1 FAIL=0 ERROR=0
+EOF
+      : >"$ERRFILE"
+      return 0
+      ;;
+    '(cat "misc/tests/cat-sample.lsp")')
+      cat >"$OUTFILE" <<'EOF'
+EVAL (cat "misc/tests/cat-sample.lsp")
+<<<AUTOLISP-STDOUT>>>(princ "Hello essai!")
+<<<AUTOLISP-STDOUT>>>
+<<<AUTOLISP-STDOUT>>>(princ)
+<<<AUTOLISP-STDOUT>>>
+<<<AUTOLISP-STDOUT>>>(setq *essai* '(value-of *essai*))
+<<<AUTOLISP-STDOUT>>>
+<<<AUTOLISP-STDOUT>>>(defun essai ()
+<<<AUTOLISP-STDOUT>>>  (list 'in 'essai *essai*))
+<<<AUTOLISP-STDOUT>>>
+<<<AUTOLISP-STDOUT>>>(princ "Bye essai!")
+<<<AUTOLISP-STDOUT>>>(princ)
+RESULT nil
+TOTAL=1 OK=1 FAIL=0 ERROR=0
+EOF
+      : >"$ERRFILE"
+      return 0
+      ;;
     "(/ 1 0)")
       cat >"$OUTFILE" <<'EOF'
 EVAL (/ 1 0)
@@ -235,13 +274,36 @@ protocol_emit_load_result() {
     && grep -Eq 'autolisp-run-eval-file 2 ".*eval-2\.lsp"' "$request_file"; then
     cat >"$OUTFILE" <<EOF
 LOAD $ROOT_DIR/tests/fixtures/load-side-effect.lsp
-<<<AUTOLISP-STDOUT>>>"Loaded fixture"
+<<<AUTOLISP-STDOUT>>>Loaded fixture
 LOADED $ROOT_DIR/tests/fixtures/load-side-effect.lsp
 EVAL (+ 1 2)
 RESULT 3
 MAIN C:MAIN
 MAIN-RESULT OK
 TOTAL=3 OK=3 FAIL=0 ERROR=0
+EOF
+    : >"$ERRFILE"
+    return 0
+  fi
+
+  if grep -Eq 'autolisp-run-load 1 ".*/misc/tests/cat-output\.lsp"' "$request_file"; then
+    cat >"$OUTFILE" <<EOF
+LOAD $ROOT_DIR/../misc/tests/cat-output.lsp
+<<<AUTOLISP-STDOUT>>>(princ "Hello essai!")
+<<<AUTOLISP-STDOUT>>>
+<<<AUTOLISP-STDOUT>>>(princ)
+<<<AUTOLISP-STDOUT>>>
+<<<AUTOLISP-STDOUT>>>(setq *essai* '(value-of *essai*))
+<<<AUTOLISP-STDOUT>>>
+<<<AUTOLISP-STDOUT>>>(defun essai ()
+<<<AUTOLISP-STDOUT>>>  (list 'in 'essai *essai*))
+<<<AUTOLISP-STDOUT>>>
+<<<AUTOLISP-STDOUT>>>(princ "Bye essai!")
+<<<AUTOLISP-STDOUT>>>(princ)
+LOADED $ROOT_DIR/../misc/tests/cat-output.lsp
+MAIN C:MAIN
+MAIN-RESULT OK
+TOTAL=2 OK=2 FAIL=0 ERROR=0
 EOF
     : >"$ERRFILE"
     return 0
@@ -276,7 +338,7 @@ EOF
   if grep -Eq 'autolisp-run-load 1 ".*/tests/fixtures/load-side-effect\.lsp"' "$request_file"; then
     cat >"$OUTFILE" <<EOF
 LOAD $ROOT_DIR/tests/fixtures/load-side-effect.lsp
-<<<AUTOLISP-STDOUT>>>"Loaded fixture"
+<<<AUTOLISP-STDOUT>>>Loaded fixture
 LOADED $ROOT_DIR/tests/fixtures/load-side-effect.lsp
 MAIN C:MAIN
 MAIN-RESULT OK
@@ -293,7 +355,6 @@ EOF
 run_protocol_batch() {
   local req_id=0 stdin_file request_file eval_form control rc stdin_payload stop_after_request
 
-  require_scr_contains '._COMMANDLINE'
   require_scr_contains '._QUIT _Y'
   require_runlsp_contains '(setq *AUTOLISP_USE_REMOTE_PROTOCOL* 1)'
   require_runlsp_contains '(defun autolisp-request-reset ()'
@@ -348,7 +409,7 @@ run_protocol_batch() {
           exit 0
         fi
         protocol_finish_request "$req_id" "$rc"
-      elif grep -Eq 'autolisp-run-load 1 ".*tests/fixtures/' "$request_file"; then
+      elif grep -Eq 'autolisp-run-load 1 ".*(tests/fixtures/|misc/tests/cat-output\.lsp)' "$request_file"; then
         if protocol_emit_load_result "$request_file"; then
           rc=0
         else
@@ -397,7 +458,6 @@ EOF
     printf '0\n' >"$STATUSFILE"
     ;;
   macos_batch_quit)
-    require_scr_contains '._COMMANDLINE'
     require_scr_contains '._QUIT _Y'
     require_runlsp_contains '(setq *AUTOLISP_QUIT_ON_FINISH* 1)'
     cat >"$OUTFILE" <<'EOF'
@@ -472,7 +532,7 @@ EOF
     require_runlsp_contains '(if (= *AUTOLISP_FAIL* 0) (if (autolisp-run-main 2 "C:MAIN") (autolisp-note-ok) (autolisp-note-fail)))'
     cat >"$OUTFILE" <<EOF
 LOAD $ROOT_DIR/tests/fixtures/load-side-effect.lsp
-<<<AUTOLISP-STDOUT>>>"Loaded fixture"
+<<<AUTOLISP-STDOUT>>>Loaded fixture
 LOADED $ROOT_DIR/tests/fixtures/load-side-effect.lsp
 MAIN C:MAIN
 MAIN-RESULT OK

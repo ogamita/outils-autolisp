@@ -14,6 +14,14 @@
 ;;;
 ;;; La fonction retourne silencieusement nil après l'affichage.
 (setq cat 'cat)
+(defun cat--emit-line (line / result)
+  (if (vl-catch-all-error-p
+        (setq result (vl-catch-all-apply 'autolisp-emit-user-line (list line))))
+    (progn
+      (princ line)
+      (terpri)))
+  nil)
+
 (defun cat (arg / paths path handle line)
   (cond
     ((= (type arg) 'STR)
@@ -31,8 +39,7 @@
           (progn
             (setq line (read-line handle))
             (while line
-              (princ line)
-              (terpri)
+              (cat--emit-line line)
               (setq line (read-line handle)))
             (close handle))
           (prompt (strcat "\ncat: impossible d'ouvrir " path))))

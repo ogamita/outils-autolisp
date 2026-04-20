@@ -1655,8 +1655,9 @@ render_stdout() {
     if (pending_output == "") return
     if (verbose_mode == "1") print "OUTPUT"
     n = split(pending_output, arr, "\n")
+    if (n > 0 && arr[n] == "") n--
     for (i = 1; i <= n; i++) {
-      if (arr[i] != "") print arr[i]
+      print arr[i]
     }
     pending_output = ""
   }
@@ -2131,6 +2132,13 @@ else
                                  (autolisp-stdout-text obj))))
   obj)
 
+(defun autolisp-emit-user-line (text)
+  (if *AUTOLISP_CAPTURE_STDOUT*
+    (autolisp-write-line *AUTOLISP_OUTFILE*
+                         (strcat (autolisp-stdout-prefix) text))
+    text)
+  text)
+
 ;; Fallback for BricsCAD builds where the project-specific LispFunction is not
 ;; loaded yet. The real EPURELIB.dll definition can still replace this later.
 (defun get_new_guid (/ stamp)
@@ -2440,6 +2448,28 @@ else
        (= (type (car form)) 'SYM)
        (= (strcase (vl-symbol-name (car form))) "LOAD")))
 
+(defun autolisp-normalize-princ-call (form / head)
+  (cond
+    ((atom form)
+     form)
+    ((and (listp form) form)
+     (setq head (car form))
+     (cond
+       ((and (= (type head) 'SYM)
+             (= (strcase (vl-symbol-name head)) "QUOTE"))
+        form)
+       ((and (= (type head) 'SYM)
+             (= (strcase (vl-symbol-name head)) "FUNCTION"))
+        form)
+       ((and (= (type head) 'SYM)
+             (= (strcase (vl-symbol-name head)) "PRINC")
+             (= (length form) 1))
+        (list 'autolisp-princ-newline))
+       (T
+        (cons head (mapcar 'autolisp-normalize-princ-call (cdr form))))))
+    (T
+     form)))
+
 (defun autolisp-eval-load-form (form)
   (cond
     ((and (= (length form) 2)
@@ -2456,6 +2486,7 @@ else
      (eval form))))
 
 (defun autolisp-eval-request-form (form)
+  (setq form (autolisp-normalize-princ-call form))
   (if (autolisp-load-form-p form)
     (autolisp-eval-load-form form)
     (eval form)))
@@ -2668,14 +2699,20 @@ EOLISP
   (autolisp-emit-user-out obj))
 
 (defun princ (obj)
-  (autolisp-emit-user-out obj))
+  (autolisp-emit-user-line (autolisp-str obj)))
 
 (defun prin1 (obj)
   (autolisp-emit-user-out obj))
 
+(defun autolisp-princ-newline ()
+  (if *AUTOLISP_CAPTURE_STDOUT*
+    (autolisp-emit-user-line "")
+    (terpri))
+  nil)
+
 (defun prompt (msg)
   (if msg
-    (autolisp-emit-user-out msg)
+    (autolisp-emit-user-line (autolisp-str msg))
     msg))
 
 (defun autolisp-slurp-lines (path / f line acc)
