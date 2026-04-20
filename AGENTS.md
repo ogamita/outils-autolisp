@@ -16,6 +16,7 @@ Règles pratiques:
 
 - `LF` pour les scripts shell, Python, PowerShell, les `Makefile` et les autres fichiers exécutés directement par des outils Unix.
 - `CRLF` pour les fichiers `*.lsp`, `*.lisp`, `*.org`, `*.scr` et, sauf exception technique explicite, pour les autres fichiers documentaires.
+- À chaque modification de `autolisp-script/autolisp` ou d'une dépendance runtime qu'il charge, incrémenter automatiquement `VERSION_PATCH` dans `autolisp-script/VERSION.TXT`.
 - Dans le code source, les identificateurs peuvent rester sans accent; en revanche, les commentaires et textes français doivent être accentués.
 - Pour un nouveau fichier documentaire, choisir `org-mode` par défaut sauf raison technique explicite.
 - Pour un fichier existant, on peut ajuster l'encodage et les fins de ligne pour respecter ces conventions, sans changer son format.

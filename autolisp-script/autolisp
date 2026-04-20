@@ -2319,10 +2319,20 @@ else
     (eval onfailure)
     onfailure))
 
-(defun autolisp-source-resolve-load-path (path / found)
+(defun autolisp-source-resolve-load-path (path / found home)
   (setq found (findfile path))
   (if (not found)
     (setq found (findfile (strcat path ".lsp"))))
+  (if (not found)
+    (if (and (> (strlen path) 1)
+             (= (substr path 1 2) "~/"))
+      (progn
+        (setq home (getenv "HOME"))
+        (if home
+          (progn
+            (setq found (findfile (strcat home (substr path 2))))
+            (if (not found)
+              (setq found (findfile (strcat home (substr path 2) ".lsp")))))))))
   found)
 
 (defun autolisp-source-load-core-impl (path has-onfailure onfailure / resolved f line line-no form-text form-start-line result form-read defun-name eval-result capture-old)
