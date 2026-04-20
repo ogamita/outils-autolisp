@@ -17,6 +17,30 @@ Cette semaine, le dépôt a évolué sur quatre axes principaux:
 - amélioration importante de `autolisp-script`, en particulier pour BricsCAD sur macOS et pour le mode interactif avec fake CAD;
 - mise à jour des `Makefile` racine et sous-projets pour mieux séparer tests, benchmarks et génération de documentation.
 
+## Tags et branches
+
+Le dépôt utilise deux familles de repères:
+
+- `release-1.0` et `version-1` désignent la branche qui suit la dernière version 1.0 disponible;
+- `vM.n.p` désigne un tag figé, associé à une version précise et non modifié après coup.
+
+Il peut donc exister, en parallèle, une branche `version-1` ou `release-1.0` qui avance avec la série 1.0, et des tags immuables `v1.0.x` qui marquent les versions publiées.
+
+| Repère | Nature | Rôle |
+| --- | --- | --- |
+| `version-1` | branche | suit l'état courant de la série 1 |
+| `release-1.0` | branche | suit l'état courant de la branche de maintenance 1.0 |
+| `v1.0.0` | tag figé | premier jalon stable identifié pour la série 1.0 |
+| `v1.0.10` | tag figé | état actuel de référence de la série 1.0 dans ce dépôt |
+
+### Jalons 1.0
+
+Le tableau ci-dessous résume les changements marquants entre les tags actuellement présents. Il s'agit d'un panorama des évolutions majeures de la série 1.0, pas d'un changelog exhaustif ligne par ligne.
+
+| De | Vers | Changement marquant |
+| --- | --- | --- |
+| `v1.0.0` | `v1.0.10` | Le dépôt est passé d'une base initiale à un `autolisp-script` bien plus complet: ajout de `misc/src/cat.lsp`, support de `--epure`, unification des modes macOS, amélioration des chemins de chargement BricsCAD, ajout du reporting de version, correction du chargement AutoLISP, capture fiable de `princ`, puis gestion correcte de `(princ)` sans argument et stabilisation des sorties interactives. |
+
 ## Architecture de chargement
 
 Les fichiers `loader.lsp` jouent le rôle d'un chargeur déclaratif minimal.
