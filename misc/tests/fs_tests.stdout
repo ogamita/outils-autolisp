@@ -1,0 +1,22 @@
+PASS normalize-dot
+PASS normalize-parent
+PASS normalize-double
+PASS normalize-backslash
+PASS normalize-empty
+PASS normalize-root
+PASS absolute-unix
+PASS absolute-windows
+PASS relative
+PASS empty-relative
+PASS join-trailing
+PASS join-no-trailing
+PASS join-empty-base
+PASS split-basic
+PASS split-one
+PASS resolve-relative
+PASS resolve-absolute
+PASS resolve-parent
+PASS resolve-dot
+PASS cd-root-absolute
+TESTS OK
+"@ROOT_DIR@/../misc/tests/fs-tests.lsp"

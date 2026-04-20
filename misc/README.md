@@ -6,6 +6,8 @@ Small miscellaneous AutoLISP library.
 Contents
 
 - `src/cat.lsp`: Unix-like `cat` helper for printing one file or a list of files.
+- `src/fs.lsp`: Unix-like `pwd`, `cd`, `ls` helpers sharing a virtual
+  current directory.
 - `docs/user-manual.org`: user-facing documentation for the public API.
 - `misc.prj`: AutoLISP project definition for the `misc` library sources.
 
@@ -16,6 +18,13 @@ Usage
 
 (cat "fic")
 (cat '("fic1" "fic2" "ficN"))
+
+(load "misc/src/fs.lsp")
+
+(pwd)
+(cd "docs")
+(ls nil)
+(ls ':l)
 ```
 
 Project file

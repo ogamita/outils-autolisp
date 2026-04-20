@@ -3,7 +3,8 @@
   :NAME
   misc
   :OWN-LIST
-  ("src/cat")
+  ("src/cat"
+   "src/fs")
   :FAS-DIRECTORY
   nil
   :TMP-DIRECTORY

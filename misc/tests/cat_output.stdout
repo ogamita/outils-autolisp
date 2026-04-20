@@ -9,4 +9,4 @@
 
 (princ "Bye essai!")
 (princ)
-OK
+"@ROOT_DIR@/../misc/tests/cat-output.lsp"

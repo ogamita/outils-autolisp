@@ -15,6 +15,12 @@ Pour charger la fonction =cat= :
 (load "src/cat.lsp")
 #+end_src
 
+Pour charger les utilitaires =pwd=, =cd= et =ls= :
+
+#+begin_src lisp
+(load "src/fs.lsp")
+#+end_src
+
 * API publique
 
 ** =(cat arg)=
@@ -42,3 +48,63 @@ Comportement :
 - chaque fichier est ouvert en lecture puis affiché ligne par ligne ;
 - si un fichier ne peut pas être ouvert, un message est affiché ;
 - la fonction retourne silencieusement avec =(princ)=.
+
+** Répertoire courant virtuel
+
+Les fonctions =pwd=, =cd= et =ls= (définies dans =src/fs.lsp=) partagent
+un *répertoire courant virtuel* stocké dans la variable globale
+=*misc-cwd*=. Ce cwd virtuel est initialisé au premier appel à partir
+de la variable d'environnement =PWD= (Unix/macOS) ou =CD= (Windows),
+ou à « =.= » en dernier recours.
+
+Ce cwd virtuel n'est utilisé que par =pwd=, =cd= et =ls= ; il n'affecte
+pas les fonctions qui ouvrent des fichiers (=open=, =load=, =cat=,
+etc.), qui continuent d'utiliser le répertoire courant réel du
+processus.
+
+** =(pwd)=
+
+Affiche le chemin du répertoire courant virtuel et le renvoie sous
+forme de chaîne.
+
+#+begin_src lisp
+(pwd)
+#+end_src
+
+** =(cd path)=
+
+Change le répertoire courant virtuel. L'argument =path= est une chaîne
+représentant un chemin absolu ou relatif au cwd courant. Les segments
+=.= et =..= sont normalisés et les antislashs Windows sont convertis
+en =/=.
+
+- Si le chemin résolu existe et désigne un répertoire, =*misc-cwd*= est
+  mis à jour et la fonction retourne la nouvelle valeur.
+- Sinon un message d'erreur est affiché via =prompt= et =cd= retourne
+  =nil=.
+
+#+begin_src lisp
+(cd "docs")
+(cd "..")
+(cd "/tmp")
+#+end_src
+
+** =(ls flag)=
+
+Liste le contenu du répertoire courant virtuel.
+
+- =(ls nil)= : listing court, un nom par ligne, trié.
+- =(ls ':l)= ou =(ls ':long)= : listing détaillé avec, pour chaque
+  entrée, le type (=d= pour un répertoire, =-= pour un fichier), la
+  taille en octets, la date et heure de dernière modification, puis le
+  nom.
+
+Les entrées =.= et =..= sont omises. AutoLISP n'offre pas d'arguments
+optionnels : l'appel =(ls)= sans argument est invalide ; utilisez
+=(ls nil)= pour la forme courte.
+
+#+begin_src lisp
+(ls nil)
+(ls ':l)
+(ls ':long)
+#+end_src
