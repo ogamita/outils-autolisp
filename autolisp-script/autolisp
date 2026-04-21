@@ -2602,7 +2602,7 @@ else
                   (autolisp-log-err (strcat "ERROR eval " form-text ": " *AUTOLISP_ERROR_MSG*))
                   (autolisp-mark-end "EXPR" idx 1))
                 (progn
-                  (autolisp-log-out (strcat "RESULT " (autolisp-str r)))
+                  (autolisp-log-out (strcat "RESULT " (autolisp-stdout-text r)))
                   (autolisp-mark-end "EXPR" idx 0)
                   (setq ok T)))))))))))
   ok)
@@ -2642,7 +2642,7 @@ else
               (autolisp-mark-end "MAIN" idx 1)
               nil)
             (progn
-              (autolisp-log-out (strcat "MAIN-RESULT " (autolisp-str r)))
+              (autolisp-log-out (strcat "MAIN-RESULT " (autolisp-stdout-text r)))
               (autolisp-mark-end "MAIN" idx 0)
               T)))))))))
 
@@ -2734,6 +2734,7 @@ EOLISP
     cat <<'EOLISP'
 ;; Mirror interactive output to OUTFILE so results do not depend on CAD session logs.
 (defun print (obj)
+  (autolisp-princ-newline)
   (autolisp-emit-user-out obj))
 
 (defun princ (obj)
@@ -2845,7 +2846,7 @@ EOLISP
                     (autolisp-log-err (strcat "ERROR eval " form-text ": " (vl-catch-all-error-message r)))
                     (autolisp-note-fail))
                   (progn
-                    (autolisp-log-out (strcat "RESULT " (autolisp-str r)))
+                    (autolisp-log-out (strcat "RESULT " (autolisp-stdout-text r)))
                     (autolisp-note-ok)))
                 (autolisp-log-out (autolisp-summary-line))
                 (autolisp-set-status-text (strcat "READY " req-id))

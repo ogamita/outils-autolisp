@@ -8,6 +8,8 @@ Scripts PowerShell de remplacement pour les cibles `make` sous Windows, quand `m
 - `test-fake.ps1` : exécute les tests avec le faux backend CAD
 - `test-bricscad.ps1` : exécute les tests BricsCAD
 - `test-autocad.ps1` : exécute les tests AutoCAD
+- `debug-bricscad.ps1` : lance un test BricsCAD avec un workdir conservé
+- `collect-bricscad-debug.ps1` : copie le dernier workdir dans `/Volumes/ES71E/spool`
 
 ## Environnement partagé
 

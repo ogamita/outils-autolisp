@@ -1,10 +1,11 @@
-autolisp 1.0.21
+autolisp 1.0.24
 STDOUT
 STDERR
 RESULT
 3
 
 STDOUT
+
 "Hi"
 STDERR
 RESULT

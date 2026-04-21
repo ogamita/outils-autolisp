@@ -616,6 +616,15 @@ run_standard_cases() {
       -x '(progn (print (quote "Hello World")) (print "Hiya!"))'
 
     run_case \
+      "interactive_string" \
+      "interactive_expr" \
+      "$SCRIPT_DIR/fixtures/interactive-string-input.lsp" \
+      "$SCRIPT_DIR/expected/interactive_string.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      -x '"foo"'
+
+    run_case \
       "eval_no_output" \
       "eval_no_output" \
       "$SCRIPT_DIR/expected/eval_no_output.stdout" \
@@ -665,7 +674,7 @@ run_standard_cases() {
     run_case \
       "macos_batch_protocol_load" \
       "protocol_batch" \
-      "$SCRIPT_DIR/expected/load_side_effect.stdout" \
+      "$SCRIPT_DIR/expected/load_side_effect_protocol.stdout" \
       "$SCRIPT_DIR/expected/empty.stderr" \
       0 \
       --env AUTOLISP_OS=Darwin \
@@ -703,7 +712,7 @@ run_standard_cases() {
     run_case \
       "load_main_default" \
       "protocol_batch" \
-      "$SCRIPT_DIR/expected/load_main_default.stdout" \
+      "$SCRIPT_DIR/expected/load_main_default_protocol.stdout" \
       "$SCRIPT_DIR/expected/empty.stderr" \
       0 \
       --env AUTOLISP_OS=Darwin \
@@ -730,7 +739,7 @@ run_standard_cases() {
     run_case \
       "load_main_custom" \
       "protocol_batch" \
-      "$SCRIPT_DIR/expected/load_main_custom.stdout" \
+      "$SCRIPT_DIR/expected/load_main_custom_protocol.stdout" \
       "$SCRIPT_DIR/expected/empty.stderr" \
       0 \
       --env AUTOLISP_OS=Darwin \
@@ -743,7 +752,7 @@ run_standard_cases() {
     run_case \
       "load_side_effect" \
       "protocol_batch" \
-      "$SCRIPT_DIR/expected/load_side_effect.stdout" \
+      "$SCRIPT_DIR/expected/load_side_effect_protocol.stdout" \
       "$SCRIPT_DIR/expected/empty.stderr" \
       0 \
       --env AUTOLISP_OS=Darwin \
@@ -755,7 +764,7 @@ run_standard_cases() {
     run_case \
       "load_then_eval" \
       "protocol_batch" \
-      "$SCRIPT_DIR/expected/load_then_eval.stdout" \
+      "$SCRIPT_DIR/expected/load_then_eval_protocol.stdout" \
       "$SCRIPT_DIR/expected/empty.stderr" \
       0 \
       --env AUTOLISP_OS=Darwin \
@@ -818,7 +827,29 @@ run_interactive_cases() {
       "interactive_repl" \
       "protocol_batch" \
       "$SCRIPT_DIR/fixtures/interactive-input.lsp" \
-      "$SCRIPT_DIR/expected/interactive_repl.stdout" \
+      "$SCRIPT_DIR/expected/interactive_repl_protocol.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --expect-fake-invocations 1 \
+      --interactive
+
+    run_stdin_case \
+      "interactive_string" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/fixtures/interactive-string-input.lsp" \
+      "$SCRIPT_DIR/expected/interactive_string.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --expect-fake-invocations 1 \
+      --interactive
+
+    run_stdin_case \
+      "interactive_print" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/fixtures/interactive-print-input.lsp" \
+      "$SCRIPT_DIR/expected/interactive_print.stdout" \
       "$SCRIPT_DIR/expected/empty.stderr" \
       0 \
       --env AUTOLISP_REMOTE_IO_MODE=on \
@@ -901,6 +932,15 @@ run_interactive_cases() {
       "$SCRIPT_DIR/expected/empty.stderr" \
       0 \
       --interactive
+
+    run_stdin_case \
+      "interactive_print" \
+      "interactive_expr" \
+      "$SCRIPT_DIR/fixtures/interactive-print-input.lsp" \
+      "$SCRIPT_DIR/expected/interactive_print.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --interactive
   fi
 
   if [[ "$USE_BRICSCAD_MACOS_PROTOCOL_TESTS" -eq 1 ]]; then
@@ -908,7 +948,7 @@ run_interactive_cases() {
       "interactive_batch_repl" \
       "protocol_batch" \
       "$SCRIPT_DIR/fixtures/interactive-input.lsp" \
-      "$SCRIPT_DIR/expected/interactive_repl.stdout" \
+      "$SCRIPT_DIR/expected/interactive_repl_protocol.stdout" \
       "$SCRIPT_DIR/expected/empty.stderr" \
       0 \
       --env AUTOLISP_OS=Darwin \

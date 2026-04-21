@@ -205,6 +205,15 @@ EOF
       : >"$ERRFILE"
       return 0
       ;;
+    "\"foo\"")
+      cat >"$OUTFILE" <<'EOF'
+EVAL "foo"
+RESULT "foo"
+TOTAL=1 OK=1 FAIL=0 ERROR=0
+EOF
+      : >"$ERRFILE"
+      return 0
+      ;;
     "(princ)")
       cat >"$OUTFILE" <<'EOF'
 EVAL (princ)
@@ -230,6 +239,7 @@ EOF
 EVAL (progn
   (print "Hi")
   (* 2 5))
+<<<AUTOLISP-STDOUT>>>
 <<<AUTOLISP-STDOUT>>>"Hi"
 RESULT 10
 TOTAL=1 OK=1 FAIL=0 ERROR=0
@@ -240,9 +250,22 @@ EOF
     "(progn (print (quote \"Hello World\")) (print \"Hiya!\"))")
       cat >"$OUTFILE" <<'EOF'
 EVAL (progn (print (quote "Hello World")) (print "Hiya!"))
+<<<AUTOLISP-STDOUT>>>
 <<<AUTOLISP-STDOUT>>>"Hello World"
+<<<AUTOLISP-STDOUT>>>
 <<<AUTOLISP-STDOUT>>>"Hiya!"
-RESULT Hiya!
+RESULT "Hiya!"
+TOTAL=1 OK=1 FAIL=0 ERROR=0
+EOF
+      : >"$ERRFILE"
+      return 0
+      ;;
+    "(print \"foo\")")
+      cat >"$OUTFILE" <<'EOF'
+EVAL (print "foo")
+<<<AUTOLISP-STDOUT>>>
+<<<AUTOLISP-STDOUT>>>"foo"
+RESULT "foo"
 TOTAL=1 OK=1 FAIL=0 ERROR=0
 EOF
       : >"$ERRFILE"
@@ -400,9 +423,11 @@ case "$SCENARIO" in
     require_runlsp_contains '(defun autolisp-stdout-prefix ()'
     cat >"$OUTFILE" <<'EOF'
 EVAL (progn (print (quote "Hello World")) (print "Hiya!"))
+<<<AUTOLISP-STDOUT>>>
 <<<AUTOLISP-STDOUT>>>"Hello World"
+<<<AUTOLISP-STDOUT>>>
 <<<AUTOLISP-STDOUT>>>"Hiya!"
-RESULT Hiya!
+RESULT "Hiya!"
 TOTAL=1 OK=1 FAIL=0 ERROR=0
 EOF
     : >"$ERRFILE"
@@ -520,8 +545,20 @@ EOF
 EVAL (progn
   (print "Hi")
   (* 2 5))
+<<<AUTOLISP-STDOUT>>>
 <<<AUTOLISP-STDOUT>>>"Hi"
 RESULT 10
+TOTAL=1 OK=1 FAIL=0 ERROR=0
+EOF
+        : >"$ERRFILE"
+        printf '0\n' >"$STATUSFILE"
+        ;;
+      "(print \"foo\")")
+        cat >"$OUTFILE" <<'EOF'
+EVAL (print "foo")
+<<<AUTOLISP-STDOUT>>>
+<<<AUTOLISP-STDOUT>>>"foo"
+RESULT "foo"
 TOTAL=1 OK=1 FAIL=0 ERROR=0
 EOF
         : >"$ERRFILE"
@@ -558,6 +595,16 @@ EOF
       req_id="$(extract_req_id)"
       form="$(extract_input_form)"
       case "$form" in
+        "\"foo\"")
+          cat >"$OUTFILE" <<'EOF'
+EVAL "foo"
+RESULT "foo"
+TOTAL=1 OK=1 FAIL=0 ERROR=0
+EOF
+          : >"$ERRFILE"
+          rm -f "$INPFILE"
+          printf 'READY %s\n' "$req_id" >"$STATUSFILE"
+          ;;
         "(+ 1 2)")
           cat >"$OUTFILE" <<'EOF'
 EVAL (+ 1 2)
