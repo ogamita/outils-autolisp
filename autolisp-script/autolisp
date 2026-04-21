@@ -17,9 +17,9 @@ autolisp_version_string() {
 usage() {
   cat <<'EOU'
 Usage:
-  autolisp-v4 [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--mode automation|batch] [--backend attach|launch] [--bricscad-macos-profile NAME] [--epure] { source.lsp | -x expression }... [--dwg file.dwg] [--main C:MAIN]
-  autolisp-v4 [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--mode automation|batch] [--backend attach|launch] [--bricscad-macos-profile NAME] [--epure] -i|--interactive [--dwg file.dwg]
-  autolisp-v4 --version
+  autolisp [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--mode automation|batch] [--backend attach|launch] [--bricscad-macos-profile NAME] [--epure] { source.lsp | -x expression }... [--dwg file.dwg] [--main C:MAIN]
+  autolisp [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--mode automation|batch] [--backend attach|launch] [--bricscad-macos-profile NAME] [--epure] -i|--interactive [--dwg file.dwg]
+  autolisp --version
 
 Examples:
   autolisp test.lsp
@@ -2313,6 +2313,32 @@ else
     (cadr tokens)
     nil))
 
+(defun autolisp-source-trim-leading-junk (text / idx len ch in-comment done)
+  ;; READ on BricsCAD can return NIL when the input string starts with
+  ;; comment-only lines. Strip leading spaces/comments before READ so the
+  ;; first real top-level form is what gets parsed.
+  (setq idx 1)
+  (setq len (strlen text))
+  (setq in-comment nil)
+  (setq done nil)
+  (while (and (<= idx len) (not done))
+    (setq ch (substr text idx 1))
+    (cond
+      (in-comment
+       (if (= ch "\n")
+         (setq in-comment nil))
+       (setq idx (+ idx 1)))
+      ((= ch ";")
+       (setq in-comment T)
+       (setq idx (+ idx 1)))
+      ((member ch '(" " "\t" "\r" "\n"))
+       (setq idx (+ idx 1)))
+      (T
+       (setq done T))))
+  (if (> idx len)
+    ""
+    (substr text idx)))
+
 (defun autolisp-source-stack-text (/ paths acc)
   (setq paths (reverse *AUTOLISP_LOAD_STACK*))
   (setq acc "")
@@ -2416,7 +2442,9 @@ else
                                   (autolisp-source-leading-defun-name form-text)))
           ((= *AUTOLISP_SOURCE_SCAN_STATE* 'complete)
            (setq defun-name (autolisp-source-leading-defun-name form-text))
-           (setq form-read (vl-catch-all-apply 'read (list form-text)))
+           (setq form-read
+                 (vl-catch-all-apply 'read
+                                     (list (autolisp-source-trim-leading-junk form-text))))
            (if (vl-catch-all-error-p form-read)
              (progn
                (close f)
@@ -2428,6 +2456,9 @@ else
                                       form-start-line
                                       defun-name))
              (progn
+               (if (and (boundp '*load-verbose*) *load-verbose*)
+                 (autolisp-emit-user-line
+                   (strcat "LOADFORM " (autolisp-str form-read))))
                (setq capture-old *AUTOLISP_CAPTURE_STDOUT*)
                (setq *AUTOLISP_CAPTURE_STDOUT* T)
                (setq eval-result (vl-catch-all-apply 'autolisp-eval-request-form (list form-read)))
@@ -2672,6 +2703,7 @@ else
 (setq *AUTOLISP_ERROR* 0)
 (setq *AUTOLISP_CAPTURE_STDOUT* nil)
 (setq *AUTOLISP_ERROR_MSG* nil)
+(setq *load-verbose* nil)
 
 (defun autolisp-note-ok ()
   (setq *AUTOLISP_TOTAL* (+ *AUTOLISP_TOTAL* 1))
@@ -2839,7 +2871,7 @@ EOLISP
               (progn
                 (autolisp-log-out (strcat "EVAL " form-text))
                 (setq *AUTOLISP_CAPTURE_STDOUT* T)
-                (setq r (vl-catch-all-apply 'eval (list (autolisp-normalize-princ-call form-read))))
+                (setq r (vl-catch-all-apply 'autolisp-eval-request-form (list form-read)))
                 (setq *AUTOLISP_CAPTURE_STDOUT* nil)
                 (if (vl-catch-all-error-p r)
                   (progn
