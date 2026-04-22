@@ -2088,6 +2088,24 @@ else
       (write-line text f)
       (close f))))
 
+(defun autolisp-write-prefixed-text (path prefix text / f idx len ch acc)
+  (setq f (open path "a"))
+  (if f
+    (progn
+      (setq idx 1)
+      (setq len (strlen text))
+      (setq acc "")
+      (while (<= idx len)
+        (setq ch (substr text idx 1))
+        (if (= ch "\n")
+          (progn
+            (write-line (strcat prefix acc) f)
+            (setq acc ""))
+          (setq acc (strcat acc ch)))
+        (setq idx (+ idx 1)))
+      (write-line (strcat prefix acc) f)
+      (close f))))
+
 (defun autolisp-reset-file (path / f)
   (setq f (open path "w"))
   (if f (close f)))
@@ -2197,15 +2215,16 @@ else
 
 (defun autolisp-emit-user-out (obj)
   (if *AUTOLISP_CAPTURE_STDOUT*
-    (autolisp-write-line *AUTOLISP_OUTFILE*
-                         (strcat (autolisp-stdout-prefix)
-                                 (autolisp-stdout-text obj))))
+    (autolisp-write-prefixed-text *AUTOLISP_OUTFILE*
+                                  (autolisp-stdout-prefix)
+                                  (autolisp-stdout-text obj)))
   obj)
 
 (defun autolisp-emit-user-line (text)
   (if *AUTOLISP_CAPTURE_STDOUT*
-    (autolisp-write-line *AUTOLISP_OUTFILE*
-                         (strcat (autolisp-stdout-prefix) text))
+    (autolisp-write-prefixed-text *AUTOLISP_OUTFILE*
+                                  (autolisp-stdout-prefix)
+                                  text)
     text)
   text)
 
