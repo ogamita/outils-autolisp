@@ -21,6 +21,12 @@ Pour charger les utilitaires =pwd=, =cd= et =ls= :
 (load "src/fs.lsp")
 #+end_src
 
+Pour charger la fonction =format= :
+
+#+begin_src lisp
+(load "src/format.lsp")
+#+end_src
+
 * API publique
 
 ** =(cat arg)=
@@ -107,4 +113,44 @@ optionnels : l'appel =(ls)= sans argument est invalide ; utilisez
 (ls nil)
 (ls ':l)
 (ls ':long)
+#+end_src
+
+** =(format control-string arguments)=
+
+Construit et renvoie une chaîne en interprétant =control-string= selon
+un sous-ensemble de la syntaxe de Common Lisp =format=.
+
+L'argument =arguments= est une liste d'arguments consommés par les
+directives du format.
+
+Directives publiques prises en charge :
+
+- =~A=, =~wA=, =~VA= : impression via =vl-princ-to-string=, alignée à
+  gauche ;
+- =~S=, =~wS=, =~VS= : impression via =vl-prin1-to-string=, alignée à
+  gauche ;
+- =~D=, =~B=, =~O=, =~X= avec largeur optionnelle ;
+- pour =~A= et =~S=, le 4e paramètre peut fournir un caractère de
+  remplissage, par exemple =~10,,,'-A= ;
+- pour =~D=, =~B=, =~O= et =~X=, le 2e paramètre peut fournir un
+  caractère de remplissage, par exemple =~10,'#X= ;
+- =~F= et =~:F= avec largeur et précision optionnelles ;
+- =~C= et =~@C= ;
+- =~%=, =~&= et =~~=, avec répétition numérique ou via =V= ;
+- =~{...~}=, =~:{...~}=, =~@{...~}= et =~:@{...~}= pour l'itération.
+
+Exemples :
+
+#+begin_src lisp
+(format "~A = ~D" '("pommes" 12))
+;; => "pommes = 12"
+
+(format "~10,,,'-A" '("hello"))
+;; => "hello-----"
+
+(format "~10,'#X" '(42))
+;; => "########2A"
+
+(format "~{| ~10A | ~10D~%~}"
+        '(("apple" 12 "orange" 423 "strawberry" 1200)))
 #+end_src

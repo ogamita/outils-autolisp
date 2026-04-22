@@ -1,0 +1,135 @@
+* Specifications Miscellaneous Autolisp Tools
+** Format
+
+(format control-string (list arguments…)) -> string
+
+control-string is a subset of the Common Lisp format control string syntax.
+
+The generic syntax for a control string specifier is:
+#+begin_src 
+control-string-specifier ::= "~" [ [parameter]  { "," [parameter] } ] { "@" | ":" } specifier .
+parameter ::= integer | "V" | "'" character .
+specifier ::= letter | "%" |  "&" | "~" | "$"
+            | "{" | "}" | "?" | "[" | "]" | ";" | "^" | "*"
+            | "<" | ">" | "_" | "/" identifier "/" | newline .
+#+end_src
+
+specifier letters  and "V" in parameter are case insensitive.
+(But the character after "'" in parameter is case sensitive (preserved)).
+identifier is case insensitive.
+
+You may implement this syntax that cover the whole gamut for the
+parsing of the specifiers, but in the semantic phase,  specifiers and
+parameters not specified in the following table should signal an
+error.
+
+
+
+| Syntax   | Meaning                                  | Notes                                                                                                                                                                                                                             |
+|----------+------------------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| ~A       | vl-princ-to-string                       | any object                                                                                                                                                                                                                        |
+| ~wA      | " w: integer, total width                | " ~A left-aligns and pads with spaces; width may be bigger than w                                                                                                                                                                 |
+| ~VA      | "                                        | " takes an integer argument (before the object) for the width                                                                                                                                                                     |
+| ~S       | vl-prin1-to-string                       | any object                                                                                                                                                                                                                        |
+| ~wS      | " w: integer, total width                | " ~S left-aligns and pads with spaces; width may be bigger than w                                                                                                                                                                 |
+| ~VS      | "                                        | " takes an integer argument (before the object) for the width                                                                                                                                                                     |
+| ~D       | itoa                                     | takes a number, convert to int                                                                                                                                                                                                    |
+| ~wD      | " w: integer, total width                | " ~D right-aligns and pads with spaces; width may be bigger than w                                                                                                                                                                |
+| ~B       | print integer argument in binary         | takes a number, convert to int                                                                                                                                                                                                    |
+| ~wB      | " w: integer, total width                | " ~B right-aligns and pads with spaces; width may be bigger than w                                                                                                                                                                |
+| ~O       | print integer argument in octal          | takes a number, convert to int                                                                                                                                                                                                    |
+| ~wO      | " w: integer, total width                | " ~O right-aligns and pads with spaces; width may be bigger than w                                                                                                                                                                |
+| ~X       | print integer argument in hexadecimal    | takes a number, convert to int                                                                                                                                                                                                    |
+| ~wX      | " w: integer, total width                | " ~X right-aligns and pads with spaces; width may be bigger than w                                                                                                                                                                |
+|          |                                          |                                                                                                                                                                                                                                   |
+| ~F       | rtos                                     | takes a number, convert to float                                                                                                                                                                                                  |
+| ~W,dF    | " w: integer, total width                | "                                                                                                                                                                                                                                 |
+|          | " d: integer, number of decimals         | "                                                                                                                                                                                                                                 |
+| ~:F      | angtos                                   | takes a number, convert to float                                                                                                                                                                                                  |
+| ~W,d:F   | " w: integer, total width                | "                                                                                                                                                                                                                                 |
+|          | " d: integer, number of decimals         | "                                                                                                                                                                                                                                 |
+| ~C       | prints a single character                | takes only a 1-character string. If string length>1, prints only the 1st character. if "" or non-string, error.                                                                                                                   |
+| ~@C      | prints a single character prefixed by #\ | takes only a 1-character string. If string length>1, prints only the 1st character. if "" or non-string, error.                                                                                                                   |
+| ~%       | terpri                                   |                                                                                                                                                                                                                                   |
+| ~n%      | " n: integer, number of newlines         |                                                                                                                                                                                                                                   |
+| ~V%      | "                                        | takes an integer argument for the number of newlines.                                                                                                                                                                             |
+| ~&       | terpri                                   | actually outputs a newline only if we're not at column 1 already.                                                                                                                                                                 |
+| ~n&      | " n: integer, number of newlines         | actually outputs n-1 newlines if we're already at column 1.                                                                                                                                                                       |
+| ~V&      | "                                        | takes an integer argument for the number of newlines.                                                                                                                                                                             |
+| ~~       | (princ "~")                              |                                                                                                                                                                                                                                   |
+| ~n~      | n: integer, number of tildes             | n times (princ "~")                                                                                                                                                                                                               |
+| ~V~      |                                          | takes an integer argument for the number of tildes                                                                                                                                                                                |
+| ~n{s~}   | iteration                                | takes one argument that should be a list of arguments, processed according to the control string s, possibly several per iteration as specified by the control string s. iterates at most n times or until the list is processed. |
+| ~n:{s~}  | iteration                                | takes one argument that should be a list of list of arguments, each sublilst processed according to the control string s. iterates at most n times or until the list is processed.                                                |
+| ~n@{s~}  | iteration                                | takes arguments (possibly several per iteration as specified by the control string s). iterates at most n times is specified or until the end of arguments.                                                                       |
+| ~n:@{s~} | iteration                                | takes at most n arguments that are list of arguments used by the control string s. iterates at most n times is specified or until the end of arguments.                                                                           |
+|          |                                          |                                                                                                                                                                                                                                   |
+
+More details if needed can be seen at https://www.lispworks.com/documentation/HyperSpec/Body/22_c.htm and subpages.
+(But not the full CL format specifier syntax and semantics need to be implemented, only what is specified in this table.
+
+*** padding
+
+~D ~B ~O ~X may take a second parameter, a padchar.
+~A ~S take additionnal parameters, the padchar being the 4th (parameters are actually optional between commas).
+
+(and
+ (equal (format "~10,,,'-A" '("hello"))
+        "hello-----")
+ (equal (format "~10,,,'-S" '("hello"))
+        "\"hello\"---")
+ (equal (format "~10,'-D" '(42))
+        "--------42")
+ (equal (format "~10,'#D" '(42))
+        "########42")
+ (equal (format "~10,'#O" '(42))
+        "########52")
+ (equal (format "~10,'#X" '(42))
+        "########2A")
+ (equal (format "~16,'#B" '(42))
+        "##########101010")
+ (equal (format "~16,'#B" '(-42))
+        "#########-101010")
+ (equal (format "~16,'#X" '(-42))
+        "#############-2A")
+ (equal (format "~16,'#O" '(-42))
+        "#############-52")
+ (equal (format "~16,'#D" '(-42))
+        "#############-42"))
+        
+
+
+*** Example of expected results
+
+#+begin_src lisp
+
+(progn
+  (princ (format "~~A    ~A<~%~~10A  ~10A<~%~~VA   ~VA<~%~~S    ~S<~%~~10S  ~10S<~%~~VS   ~VS<~%"
+                 '("Hello" "World" 20 "Hello World!"
+                   "Hello" "World" 20 "Hello World!")))
+ (princ (format "  {~%~{| ~10A | ~10D~%~}~%" '(("apple" 12 "orange" 423 "strawberry" 1200))))
+ (princ (format " :{~%~:{| ~10A | ~10D~%~}~%" '((("apple" 12 ripe) ("orange" 423 green) ("strawberry" 1200 bad)))))
+ (princ (format " @{~%~@{| ~10A | ~10D~%~}~%" '("apple" 12 "orange" 423 "strawberry" 1200)))
+ (princ (format ":@{~%~:@{| ~10A | ~10D~%~}" '(("apple" 12 ripe) ("orange" 423 green) ("strawberry" 1200 bad)))))
+  
+autolisp> (format "~{| ~10A | ~10D~%~}" '(("apple" 12 "orange" 423 "strawberry" 1200)))
+"| apple      |         12
+| orange     |        423
+| strawberry |       1200
+"
+autolisp> (format "~:{| ~10A | ~10D~%~}" '((("apple" 12 ripe) ("orange" 423 green) ("strawberry" 1200 bad))))
+"| apple      |         12
+| orange     |        423
+| strawberry |       1200
+"
+autolisp> (format "~@{| ~10A | ~10D~%~}" '("apple" 12 "orange" 423 "strawberry" 1200))
+"| apple      |         12
+| orange     |        423
+| strawberry |       1200
+"
+autolisp> (format "~:@{| ~10A | ~10D~%~}" '(("apple" 12 ripe) ("orange" 423 green) ("strawberry" 1200 bad)))
+"| apple      |         12
+| orange     |        423
+| strawberry |       1200
+"
+#+end_src
