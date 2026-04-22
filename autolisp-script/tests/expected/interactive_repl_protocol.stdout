@@ -1,4 +1,4 @@
-autolisp 1.0.24
+autolisp 1.0.27
 3
 
 
@@ -6,4 +6,3 @@ autolisp 1.0.24
 10
 
 ERROR eval (/ 1 0): divide by zero
-

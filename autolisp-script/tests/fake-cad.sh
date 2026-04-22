@@ -587,6 +587,7 @@ EOF
       exit 5
     fi
     require_runlsp_contains '(setq *AUTOLISP_INPFILE*'
+    require_runlsp_contains "(setq r (vl-catch-all-apply 'autolisp-eval-request-form (list form-read)))"
     printf 'READY 0\n' >"$STATUSFILE"
     while true; do
       while [[ ! -f "$INPFILE" ]]; do

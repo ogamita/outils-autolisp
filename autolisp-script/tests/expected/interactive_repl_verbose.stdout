@@ -1,4 +1,4 @@
-autolisp 1.0.24
+autolisp 1.0.27
 STDOUT
 STDERR
 RESULT
@@ -15,4 +15,3 @@ STDOUT
 STDERR
 ERROR eval (/ 1 0): divide by zero
 RESULT
-

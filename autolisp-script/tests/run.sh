@@ -941,6 +941,17 @@ run_interactive_cases() {
       "$SCRIPT_DIR/expected/empty.stderr" \
       0 \
       --interactive
+
+    if [[ "$USE_FAKE_CAD" -eq 1 && "$ENGINE_FLAG" == "--bricscad" ]]; then
+      run_stdin_case \
+        "interactive_batch_repl_fake" \
+        "interactive_batch" \
+        "$SCRIPT_DIR/fixtures/interactive-input.lsp" \
+        "$SCRIPT_DIR/expected/interactive_repl_protocol.stdout" \
+        "$SCRIPT_DIR/expected/empty.stderr" \
+        0 \
+        --interactive
+    fi
   fi
 
   if [[ "$USE_BRICSCAD_MACOS_PROTOCOL_TESTS" -eq 1 ]]; then
