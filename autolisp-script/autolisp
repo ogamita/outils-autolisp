@@ -2158,10 +2158,42 @@ else
 (defun autolisp-stdout-prefix ()
   "<<<AUTOLISP-STDOUT>>>")
 
+(defun autolisp-escape-string (text / idx len ch acc)
+  (setq idx 1)
+  (setq len (strlen text))
+  (setq acc "")
+  (while (<= idx len)
+    (setq ch (substr text idx 1))
+    (if (= ch "\\")
+      (setq acc (strcat acc "\\\\"))
+      (if (= ch "\"")
+        (setq acc (strcat acc "\\\""))
+        (setq acc (strcat acc ch))))
+    (setq idx (+ idx 1)))
+  acc)
+
+(defun autolisp-readable-text (obj / acc first tail)
+  (cond
+    ((null obj)
+     "nil")
+    ((= (type obj) 'STR)
+     (strcat "\"" (autolisp-escape-string obj) "\""))
+    ((listp obj)
+     (setq acc "(")
+     (setq first T)
+     (setq tail obj)
+     (while tail
+       (if first
+         (setq first nil)
+         (setq acc (strcat acc " ")))
+       (setq acc (strcat acc (autolisp-readable-text (car tail))))
+       (setq tail (cdr tail)))
+     (strcat acc ")"))
+    (T
+     (autolisp-render obj))))
+
 (defun autolisp-stdout-text (obj)
-  (if (= (type obj) 'STR)
-    (strcat "\"" obj "\"")
-    (autolisp-str obj)))
+  (autolisp-readable-text obj))
 
 (defun autolisp-emit-user-out (obj)
   (if *AUTOLISP_CAPTURE_STDOUT*
@@ -2770,7 +2802,8 @@ EOLISP
   (autolisp-emit-user-out obj))
 
 (defun princ (obj)
-  (autolisp-emit-user-line (autolisp-str obj)))
+  (autolisp-emit-user-line (autolisp-str obj))
+  obj)
 
 (defun prin1 (obj)
   (autolisp-emit-user-out obj))
@@ -2783,7 +2816,9 @@ EOLISP
 
 (defun prompt (msg)
   (if msg
-    (autolisp-emit-user-line (autolisp-str msg))
+    (progn
+      (autolisp-emit-user-line (autolisp-str msg))
+      msg)
     msg))
 
 (defun autolisp-slurp-lines (path / f line acc)
