@@ -4,6 +4,7 @@
   misc
   :OWN-LIST
   ("src/cat"
+   "src/format"
    "src/fs")
   :FAS-DIRECTORY
   nil

@@ -1,3 +1,9 @@
+(if (not (boundp '*autolisp-protocol-yield-mode*))
+  (setq *autolisp-protocol-yield-mode* "VLAX-SLEEP"))
+
+(if (not (boundp '*autolisp-protocol-yield-ms*))
+  (setq *autolisp-protocol-yield-ms* 100))
+
 (defun autolisp-protocol-write-line (path text / f)
   (setq f (open path "a"))
   (if f
@@ -49,6 +55,20 @@
 
 (defun autolisp-protocol-clear-stderr ()
   (autolisp-protocol-reset-file *AUTOLISP_PROTOCOL_STDERRFILE*))
+
+(defun autolisp-protocol-clear-input ()
+  (setq *AUTOLISP_PROTOCOL_INPUT_QUEUE* nil)
+  (if (findfile *AUTOLISP_PROTOCOL_STDINFILE*)
+    (vl-file-delete *AUTOLISP_PROTOCOL_STDINFILE*))
+  nil)
+
+(defun clear-input ()
+  (autolisp-protocol-clear-input))
+
+(defun clear-output ()
+  (autolisp-protocol-clear-stdout)
+  (autolisp-protocol-clear-stderr)
+  nil)
 
 (defun autolisp-protocol-pulse-heartbeat (/ stamp)
   (setq stamp (rtos (getvar "DATE") 2 8))
@@ -137,9 +157,16 @@
       (progn
         (if *AUTOLISP_PROTOCOL_EMIT_WAITING_INPUT*
           (autolisp-protocol-set-status "WAITING-INPUT"))
-        (autolisp-protocol-sleep-ms 100))))
+        (autolisp-protocol-yield))))
   (setq line (car *AUTOLISP_PROTOCOL_INPUT_QUEUE*))
   (setq *AUTOLISP_PROTOCOL_INPUT_QUEUE* (cdr *AUTOLISP_PROTOCOL_INPUT_QUEUE*))
+  line)
+
+(defun autolisp-read-line (/ old-flag line)
+  (setq old-flag *AUTOLISP_PROTOCOL_EMIT_WAITING_INPUT*)
+  (setq *AUTOLISP_PROTOCOL_EMIT_WAITING_INPUT* T)
+  (setq line (autolisp-protocol-remote-read-line))
+  (setq *AUTOLISP_PROTOCOL_EMIT_WAITING_INPUT* old-flag)
   line)
 
 (defun autolisp-protocol-read-from-text (text / f value)
@@ -158,6 +185,40 @@
   (setq r (vl-catch-all-apply 'vlax-sleep (list ms)))
   (if (vl-catch-all-error-p r)
     (vl-catch-all-apply 'command (list "_DELAY" ms)))
+  nil)
+
+(defun autolisp-protocol-yield-ms ()
+  (if (and (boundp '*autolisp-protocol-yield-ms*)
+           *autolisp-protocol-yield-ms*)
+    *autolisp-protocol-yield-ms*
+    100))
+
+(defun autolisp-protocol-yield-mode ()
+  (if (and (boundp '*autolisp-protocol-yield-mode*)
+           *autolisp-protocol-yield-mode*)
+    (strcase *autolisp-protocol-yield-mode*)
+    "VLAX-SLEEP"))
+
+(defun autolisp-protocol-yield (/ mode ms r)
+  (setq mode (autolisp-protocol-yield-mode))
+  (setq ms (autolisp-protocol-yield-ms))
+  (cond
+    ((= mode "SLEEP")
+      (setq r (vl-catch-all-apply 'sleep (list ms)))
+      (if (vl-catch-all-error-p r)
+        (autolisp-protocol-sleep-ms ms)))
+    ((= mode "GRREAD")
+      ;; Experimental: grread may let BricsCAD process UI messages,
+      ;; but host behavior can differ and it may still block.
+      (setq r (vl-catch-all-apply 'grread (list nil 8 0)))
+      (if (vl-catch-all-error-p r)
+        (autolisp-protocol-sleep-ms ms)))
+    ((= mode "DELAY")
+      (setq r (vl-catch-all-apply 'command (list "_DELAY" ms)))
+      (if (vl-catch-all-error-p r)
+        (autolisp-protocol-sleep-ms ms)))
+    (T
+      (autolisp-protocol-sleep-ms ms)))
   nil)
 
 (defun autolisp-protocol-result-code (result)

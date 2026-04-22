@@ -6,6 +6,7 @@ Small miscellaneous AutoLISP library.
 Contents
 
 - `src/cat.lsp`: Unix-like `cat` helper for printing one file or a list of files.
+- `src/format.lsp`: `format`, a small formatter inspired by Common Lisp.
 - `src/fs.lsp`: Unix-like `pwd`, `cd`, `ls` helpers sharing a virtual
   current directory.
 - `docs/user-manual.org`: user-facing documentation for the public API.
@@ -25,6 +26,10 @@ Usage
 (cd "docs")
 (ls nil)
 (ls ':l)
+
+(load "misc/src/format.lsp")
+
+(format "~A = ~D" '("pommes" 12))
 ```
 
 Project file

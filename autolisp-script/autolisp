@@ -640,7 +640,11 @@ submit_protocol_request_file() {
   PROTOCOL_LAST_REQUEST_QUIT=0
   lisp_request_file="$(to_runtime_lisp_path "$request_file")"
   load_form="$(printf '(load "%s")\n' "$(escape_lisp_string "$lisp_request_file")")"
-  stream_output=0
+  if [[ "$INTERACTIVE" -eq 1 && "$USE_FOREGROUND_BATCH_PROTOCOL" -eq 0 ]]; then
+    stream_output=1
+  else
+    stream_output=0
+  fi
   protocol_stream_request_reset
   autolisp_protocol_send_stdin "$load_form"
   wait_for_protocol_request_done "$PROTOCOL_CLIENT_REQ_ID" "$stream_output"
@@ -659,6 +663,9 @@ protocol_stream_request_reset() {
   PROTOCOL_STREAM_OUT_LINES=0
   PROTOCOL_STREAM_ERR_LINES=0
   PROTOCOL_STREAM_OUTPUT_OPEN=0
+  if [[ -n "${PROTOCOL_STREAM_MARKER:-}" ]]; then
+    rm -f "$PROTOCOL_STREAM_MARKER"
+  fi
 }
 
 protocol_emit_out_line() {
@@ -846,7 +853,11 @@ protocol_foreground_relay_loop() {
     protocol_flush_request_updates
     current_status="$(autolisp_protocol_read_status)"
     case "$current_status" in
-      DONE*|STOPPED|FAILED*)
+      DONE*)
+        protocol_flush_request_updates
+        protocol_stream_request_reset
+        ;;
+      STOPPED|FAILED*)
         protocol_flush_request_updates
         return 0
         ;;
@@ -952,9 +963,15 @@ run_protocol_interactive_repl() {
 
     request_file="$(build_protocol_eval_request "$buffer")"
     submit_protocol_request_file "$request_file" || return $?
-    rendered_file="$WORKDIR/interactive-rendered.txt"
-    render_stdout "$OUTFILE" "" 1 >"$rendered_file"
-    interactive_print_response "$rendered_file" "$ERRFILE"
+    if [[ "$USE_FOREGROUND_BATCH_PROTOCOL" -eq 0 ]]; then
+      rendered_file="$WORKDIR/interactive-rendered.txt"
+      render_stdout "$OUTFILE" "" 1 >"$rendered_file"
+      interactive_print_response "$rendered_file" "$ERRFILE"
+    elif [[ ! -f "${PROTOCOL_STREAM_MARKER:-}" ]]; then
+      rendered_file="$WORKDIR/interactive-rendered.txt"
+      render_stdout "$OUTFILE" "" 1 >"$rendered_file"
+      interactive_print_response "$rendered_file" "$ERRFILE"
+    fi
     if [[ "$PROTOCOL_LAST_REQUEST_QUIT" -eq 1 ]]; then
       printf 'Bye bye!\n'
       wait_for_protocol_status_prefix "STOPPED" || true
