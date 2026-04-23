@@ -81,7 +81,7 @@ MAIN_REQUESTED=0
 TIMEOUT_SECS="${AUTOLISP_WAIT_SECS:-${AUTOLISP_TIMEOUT:-180}}"
 AUTOCAD_COM_MODE="${AUTOCAD_COM_MODE:-auto}"
 AUTOCAD_EXE="${AUTOCAD_EXE:-}"
-BRICSCAD_EXE="${BRICSCAD_EXE:-}"
+BRICSCAD_EXE="${BRICSCAD_EXE:-C:/Program Files/Bricsys/BricsCAD V25 fr_FR/bricscad.exe}"
 CAD_MODE="${AUTOLISP_MODE:-auto}"
 CAD_BACKEND="${AUTOLISP_BACKEND:-launch}"
 BRICSCAD_MACOS_PROFILE="${BRICSCAD_MACOS_PROFILE:-}"
@@ -1857,7 +1857,7 @@ if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_M
 fi
 
 USE_REMOTE_PROTOCOL=0
-if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && ( "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" || "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "automation" ) && "$BOOTSTRAP_PHASE" == "full" ]]; then
+if [[ "$ENGINE" == "bricscad" && ( ( $IS_MACOS -eq 1 && ( "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" || "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "automation" ) ) || ( $IS_WINDOWS -eq 1 && "$CAD_MODE" == "batch" && "$INTERACTIVE" -eq 1 ) ) && "$BOOTSTRAP_PHASE" == "full" ]]; then
   case "$AUTOLISP_REMOTE_IO_MODE" in
     auto|on)
       USE_REMOTE_PROTOCOL=1
