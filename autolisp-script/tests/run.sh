@@ -204,6 +204,11 @@ if [[ "$ENGINE_FLAG" == "--bricscad" && "$IS_MACOS" -eq 1 && "$USE_FAKE_CAD" -eq
   esac
 fi
 
+USE_BRICSCAD_WINDOWS_PROTOCOL_TESTS=0
+if [[ "$ENGINE_FLAG" == "--bricscad" && "$USE_FAKE_CAD" -eq 1 ]]; then
+  USE_BRICSCAD_WINDOWS_PROTOCOL_TESTS=1
+fi
+
 CURRENT_CAD_ARGS=("${CAD_ARGS[@]}")
 if [[ "$ENGINE_FLAG" == "--bricscad" && "$IS_MACOS" -eq 1 ]]; then
   CURRENT_SUITE_LABEL="macos/${BRICSCAD_MACOS_EFFECTIVE_TEST_MODE:-auto}"
@@ -684,6 +689,30 @@ run_standard_cases() {
       "$SCRIPT_DIR/fixtures/load-side-effect.lsp"
   fi
 
+  if [[ "$USE_BRICSCAD_WINDOWS_PROTOCOL_TESTS" -eq 1 ]]; then
+    run_case \
+      "windows_batch_protocol_eval" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/expected/eval_no_output.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_OS=MINGW64_NT \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --mode batch \
+      -x '(+ 1 2)'
+
+    run_case \
+      "windows_batch_protocol_load" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/expected/load_side_effect_protocol.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_OS=MINGW64_NT \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --mode batch \
+      "$SCRIPT_DIR/fixtures/load-side-effect.lsp"
+  fi
+
   if [[ "$USE_BRICSCAD_MACOS_PROTOCOL_TESTS" -eq 1 ]]; then
     run_case \
       "eval_load_string" \
@@ -965,6 +994,21 @@ run_interactive_cases() {
       --env AUTOLISP_OS=Darwin \
       --env BRICSCAD_MACOS_MODE=batch \
       --env AUTOLISP_REMOTE_IO_MODE=on \
+      --interactive
+  fi
+
+  if [[ "$USE_BRICSCAD_WINDOWS_PROTOCOL_TESTS" -eq 1 ]]; then
+    run_stdin_case \
+      "windows_batch_interactive_repl" \
+      "protocol_batch" \
+      "$SCRIPT_DIR/fixtures/interactive-input.lsp" \
+      "$SCRIPT_DIR/expected/interactive_repl_protocol.stdout" \
+      "$SCRIPT_DIR/expected/empty.stderr" \
+      0 \
+      --env AUTOLISP_OS=MINGW64_NT \
+      --env AUTOLISP_REMOTE_IO_MODE=on \
+      --expect-fake-invocations 1 \
+      --mode batch \
       --interactive
   fi
 }

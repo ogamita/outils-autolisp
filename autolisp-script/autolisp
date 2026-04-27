@@ -1857,20 +1857,28 @@ if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_M
 fi
 
 USE_REMOTE_PROTOCOL=0
-if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && ( "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" || "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "automation" ) && "$BOOTSTRAP_PHASE" == "full" ]]; then
+if [[ "$ENGINE" == "bricscad" && "$BOOTSTRAP_PHASE" == "full" ]]; then
   case "$AUTOLISP_REMOTE_IO_MODE" in
     auto|on)
-      USE_REMOTE_PROTOCOL=1
+      if [[ $IS_MACOS -eq 1 && ( "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" || "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "automation" ) ]]; then
+        USE_REMOTE_PROTOCOL=1
+      elif [[ $IS_WINDOWS -eq 1 && "$CAD_MODE" == "batch" ]]; then
+        USE_REMOTE_PROTOCOL=1
+      fi
       ;;
   esac
 fi
 
 USE_FOREGROUND_BATCH_PROTOCOL=0
-if [[ "$USE_REMOTE_PROTOCOL" -eq 1 && "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" ]]; then
-  USE_FOREGROUND_BATCH_PROTOCOL=1
-  if [[ "$EXPERIMENTAL_MACOS_BATCH_OPEN" == "1" && "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" && "$CAD_BACKEND" == "launch" ]]; then
-    USE_FOREGROUND_BATCH_PROTOCOL=0
+if [[ "$USE_REMOTE_PROTOCOL" -eq 1 && "$ENGINE" == "bricscad" ]]; then
+  if [[ $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" ]]; then
+    USE_FOREGROUND_BATCH_PROTOCOL=1
+  elif [[ $IS_WINDOWS -eq 1 && "$CAD_MODE" == "batch" ]]; then
+    USE_FOREGROUND_BATCH_PROTOCOL=1
   fi
+fi
+if [[ "$USE_FOREGROUND_BATCH_PROTOCOL" -eq 1 && "$EXPERIMENTAL_MACOS_BATCH_OPEN" == "1" && "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" && "$CAD_BACKEND" == "launch" ]]; then
+  USE_FOREGROUND_BATCH_PROTOCOL=0
 fi
 
 if [[ -n "${AUTOLISP_WORKDIR:-}" ]]; then
@@ -3398,6 +3406,8 @@ run_windows_bricscad() {
   local exe="${BRICSCAD_EXE:-}"
   local win_scrfile=""
   local workdir=""
+  local epure_control=""
+  local -a cmd=()
   if [[ -z "$exe" ]]; then
     exe="$(ls -1 "/c/Program Files"*/Bricsys/*/bricscad.exe 2>/dev/null | head -n 1 || true)"
   fi
@@ -3432,6 +3442,7 @@ run_windows_bricscad() {
     return 3
   fi
   win_scrfile="$(to_windows_path "$SCRFILE")"
+  cmd=("$exe")
   if [[ "$EPURE_REQUESTED" == "1" ]]; then
     epure_control="$(windows_epure_control_script bricscad || true)"
     if [[ -z "$epure_control" ]]; then
@@ -3439,13 +3450,38 @@ run_windows_bricscad() {
       return 2
     fi
     workdir="$(windows_cad_workdir "$exe")"
+    cmd+=(/P Epure)
+  fi
+  cmd+=(/B "$win_scrfile")
+
+  if [[ "$USE_FOREGROUND_BATCH_PROTOCOL" -eq 1 ]]; then
+    printf '%q ' "${cmd[@]}" >"$BRICSCAD_BATCH_COMMAND_FILE"
+    printf '\n' >>"$BRICSCAD_BATCH_COMMAND_FILE"
+    BRICSCAD_BATCH_LAUNCHED=1
+    BRICSCAD_BATCH_REAPED=0
+    BRICSCAD_BATCH_COMPLETED=0
+    BRICSCAD_BATCH_RC=""
+    BRICSCAD_BATCH_PID=""
+    BRICSCAD_BATCH_CHILD_PID=""
+    BRICSCAD_BATCH_START_TS="$(date +%s 2>/dev/null || echo 0)"
     (
-      cd "$workdir"
-      "$exe" /P Epure /B "$win_scrfile" >"$WORKDIR/bricscad-stdout.txt" 2>"$WORKDIR/bricscad-stderr.txt"
-    ) || true
+      if [[ -n "$workdir" ]]; then
+        cd "$workdir"
+      fi
+      "${cmd[@]}" >"$WORKDIR/bricscad-stdout.txt" 2>"$WORKDIR/bricscad-stderr.txt"
+    ) &
+    BRICSCAD_BATCH_PID=$!
+    BRICSCAD_BATCH_CHILD_PID="$BRICSCAD_BATCH_PID"
     return 0
   fi
-  "$exe" /B "$win_scrfile" >"$WORKDIR/bricscad-stdout.txt" 2>"$WORKDIR/bricscad-stderr.txt" || true
+  if [[ -n "$workdir" ]]; then
+    (
+      cd "$workdir"
+      "${cmd[@]}" >"$WORKDIR/bricscad-stdout.txt" 2>"$WORKDIR/bricscad-stderr.txt"
+    ) || true
+  else
+    "${cmd[@]}" >"$WORKDIR/bricscad-stdout.txt" 2>"$WORKDIR/bricscad-stderr.txt" || true
+  fi
 }
 
 run_macos_bricscad_fallback() {

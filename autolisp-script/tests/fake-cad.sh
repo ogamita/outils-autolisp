@@ -6,7 +6,7 @@ PROFILE_OPTIONAL="${AUTOLISP_FAKE_PROFILE_OPTIONAL:-0}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -P)
+    -P|/P|/p)
       if [[ $# -lt 2 ]]; then
         echo "fake-cad: missing value after -P" >&2
         exit 2
@@ -340,7 +340,9 @@ EOF
 run_protocol_batch() {
   local req_id=0 stdin_file request_file eval_form control rc stdin_payload stop_after_request
 
-  require_scr_contains '._QUIT _Y'
+  if [[ "${AUTOLISP_OS:-}" == "Darwin" ]]; then
+    require_scr_contains '._QUIT _Y'
+  fi
   require_runlsp_contains '(setq *AUTOLISP_USE_REMOTE_PROTOCOL* 1)'
   require_runlsp_contains '(defun autolisp-request-reset ()'
   require_runlsp_contains '(load *AUTOLISP_PROTOCOL_RUNTIMEFILE*)'
