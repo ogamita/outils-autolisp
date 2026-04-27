@@ -43,9 +43,15 @@ Ne sont pas spécifiés ici :
 
 #+begin_src text
   autolisp -V|--version | -h|--help
-  autolisp [options]... { [-l|--load] source.lsp | -x|--eval expression }... \
-                        -i | --interactive | --main C:MAIN | --quit
+  autolisp [options]... { [-l|--load] source.lsp
+                        | -x|--eval expression
+                        | -i|--interactive
+                        | --main C:MAIN
+                        | --quit }...
 #+end_src
+
+Les options d'action ci-dessus peuvent être mélangées à volonté et
+sont traitées dans l'ordre où elles apparaissent.
 
 ** Options reconnues
 

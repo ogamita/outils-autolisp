@@ -18,7 +18,9 @@ usage() {
   cat <<'EOU'
 Usage:
   autolisp -V|--version | -h|--help
-  autolisp [options]... { [-l|--load] source.lsp | -x|--eval expression }... [-i|--interactive | --main C:MAIN | --quit]
+  autolisp [options]... { [-l|--load] source.lsp | -x|--eval expression | -i|--interactive | --main C:MAIN | --quit }...
+
+  Les options d'action peuvent être mélangées à volonté et sont traitées dans l'ordre.
 
 Examples:
   autolisp test.lsp
