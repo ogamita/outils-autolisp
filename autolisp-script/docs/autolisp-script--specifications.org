@@ -349,6 +349,7 @@ Hors Windows, =--epure= est ignoré.
 | =AUTOLISP_KEEP_WORKDIR=      | =1=                                  | Conserve le workdir en fin d'exécution.                              |
 | =AUTOLISP_VERBOSE=           | =1=                                  | Diagnostics étendus, affiche le workdir conservé.                    |
 | =AUTOLISP_QUIET=             | =1=                                  | Équivaut à =--quiet=.                                                |
+| =AUTOLISP_NO_INIT=           | =1=                                  | Équivaut à =-norc= ou =--no-init=.                                   |
 | =AUTOLISP_REMOTE_IO_MODE=    | =auto= \vert =on= \vert =off=                  | Active ou non le protocole REPL distant.                             |
 
 * Versionnage

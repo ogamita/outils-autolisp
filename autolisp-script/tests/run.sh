@@ -310,6 +310,7 @@ run_case() {
     "AUTOLISP_WORKDIR=$cad_workdir_root"
     "AUTOLISP_KEEP_WORKDIR=1"
     "AUTOLISP_VERBOSE=0"
+    "AUTOLISP_NO_INIT=1"
   )
 
   if [[ -n "$DETECTED_ENGINE_EXE" ]]; then
@@ -432,6 +433,7 @@ run_stdin_case() {
     "AUTOLISP_WORKDIR=$cad_workdir_root"
     "AUTOLISP_KEEP_WORKDIR=1"
     "AUTOLISP_VERBOSE=0"
+    "AUTOLISP_NO_INIT=1"
   )
 
   if [[ -n "$DETECTED_ENGINE_EXE" ]]; then

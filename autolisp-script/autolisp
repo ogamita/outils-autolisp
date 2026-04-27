@@ -93,6 +93,7 @@ Environment overrides:
   AUTOLISP_KEEP_WORKDIR   1 to keep temporary workdir
   AUTOLISP_VERBOSE        1 for extra diagnostics
   AUTOLISP_QUIET          1 to suppress informational messages
+  AUTOLISP_NO_INIT        1 to inhibit ~/.autolisp{,rc}{,.lsp,...} (idem -norc)
 
 Notes:
   - AutoCAD Core Console (accoreconsole.exe) est Windows-only dans la pratique.
@@ -120,7 +121,7 @@ INTERACTIVE=0
 CLI_VERBOSE=0
 CLI_QUIET=0
 VERSION_ONLY=0
-NO_INIT=0
+NO_INIT="${AUTOLISP_NO_INIT:-0}"
 QUIT_REQUESTED=0
 
 declare -a ACTION_KINDS=()
@@ -268,6 +269,54 @@ done
 if [[ "$VERSION_ONLY" -eq 1 ]]; then
   autolisp_version_string
   exit 0
+fi
+
+# Recherche du fichier d'initialisation: ~/.autolisp{,rc}{,.lsp,.fas,.vlx,.des}.
+# Conformément à la spécification, on retient le premier fichier existant en
+# parcourant les variantes dans l'ordre. Pour chaque souche, un fichier compilé
+# n'est préféré que s'il est plus récent que la variante .lsp correspondante.
+find_rc_file() {
+  local stem candidates_compiled best_compiled lsp ext compiled
+  for stem in "$HOME/.autolisp" "$HOME/.autolisprc"; do
+    if [[ -f "$stem" ]]; then
+      printf '%s\n' "$stem"
+      return 0
+    fi
+    lsp="$stem.lsp"
+    best_compiled=""
+    for ext in fas des vlx; do
+      compiled="$stem.$ext"
+      [[ -f "$compiled" ]] || continue
+      if [[ -f "$lsp" && ! "$compiled" -nt "$lsp" ]]; then
+        continue
+      fi
+      if [[ -z "$best_compiled" || "$compiled" -nt "$best_compiled" ]]; then
+        best_compiled="$compiled"
+      fi
+    done
+    if [[ -n "$best_compiled" ]]; then
+      printf '%s\n' "$best_compiled"
+      return 0
+    fi
+    if [[ -f "$lsp" ]]; then
+      printf '%s\n' "$lsp"
+      return 0
+    fi
+  done
+  return 1
+}
+
+if [[ "$NO_INIT" -eq 0 ]]; then
+  RC_FILE="$(find_rc_file || true)"
+  if [[ -n "$RC_FILE" ]]; then
+    if (( ${#ACTION_KINDS[@]} > 0 )); then
+      ACTION_KINDS=("load" "${ACTION_KINDS[@]}")
+      ACTION_VALUES=("$RC_FILE" "${ACTION_VALUES[@]}")
+    else
+      ACTION_KINDS=("load")
+      ACTION_VALUES=("$RC_FILE")
+    fi
+  fi
 fi
 
 interactive_form_complete() {
@@ -1470,13 +1519,7 @@ bricscad_should_announce_launch() {
   local exe="$1"
   [[ "$ENGINE" == "bricscad" ]] || return 1
   autolisp_is_quiet && return 1
-  [[ "$INTERACTIVE" -eq 1 ]] || return 1
-  case "$exe" in
-    */BricsCAD*.app/Contents/MacOS/bricscad|*/BricsCAD*.app)
-      return 0
-      ;;
-  esac
-  return 1
+  return 0
 }
 
 emit_bricscad_launch_message() {
@@ -1502,21 +1545,22 @@ emit_bricscad_launch_message() {
     version="$(bricscad_version_for_exe "$exe" || true)"
   fi
   [[ -n "$product" ]] || product="BricsCAD"
-  msg="autolisp: launched $product"
-  if [[ -n "$version" ]]; then
-    msg="$msg $version"
-  fi
-  msg="$msg pid=$pid"
+  # Pas d'annonce sans version détectée: évite le bruit sur les exécutables
+  # de test (fake-cad) qui ne portent ni runtime-info ni Info.plist exploitable.
+  [[ -n "$version" ]] || return 0
+  msg="$product $version"
+  printf '%s\n' "$msg"
   if autolisp_is_verbose; then
+    local extra="autolisp: launched $msg pid=$pid"
     if [[ -n "$version_raw" && "$version_raw" != "$version" ]]; then
-      msg="$msg acadver=\"$version_raw\""
+      extra="$extra acadver=\"$version_raw\""
     fi
     if [[ -n "$program" ]]; then
-      msg="$msg program=$program"
+      extra="$extra program=$program"
     fi
-    msg="$msg profile=${BRICSCAD_MACOS_PROFILE:-default}"
+    extra="$extra profile=${BRICSCAD_MACOS_PROFILE:-default}"
+    echo "$extra" >&2
   fi
-  echo "$msg" >&2
 }
 
 launch_bricscad_announce_loop() {
@@ -3725,6 +3769,7 @@ run_macos_bricscad_batch() {
     "${cmd[@]}" >"$WORKDIR/bricscad-stdout.txt" 2>"$WORKDIR/bricscad-stderr.txt" &
     BRICSCAD_BATCH_PID=$!
     BRICSCAD_BATCH_CHILD_PID="$BRICSCAD_BATCH_PID"
+    emit_bricscad_launch_message "$BRICSCAD_BATCH_PID" "$exe"
     return 0
   fi
   launch_cmd=("${cmd[@]}")
