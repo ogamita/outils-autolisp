@@ -42,6 +42,7 @@ test-autocad:
 EMACS ?= emacs
 
 docs-pdf: autolisp-examples.pdf
+	$(MAKE) -C docs pdf
 
 autolisp-examples.pdf: autolisp-examples.org
 	$(EMACS) --batch --visit $< --funcall org-latex-export-to-pdf
