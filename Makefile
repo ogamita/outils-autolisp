@@ -42,6 +42,7 @@ docs-pdf:
 	$(MAKE) -C autolisp-hash-table docs-pdf
 	$(MAKE) -C autolisp-formatter  docs-pdf
 	$(MAKE) -C autolisp-misc       docs-pdf
+	$(MAKE) -C autolisp-doc        docs-pdf
 
 clean:
 	$(MAKE) -C autolisp-script     clean

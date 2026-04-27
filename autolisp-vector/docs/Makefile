@@ -2,11 +2,15 @@
 
 ORG_FILES := $(wildcard *.org)
 PDF_FILES := $(ORG_FILES:.org=.pdf)
+TEX_FILES := $(ORG_FILES:.org=.tex)
+
+EMACS ?= emacs
 
 pdf: $(PDF_FILES)
 
 %.pdf: %.org
-	pandoc $< -o $@
+	$(EMACS) --batch --visit $< --funcall org-latex-export-to-pdf
+	rm -f $*.tex
 
 clean:
-	rm -f $(PDF_FILES)
+	rm -f $(PDF_FILES) $(TEX_FILES)

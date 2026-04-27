@@ -39,8 +39,13 @@ endif
 test-autocad:
 	./tests/run.sh $(TEST_BACKEND_FLAG) $(TEST_RUN_ARGS) --timeout $(TEST_TIMEOUT) --autocad
 
-docs-pdf:
-	pandoc autolisp-examples.org -o autolisp-examples.pdf
+EMACS ?= emacs
+
+docs-pdf: autolisp-examples.pdf
+
+autolisp-examples.pdf: autolisp-examples.org
+	$(EMACS) --batch --visit $< --funcall org-latex-export-to-pdf
+	rm -f autolisp-examples.tex
 
 
 clean:
