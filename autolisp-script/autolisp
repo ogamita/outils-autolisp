@@ -17,36 +17,62 @@ autolisp_version_string() {
 usage() {
   cat <<'EOU'
 Usage:
-  autolisp [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--mode automation|batch] [--backend attach|launch] [--bricscad-macos-profile NAME] [--epure] { source.lsp | -x expression }... [--dwg file.dwg] [--main C:MAIN]
-  autolisp [--autocad|--bricscad] [--quiet|--verbose] [--timeout N] [--bootstrap-phase marker|core|log|full] [--mode automation|batch] [--backend attach|launch] [--bricscad-macos-profile NAME] [--epure] -i|--interactive [--dwg file.dwg]
-  autolisp --version
+  autolisp -V|--version | -h|--help
+  autolisp [options]... { [-l|--load] source.lsp | -x|--eval expression }... [-i|--interactive | --main C:MAIN | --quit]
 
 Examples:
   autolisp test.lsp
-  autolisp lib1.lsp lib2.lsp --main C:RUN
+  autolisp -l lib1.lsp -l lib2.lsp --main C:RUN
   autolisp --bricscad --epure test.lsp
   autolisp -x '(princ (+ 1 2))'
-  autolisp init.lsp -x '(setq *x* 42)' test.lsp
-  autolisp --interactive
+  autolisp --eval '(setq *x* 42)' test.lsp
+  autolisp -i
 
 Semantics:
-  - Les éléments { source.lsp | -x expression } sont traités dans l'ordre.
+  - Les actions { [-l|--load] source.lsp | -x|--eval expression } sont traitées dans l'ordre.
   - Chaque source.lsp est chargé avec (load "...").
-  - Chaque -x expression est évalué comme une forme AutoLISP.
+  - Chaque -x|--eval expression est évaluée comme une forme AutoLISP.
   - Si au moins un fichier source.lsp est fourni, (${MAIN:-C:MAIN}) est appelé à la fin.
+  - --quit termine le moteur et autolisp ; les options suivantes sont ignorées.
 
 Outputs:
   stdout  -> contenu de OUTFILE
   stderr  -> contenu de ERRFILE
   exit    -> code lu dans STATUSFILE
 
-Options:
+Generic options:
+  -V, --version           Affiche la version puis quitte.
+  -h, --help              Affiche ce message d'aide puis quitte.
+  -q, --quiet             Supprime les messages d'information non essentiels.
+  -v, --verbose           Affiche les labels structurés et davantage de diagnostics.
+  -norc, --no-init        Inhibe le chargement de ~/.autolisp{,rc}{,.lsp}.
+
+Action options (processed in order):
+  -l, --load FILE         Charger un fichier AutoLISP (load).
+  -x, --eval EXPRESSION   Évaluer une forme AutoLISP.
+  -i, --interactive       Active le mode REPL.
+  --main C:MAIN           Nom de la commande appelée après les actions.
+  --quit                  Force la sortie ; ignore les options suivantes.
+
+Engine options:
+  --autocad               Force le moteur AutoCAD.
+  --bricscad              Force le moteur BricsCAD.
+  --dwg FILE              DWG fourni au Core Console AutoCAD.
+
+Specific options:
   --epure                 Sous Windows, charge EPURE avant le script principal.
                           BricsCAD: lance /P Epure avec le bootstrap
                           %APPDATA%\sncf\epure\epure 2022_b\control_path_epure_2022.scr
                           AutoCAD: lance /p Epure avec le bootstrap
                           %APPDATA%\sncf\epure\epure 2022\control_path_epure_2022.scr
                           Avec AutoCAD, cette option requiert AUTOCAD_EXE.
+
+Technical options:
+  --timeout N             Durée maximale d'attente du runtime CAD.
+  --bootstrap-phase PHASE marker | core | log | full
+  --mode MODE             automation | batch (BricsCAD macOS)
+  --backend BACKEND       attach | launch (mode automation macOS)
+  --bricscad-macos-profile NAME   Profil BricsCAD pour le mode batch macOS.
 
 Environment overrides:
   AUTOCAD_ACCORECONSOLE   Path to accoreconsole.exe (Windows)
@@ -92,6 +118,8 @@ INTERACTIVE=0
 CLI_VERBOSE=0
 CLI_QUIET=0
 VERSION_ONLY=0
+NO_INIT=0
+QUIT_REQUESTED=0
 
 declare -a ACTION_KINDS=()
 declare -a ACTION_VALUES=()
@@ -155,9 +183,18 @@ while [[ $# -gt 0 ]]; do
       EPURE_REQUESTED=1
       shift
       ;;
-    --version)
+    -V|--version)
       VERSION_ONLY=1
       shift
+      ;;
+    -norc|--no-init)
+      NO_INIT=1
+      shift
+      ;;
+    --quit)
+      QUIT_REQUESTED=1
+      shift
+      break
       ;;
     --dwg)
       DWG="${2:-}"
@@ -172,21 +209,31 @@ while [[ $# -gt 0 ]]; do
       INTERACTIVE=1
       shift
       ;;
-    --verbose)
+    -v|--verbose)
       CLI_VERBOSE=1
       shift
       ;;
-    --quiet)
+    -q|--quiet)
       CLI_QUIET=1
       shift
       ;;
-    -x)
+    -x|--eval)
       if [[ $# -lt 2 ]]; then
-        echo "Missing expression after -x" >&2
+        echo "Missing expression after $1" >&2
         usage
         exit 2
       fi
       ACTION_KINDS+=("eval")
+      ACTION_VALUES+=("$2")
+      shift 2
+      ;;
+    -l|--load)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing file after $1" >&2
+        usage
+        exit 2
+      fi
+      ACTION_KINDS+=("load")
       ACTION_VALUES+=("$2")
       shift 2
       ;;
@@ -1981,6 +2028,10 @@ fi
 # pour le REPL batch (--interactive).
 if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 && "$BRICSCAD_MACOS_EFFECTIVE_MODE" == "batch" && "$INTERACTIVE" -eq 1 ]]; then
   QUIT_ON_FINISH=0
+fi
+# --quit force la fin de la session, indépendamment du backend ou du mode interactif.
+if [[ "$QUIT_REQUESTED" -eq 1 ]]; then
+  QUIT_ON_FINISH=1
 fi
 
 RUNLSPFILE="$WORKDIR/run-common.lsp"
