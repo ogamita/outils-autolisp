@@ -10,6 +10,8 @@ Contents
 - `src/fs.lsp`: Unix-like `pwd`, `cd`, `ls` helpers sharing a virtual
   current directory.
 - `docs/user-manual.org`: user-facing documentation for the public API.
+- `docs/autolisp-misc--specifications.org`: design specifications for the
+  library.
 - `autolisp-misc.prj`: AutoLISP project definition for the `autolisp-misc`
   library sources.
 

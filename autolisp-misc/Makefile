@@ -1,4 +1,4 @@
-.PHONY: test-ci test test-bricscad test-bricscad-macos-batch test-bricscad-macos-osascript-attach clean
+.PHONY: test-ci test test-bricscad test-bricscad-macos-batch test-bricscad-macos-osascript-attach docs-pdf clean
 
 UNAME_S := $(shell uname -s)
 
@@ -31,5 +31,8 @@ test-bricscad:
 	./tests/run-tests.sh --bricscad --timeout $(TEST_TIMEOUT)
 endif
 
+docs-pdf:
+	$(MAKE) -C docs pdf
+
 clean:
-	@true
+	$(MAKE) -C docs clean
