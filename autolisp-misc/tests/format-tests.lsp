@@ -1,4 +1,4 @@
-;;; format-tests.lsp --- Tests unitaires de misc/src/format.lsp
+;;; format-tests.lsp --- Tests unitaires de autolisp-misc/src/format.lsp
 
 ;;; =format.lsp= doit être chargé par le harness avant ce script.
 

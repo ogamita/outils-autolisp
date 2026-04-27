@@ -1,4 +1,4 @@
-;;; fs-tests.lsp --- Tests unitaires de misc/src/fs.lsp
+;;; fs-tests.lsp --- Tests unitaires de autolisp-misc/src/fs.lsp
 ;;;
 ;;; Ce script exerce les helpers de fs.lsp (manipulation de chemins,
 ;;; cwd virtuel) et produit un rapport texte déterministe, indépendant
@@ -9,7 +9,7 @@
 ;;; ici : la capture du flux =prompt= varie selon le runtime. On se
 ;;; contente de vérifier les chemins nominaux et les helpers purs.
 
-(load "misc/src/fs.lsp")
+(load "autolisp-misc/src/fs.lsp")
 
 (setq *fs-test-fails* 0)
 

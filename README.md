@@ -43,7 +43,7 @@ Le tableau ci-dessous résume les changements marquants entre les tags actuellem
 
 | De | Vers | Changement marquant |
 | --- | --- | --- |
-| `v1.0.0` | `v1.0.10` | Le dépôt est passé d'une base initiale à un `autolisp-script` bien plus complet: ajout de `misc/src/cat.lsp`, support de `--epure`, unification des modes macOS, amélioration des chemins de chargement BricsCAD, ajout du reporting de version, correction du chargement AutoLISP, capture fiable de `princ`, puis gestion correcte de `(princ)` sans argument et stabilisation des sorties interactives. |
+| `v1.0.0` | `v1.0.10` | Le dépôt est passé d'une base initiale à un `autolisp-script` bien plus complet: ajout de `autolisp-misc/src/cat.lsp` (alors `misc/src/cat.lsp`), support de `--epure`, unification des modes macOS, amélioration des chemins de chargement BricsCAD, ajout du reporting de version, correction du chargement AutoLISP, capture fiable de `princ`, puis gestion correcte de `(princ)` sans argument et stabilisation des sorties interactives. |
 
 ## Architecture de chargement
 
