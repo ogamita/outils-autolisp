@@ -5,7 +5,7 @@
 
 * Objet
 
-Ce document décrit l'API publique de la bibliothèque =misc=.
+Ce document décrit l'API publique de la bibliothèque =autolisp-misc=.
 
 * Chargement
 

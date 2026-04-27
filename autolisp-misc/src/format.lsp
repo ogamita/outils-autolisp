@@ -1,4 +1,4 @@
-;;; format.lsp --- Sous-ensemble de Common Lisp FORMAT pour misc
+;;; format.lsp --- Sous-ensemble de Common Lisp FORMAT pour autolisp-misc
 
 (setq format 'format)
 
