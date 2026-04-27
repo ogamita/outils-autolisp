@@ -983,11 +983,31 @@ run_protocol_noninteractive() {
 }
 
 run_protocol_interactive_repl() {
-  local prompt cont_prompt line buffer request_file rendered_file
+  local prompt cont_prompt line buffer request_file rendered_file kind form_text idx
 
   prompt="autolisp> "
   cont_prompt="......> "
   wait_for_protocol_ready || return $?
+
+  for idx in "${!ACTION_KINDS[@]}"; do
+    kind="${ACTION_KINDS[$idx]}"
+    if [[ "$kind" == "load" ]]; then
+      form_text="(load \"$(escape_lisp_string "${ACTION_VALUES[$idx]}")\")"
+    else
+      form_text="${ACTION_VALUES[$idx]}"
+    fi
+    request_file="$(build_protocol_eval_request "$form_text")"
+    submit_protocol_request_file "$request_file" || return $?
+    if [[ "$USE_FOREGROUND_BATCH_PROTOCOL" -eq 0 ]]; then
+      rendered_file="$WORKDIR/interactive-rendered.txt"
+      render_stdout "$OUTFILE" "" 1 >"$rendered_file"
+      interactive_print_response "$rendered_file" "$ERRFILE"
+    elif [[ ! -f "${PROTOCOL_STREAM_MARKER:-}" ]]; then
+      rendered_file="$WORKDIR/interactive-rendered.txt"
+      render_stdout "$OUTFILE" "" 1 >"$rendered_file"
+      interactive_print_response "$rendered_file" "$ERRFILE"
+    fi
+  done
 
   buffer=""
   while true; do
@@ -1039,7 +1059,7 @@ run_protocol_interactive_repl() {
 }
 
 run_interactive_repl() {
-  local self prompt cont_prompt line buffer case_dir stdout_file stderr_file
+  local self prompt cont_prompt line buffer case_dir stdout_file stderr_file kind action_form idx
   declare -a repl_args=()
 
   self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
@@ -1060,6 +1080,21 @@ run_interactive_repl() {
   if [[ "$EPURE_REQUESTED" == "1" ]]; then
     repl_args+=("--epure")
   fi
+
+  for idx in "${!ACTION_KINDS[@]}"; do
+    kind="${ACTION_KINDS[$idx]}"
+    if [[ "$kind" == "load" ]]; then
+      action_form="(load \"$(escape_lisp_string "${ACTION_VALUES[$idx]}")\")"
+    else
+      action_form="${ACTION_VALUES[$idx]}"
+    fi
+    case_dir="$(mktemp -d "${TMPDIR:-/tmp}/autolisp-repl.XXXXXX")"
+    stdout_file="$case_dir/stdout.txt"
+    stderr_file="$case_dir/stderr.txt"
+    AUTOLISP_SUPPRESS_VERSION_BANNER=1 "$self" "${repl_args[@]}" -x "$action_form" >"$stdout_file" 2>"$stderr_file" || true
+    interactive_print_response "$stdout_file" "$stderr_file"
+    rm -rf "$case_dir"
+  done
 
   buffer=""
   while true; do
@@ -1100,7 +1135,7 @@ run_interactive_repl() {
 }
 
 run_batch_interactive_repl() {
-  local prompt cont_prompt line buffer req_id payload rendered_file
+  local prompt cont_prompt line buffer req_id payload rendered_file kind action_form idx
   prompt="autolisp> "
   cont_prompt="......> "
   req_id=0
@@ -1108,6 +1143,24 @@ run_batch_interactive_repl() {
   if ! wait_for_status_value "READY 0"; then
     return $?
   fi
+
+  for idx in "${!ACTION_KINDS[@]}"; do
+    kind="${ACTION_KINDS[$idx]}"
+    if [[ "$kind" == "load" ]]; then
+      action_form="(load \"$(escape_lisp_string "${ACTION_VALUES[$idx]}")\")"
+    else
+      action_form="${ACTION_VALUES[$idx]}"
+    fi
+    req_id=$((req_id + 1))
+    payload=";REQ $req_id"$'\n'"$action_form"$'\n'
+    write_atomic_file "$INPFILE" "$payload"
+    if ! wait_for_status_value "READY $req_id"; then
+      return $?
+    fi
+    rendered_file="$WORKDIR/interactive-rendered.txt"
+    render_stdout "$OUTFILE" "" 1 >"$rendered_file"
+    interactive_print_response "$rendered_file" "$ERRFILE"
+  done
 
   buffer=""
   while true; do
@@ -1158,12 +1211,6 @@ run_batch_interactive_repl() {
   kill_bricscad_batch_process || true
   return 0
 }
-
-if [[ "$INTERACTIVE" -eq 1 && ${#ACTION_KINDS[@]} -gt 0 ]]; then
-  echo "Interactive mode does not accept source.lsp or -x inputs." >&2
-  usage
-  exit 2
-fi
 
 if [[ "$INTERACTIVE" -eq 1 && "$BOOTSTRAP_PHASE" != "full" ]]; then
   echo "Interactive mode requires --bootstrap-phase full." >&2
