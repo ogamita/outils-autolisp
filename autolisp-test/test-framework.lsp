@@ -104,24 +104,24 @@
 ;; Assertions
 ;; -----------------------------
 
-(defun is (condition &optional msg)
+(defun is (condition msg)
   (if (not condition)
     (t:fail (if msg msg "is: condition is false")))
   t)
 
-(defun is-not (condition &optional msg)
+(defun is-not (condition msg)
   (if condition
     (t:fail (if msg msg "is-not: condition is true")))
   t)
 
-(defun is-equal (expected actual &optional msg)
+(defun is-equal (expected actual msg)
   (if (not (equal expected actual))
     (t:fail (if msg
               msg
               (t:format-compare "is-equal:" expected actual))))
   t)
 
-(defun is-approx (expected actual tol &optional msg)
+(defun is-approx (expected actual tol msg)
   ;; numeric approximate equality
   (if (not (equal expected actual tol))
     (t:fail (if msg
@@ -135,7 +135,7 @@
                       (t:str tol)))))
   t)
 
-(defun signals-error (thunk &optional msg)
+(defun signals-error (thunk msg)
   ;; thunk: (function (lambda () ...))
   (setq thunk (cond ((= (type thunk) 'USUBR) thunk)
                     ((= (type thunk) 'SUBR)  thunk)
