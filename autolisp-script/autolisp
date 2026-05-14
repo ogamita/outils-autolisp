@@ -103,6 +103,10 @@ Environment overrides:
                           eviter la dialog "Nouveau dessin". Defaut :
                           recherche dans ~/Library/Application Support/
                           Bricsys/BricsCAD/V*/en_US/Templates/Default-*.dwt
+  AUTOLISP_BRICSCAD_BATCH_EXIT_TIMEOUT   secondes a attendre que BricsCAD
+                          exit apres l'envoi de QUIT. Si depasse, le
+                          script kill explicitement le process (sur
+                          macOS, _QUIT ne tue souvent pas l'app). Defaut 10s.
   AUTOLISP_BOOTSTRAP_PHASE marker | core | log | full
   AUTOLISP_DWG            Default DWG for AutoCAD Core Console if --dwg not provided
   BRICSCAD_COM_MODE       auto | attach | launch | off   (Windows + BricsCAD only)
@@ -620,7 +624,15 @@ wait_for_protocol_status_prefix() {
 }
 
 wait_for_batch_process_exit() {
-  local timeout="$TIMEOUT_SECS"
+  # Apres que le lisp ait ecrit son status final, on attend que BricsCAD
+  # exit de lui-meme. Sur macOS, (command "_QUIT" "_Y") ne tue pas l'app
+  # (convention macOS : l'app reste vivante meme sans doc) -> on kill
+  # explicitement le process apres une courte attente. Le travail est
+  # deja termine cote lisp, donc le kill ne perd rien.
+  #
+  # Le timeout post-finish est court (defaut 10s) -- distinct du timeout
+  # de chargement TIMEOUT_SECS qui peut etre 180s.
+  local timeout="$BRICSCAD_BATCH_EXIT_TIMEOUT_SECS"
   [[ "$BRICSCAD_BATCH_LAUNCHED" -eq 1 ]] || return 0
 
   while [[ "$timeout" -gt 0 ]]; do
@@ -632,8 +644,10 @@ wait_for_batch_process_exit() {
     timeout=$((timeout - 1))
   done
 
-  autolisp_error "BricsCAD batch process did not exit after writing its final status within ${TIMEOUT_SECS}s."
-  return 124
+  autolisp_error "BricsCAD batch process did not exit after writing its final status within ${BRICSCAD_BATCH_EXIT_TIMEOUT_SECS}s; killing it."
+  kill_bricscad_batch_process || true
+  reap_bricscad_batch_process || true
+  return 0
 }
 
 PROTOCOL_REQUEST_SEQ=0
@@ -1338,6 +1352,7 @@ BRICSCAD_BATCH_REAPED=0
 BRICSCAD_BATCH_COMPLETED=0
 BRICSCAD_BATCH_START_TS=0
 BRICSCAD_BATCH_STARTUP_TIMEOUT_SECS="${AUTOLISP_BRICSCAD_BATCH_STARTUP_TIMEOUT:-15}"
+BRICSCAD_BATCH_EXIT_TIMEOUT_SECS="${AUTOLISP_BRICSCAD_BATCH_EXIT_TIMEOUT:-10}"
 
 case "$CAD_MODE" in
   automation)
