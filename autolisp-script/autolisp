@@ -51,6 +51,8 @@ Generic options:
   -q, --quiet             Supprime les messages d'information non essentiels.
   -v, --verbose           Affiche les labels structurés et davantage de diagnostics.
   -norc, --no-init        Inhibe le chargement de ~/.autolisp{,rc}{,.lsp}.
+  --dry, --dry-run        Affiche la commande qui aurait été exécutée (CAD launch)
+                          puis quitte sans rien lancer.
 
 Action options (processed in order):
   -l, --load FILE         Charger un fichier AutoLISP (load).
@@ -105,6 +107,7 @@ Environment overrides:
   AUTOLISP_KEEP_WORKDIR   1 to keep temporary workdir
   AUTOLISP_VERBOSE        1 for extra diagnostics
   AUTOLISP_QUIET          1 to suppress informational messages
+  AUTOLISP_DRY_RUN        1 -> idem --dry (print CAD launch cmd, exit)
   AUTOLISP_NO_INIT        1 to inhibit ~/.autolisp{,rc}{,.lsp,...} (idem -norc)
 
 Notes:
@@ -135,6 +138,7 @@ CLI_QUIET=0
 VERSION_ONLY=0
 NO_INIT="${AUTOLISP_NO_INIT:-0}"
 QUIT_REQUESTED=0
+DRY_RUN="${AUTOLISP_DRY_RUN:-0}"
 
 declare -a ACTION_KINDS=()
 declare -a ACTION_VALUES=()
@@ -204,6 +208,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     -norc|--no-init)
       NO_INIT=1
+      shift
+      ;;
+    --dry|--dry-run)
+      DRY_RUN=1
       shift
       ;;
     --quit)
@@ -1390,6 +1398,19 @@ autolisp_is_verbose() {
 
 autolisp_error() {
   printf 'ERROR: %s\n' "$*" >&2
+}
+
+# maybe_dry_run : si --dry / AUTOLISP_DRY_RUN=1, affiche la commande
+# de lancement CAD et termine le script avec code 0. Appele par chaque
+# run_* function juste avant l'execution effective. La commande est
+# affichee shell-quotee pour pouvoir etre copiee-collee.
+maybe_dry_run() {
+  [[ "$DRY_RUN" -eq 1 ]] || return 0
+  if (( $# > 0 )); then
+    printf '%q ' "$@"
+    printf '\n'
+  fi
+  exit 0
 }
 
 autolisp_hint() {
@@ -3500,6 +3521,7 @@ run_windows_autocad() {
     if [[ -n "$cscript" ]]; then
       local vbs
       vbs="$(write_windows_autocad_vbs)"
+      maybe_dry_run "$cscript" //nologo "$vbs"
       "$cscript" //nologo "$vbs" >"$WORKDIR/autocad-com-stdout.txt" 2>"$WORKDIR/autocad-com-stderr.txt" || true
       wait_for_status
       return 0
@@ -3516,12 +3538,14 @@ run_windows_autocad() {
       fi
       win_scrfile="$(to_windows_path "$SCRFILE")"
       workdir="$(windows_cad_workdir "$AUTOCAD_EXE")"
+      maybe_dry_run "$AUTOCAD_EXE" /p Epure /b "$win_scrfile"
       (
         cd "$workdir"
         "$AUTOCAD_EXE" /p Epure /b "$win_scrfile" >"$WORKDIR/autocad-stdout.txt" 2>"$WORKDIR/autocad-stderr.txt"
       ) || true
       return 0
     fi
+    maybe_dry_run "$AUTOCAD_EXE" /b "$RUNLSPFILE"
     "$AUTOCAD_EXE" /b "$RUNLSPFILE" >"$WORKDIR/autocad-stdout.txt" 2>"$WORKDIR/autocad-stderr.txt" || true
     return 0
   fi
@@ -3545,6 +3569,7 @@ run_windows_autocad() {
     return 2
   fi
 
+  maybe_dry_run "$acc" /i "$dwg" /s "$SCRFILE"
   "$acc" /i "$dwg" /s "$SCRFILE" >"$WORKDIR/autocad-stdout.txt" 2>"$WORKDIR/autocad-stderr.txt" || true
 }
 
@@ -3781,6 +3806,7 @@ run_windows_bricscad() {
     cmd+=(/P Epure)
   fi
   cmd+=(/B "$win_scrfile")
+  maybe_dry_run "${cmd[@]}"
 
   if [[ "$USE_FOREGROUND_BATCH_PROTOCOL" -eq 1 ]]; then
     printf '%q ' "${cmd[@]}" >"$BRICSCAD_BATCH_COMMAND_FILE"
@@ -3816,6 +3842,7 @@ run_macos_bricscad_fallback() {
   local app=""
   if [[ -n "${BRICSCAD_EXE:-}" && -x "${BRICSCAD_EXE}" && "${BRICSCAD_EXE}" != *.app && "${BRICSCAD_EXE}" != */Contents/MacOS/* ]]; then
     if [[ "$USE_REMOTE_PROTOCOL" -eq 1 ]]; then
+      maybe_dry_run "${BRICSCAD_EXE}" -B "$SCRFILE"
       MACOS_ASYNC=1
       BRICSCAD_BATCH_LAUNCHED=1
       BRICSCAD_BATCH_REAPED=0
@@ -3826,6 +3853,7 @@ run_macos_bricscad_fallback() {
       BRICSCAD_BATCH_PID=$!
       BRICSCAD_BATCH_CHILD_PID="$BRICSCAD_BATCH_PID"
     else
+      maybe_dry_run "${BRICSCAD_EXE}" "$RUNLSPFILE"
       "${BRICSCAD_EXE}" "$RUNLSPFILE" >"$WORKDIR/bricscad-stdout.txt" 2>"$WORKDIR/bricscad-stderr.txt" || true
     fi
     return 0
@@ -3840,6 +3868,13 @@ run_macos_bricscad_fallback() {
   MACOS_ASYNC=1
   local lisp_cmd
   lisp_cmd="(load \"${RUNLSPFILE}\")"
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    printf '# --dry: would drive %s via UI scripting (osascript), evaluating: %s\n' "$appname" "$lisp_cmd"
+    if [[ "$CAD_BACKEND" == "launch" ]]; then
+      printf '/usr/bin/open -a %q\n' "$app"
+    fi
+    exit 0
+  fi
   if [[ "$CAD_BACKEND" == "launch" ]]; then
     /usr/bin/open -a "$app" >/dev/null 2>&1 || true
   elif ! macos_app_running "$appname"; then
@@ -3911,6 +3946,7 @@ run_macos_bricscad_batch() {
     cmd+=("-P" "$BRICSCAD_MACOS_PROFILE")
   fi
   cmd+=("-B" "$SCRFILE")
+  maybe_dry_run "${cmd[@]}"
   if [[ "$EXPERIMENTAL_MACOS_BATCH_OPEN" == "1" && "$USE_REMOTE_PROTOCOL" -eq 1 && "$CAD_BACKEND" == "launch" && "$exe" == */Contents/MacOS/bricscad ]]; then
     app="$(find_macos_bricscad_app)"
     if [[ -n "$app" ]]; then
@@ -4005,6 +4041,11 @@ run_macos_autocad_fallback() {
   MACOS_ASYNC=1
   local lisp_cmd
   lisp_cmd="(load \"${RUNLSPFILE}\")"
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    printf '# --dry: would drive AutoCAD via UI scripting (osascript), evaluating: %s\n' "$lisp_cmd"
+    printf '/usr/bin/open -a %q\n' "$app"
+    exit 0
+  fi
   /usr/bin/open -a "$app" >/dev/null 2>&1 || true
   /usr/bin/osascript - "$lisp_cmd" <<'OSA' || true
 on run argv
@@ -4027,6 +4068,7 @@ OSA
 run_direct_unix_cli() {
   local exe="$1"
   [[ -n "$exe" && -f "$exe" ]] || return 3
+  maybe_dry_run "$exe" /b "$RUNLSPFILE"
   "$exe" /b "$RUNLSPFILE" >"$WORKDIR/direct-stdout.txt" 2>"$WORKDIR/direct-stderr.txt" || true
 }
 
@@ -4059,6 +4101,7 @@ case "$ENGINE" in
             ;;
         esac
       elif [[ -n "$BRICSCAD_EXE" ]]; then
+        maybe_dry_run "$BRICSCAD_EXE" -b "$SCRFILE"
         "$BRICSCAD_EXE" -b "$SCRFILE" >"$WORKDIR/bricscad-stdout.txt" 2>"$WORKDIR/bricscad-stderr.txt" || true
       else
         echo "bricscad executable not found. Set BRICSCAD_EXE." >&2
