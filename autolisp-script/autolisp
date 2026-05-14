@@ -2346,7 +2346,9 @@ else
   (autolisp-bootstrap-write-line *AUTOLISP_PROTOCOL_STATUSFILE*
                                  (strcat "FAILED " phase))
   (if *AUTOLISP_QUIT_ON_FINISH*
-    (vl-catch-all-apply 'command (list "_QUIT" "_Y")))
+    (progn
+      (vl-catch-all-apply 'setvar (list "DBMOD" 0))
+      (vl-catch-all-apply 'command (list "_QUIT" "_Y"))))
   1)
 
 (defun autolisp-write-line (path text / f)
@@ -2997,6 +2999,13 @@ else
               T)))))))))
 
 (defun autolisp-host-quit ()
+  ;; En batch macOS, BricsCAD ouvre un dessin neuf base sur un template
+  ;; (Default-mm.dwt) ; ce dessin est "modifie mais sans nom" (DBMOD != 0,
+  ;; DWGTITLED = 0). Un (command "_QUIT" "_Y") demande alors a sauver -> pop
+  ;; up "Save As" -> blocage. On force DBMOD a 0 pour signaler "rien a
+  ;; sauver" avant de lancer QUIT, ce qui evite tout prompt. Sur AutoCAD
+  ;; le comportement est identique.
+  (vl-catch-all-apply 'setvar (list "DBMOD" 0))
   (command "_QUIT" "_Y"))
 
 (setq *AUTOLISP_QUIT_SIGNAL* "__AUTOLISP_QUIT_SIGNAL__")
@@ -3284,6 +3293,12 @@ SCRFILE="$WORKDIR/run.scr"
   printf '(load "%s")\n' "$(escape_lisp_string "$RUNLSPFILE")"
 } >"$SCRFILE"
 if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 ]]; then
+  # Empile un QUIT de fallback exécuté par le script engine BricsCAD si
+  # (load run-common.lsp) crashe avant que autolisp-finish appelle son
+  # propre QUIT. SETVAR DBMOD 0 signale "rien a sauver" pour eviter la
+  # dialog "Save Changes?" sur le dessin issu du template -- meme idee
+  # que autolisp-host-quit cote AutoLISP.
+  printf '%s\n' '._SETVAR DBMOD 0' >>"$SCRFILE"
   printf '%s\n' '._QUIT _Y' >>"$SCRFILE"
 fi
 
