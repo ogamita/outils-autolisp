@@ -98,6 +98,11 @@ Environment overrides:
   AUTOLISP_MODE           auto | automation | batch
   AUTOLISP_BACKEND        attach | launch
   BRICSCAD_MACOS_PROFILE  BricsCAD profile name     (macOS + BricsCAD batch only)
+  AUTOLISP_BRICSCAD_TEMPLATE   Explicit template DWG/DWT for BricsCAD macOS
+                          batch ; passe en argument avant -B SCRFILE pour
+                          eviter la dialog "Nouveau dessin". Defaut :
+                          recherche dans ~/Library/Application Support/
+                          Bricsys/BricsCAD/V*/en_US/Templates/Default-*.dwt
   AUTOLISP_BOOTSTRAP_PHASE marker | core | log | full
   AUTOLISP_DWG            Default DWG for AutoCAD Core Console if --dwg not provided
   BRICSCAD_COM_MODE       auto | attach | launch | off   (Windows + BricsCAD only)
@@ -1495,6 +1500,43 @@ find_macos_bricscad_cli() {
     return 0
   fi
 
+  return 1
+}
+
+# find_macos_bricscad_template : trouve un template DWT (ou DWG) que
+# BricsCAD peut ouvrir au lancement, ce qui evite la boite de dialogue
+# "Nouveau dessin" en mode batch (sans drawing argument, BricsCAD reste
+# bloque a cette dialog et n'execute pas le -B script.scr).
+#
+# Ordre de recherche :
+#   1. $AUTOLISP_BRICSCAD_TEMPLATE (override explicite)
+#   2. $DWG si fourni via --dwg (compat AutoCAD core console)
+#   3. ~/Library/Application Support/Bricsys/BricsCAD/V*/en_US/Templates/Default-mm.dwt
+#   4. /Library/... idem (installation system-wide)
+#
+# Imprime le chemin trouve sur stdout, retourne 1 si rien trouve.
+find_macos_bricscad_template() {
+  local cand
+  if [[ -n "${AUTOLISP_BRICSCAD_TEMPLATE:-}" && -f "${AUTOLISP_BRICSCAD_TEMPLATE}" ]]; then
+    printf '%s\n' "$AUTOLISP_BRICSCAD_TEMPLATE"
+    return 0
+  fi
+  if [[ -n "${DWG:-}" && -f "${DWG}" ]]; then
+    printf '%s\n' "$DWG"
+    return 0
+  fi
+  for cand in \
+    "$HOME/Library/Application Support/Bricsys/BricsCAD/"*/en_US/Templates/Default-mm.dwt \
+    "$HOME/Library/Application Support/Bricsys/BricsCAD/"*/en_US/Templates/Default-m.dwt \
+    "$HOME/Library/Application Support/Bricsys/BricsCAD/"*/Templates/Default-mm.dwt \
+    "$HOME/Library/Application Support/Bricsys/BricsCAD/"*/Templates/Default-m.dwt \
+    "/Library/Application Support/Bricsys/BricsCAD/"*/en_US/Templates/Default-mm.dwt \
+    "/Library/Application Support/Bricsys/BricsCAD/"*/en_US/Templates/Default-m.dwt ; do
+    if [[ -f "$cand" ]]; then
+      printf '%s\n' "$cand"
+      return 0
+    fi
+  done
   return 1
 }
 
@@ -3942,6 +3984,14 @@ run_macos_bricscad_batch() {
     return 3
   fi
   cmd=("$exe")
+  # Sans drawing argument, BricsCAD reste bloque sur la dialog "Nouveau
+  # dessin" et n'execute pas le -B script.scr -> autolisp time out a
+  # 15s. On passe un template (DWT) pour court-circuiter cette dialog.
+  local template_dwg=""
+  template_dwg="$(find_macos_bricscad_template || true)"
+  if [[ -n "$template_dwg" ]]; then
+    cmd+=("$template_dwg")
+  fi
   if [[ -n "$BRICSCAD_MACOS_PROFILE" ]]; then
     cmd+=("-P" "$BRICSCAD_MACOS_PROFILE")
   fi
@@ -3951,6 +4001,9 @@ run_macos_bricscad_batch() {
     app="$(find_macos_bricscad_app)"
     if [[ -n "$app" ]]; then
       open_cmd=(/usr/bin/open -n -a "$app" --args)
+      if [[ -n "$template_dwg" ]]; then
+        open_cmd+=("$template_dwg")
+      fi
       if [[ -n "$BRICSCAD_MACOS_PROFILE" ]]; then
         open_cmd+=("-P" "$BRICSCAD_MACOS_PROFILE")
       fi
