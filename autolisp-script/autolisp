@@ -2362,8 +2362,8 @@ else
                                  (strcat "FAILED " phase))
   (if *AUTOLISP_QUIT_ON_FINISH*
     (progn
-      (vl-catch-all-apply 'setvar (list "DBMOD" 0))
-      (vl-catch-all-apply 'command (list "_QUIT" "_Y"))))
+      (vl-catch-all-apply 'setvar (list "FILEDIA" 0))
+      (vl-catch-all-apply 'command (list "_QUIT" "_N"))))
   1)
 
 (defun autolisp-write-line (path text / f)
@@ -3015,13 +3015,19 @@ else
 
 (defun autolisp-host-quit ()
   ;; En batch macOS, BricsCAD ouvre un dessin neuf base sur un template
-  ;; (Default-mm.dwt) ; ce dessin est "modifie mais sans nom" (DBMOD != 0,
-  ;; DWGTITLED = 0). Un (command "_QUIT" "_Y") demande alors a sauver -> pop
-  ;; up "Save As" -> blocage. On force DBMOD a 0 pour signaler "rien a
-  ;; sauver" avant de lancer QUIT, ce qui evite tout prompt. Sur AutoCAD
-  ;; le comportement est identique.
-  (vl-catch-all-apply 'setvar (list "DBMOD" 0))
-  (command "_QUIT" "_Y"))
+  ;; (Default-mm.dwt) ; ce dessin est marque modifie + sans nom. Le QUIT
+  ;; declenche alors la dialog "Save Changes?".
+  ;;
+  ;; DBMOD est read-only sur BricsCAD V26 (setvar echoue silencieusement),
+  ;; donc on ne peut pas pre-zeroter le flag de modif. A la place, on :
+  ;;   - met FILEDIA a 0 pour forcer les prompts en ligne de commande
+  ;;     (pas de modal qui bloquerait le batch),
+  ;;   - repond _N au prompt "Save Changes? Y/N/C" -> discard changes.
+  ;; Le dessin issu du template est de toute facon ephemere ; aucune perte.
+  ;; Si l'utilisateur veut sauver, il doit le faire explicitement dans
+  ;; son script (par ex. (vl-cmdf "_QSAVE")).
+  (vl-catch-all-apply 'setvar (list "FILEDIA" 0))
+  (command "_QUIT" "_N"))
 
 (setq *AUTOLISP_QUIT_SIGNAL* "__AUTOLISP_QUIT_SIGNAL__")
 (setq *AUTOLISP_QUIT_REQUESTED* nil)
@@ -3308,13 +3314,20 @@ SCRFILE="$WORKDIR/run.scr"
   printf '(load "%s")\n' "$(escape_lisp_string "$RUNLSPFILE")"
 } >"$SCRFILE"
 if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 ]]; then
-  # Empile un QUIT de fallback exécuté par le script engine BricsCAD si
+  # Empile un QUIT de fallback execute par le script engine BricsCAD si
   # (load run-common.lsp) crashe avant que autolisp-finish appelle son
-  # propre QUIT. SETVAR DBMOD 0 signale "rien a sauver" pour eviter la
-  # dialog "Save Changes?" sur le dessin issu du template -- meme idee
-  # que autolisp-host-quit cote AutoLISP.
-  printf '%s\n' '._SETVAR DBMOD 0' >>"$SCRFILE"
-  printf '%s\n' '._QUIT _Y' >>"$SCRFILE"
+  # propre QUIT.
+  #
+  # ._FILEDIA 0 force tout prompt (notamment "Save As") en ligne de commande
+  # plutot qu'en dialog modal. ._QUIT _N repond "No" au prompt "Save
+  # Changes?" -> discard. Cf. autolisp-host-quit cote AutoLISP, meme
+  # logique.
+  #
+  # Important : ne pas tenter ._SETVAR DBMOD 0 ; DBMOD est read-only sur
+  # BricsCAD V26 (l'echec silencieux laisse le `0` orphelin remonter en
+  # commande inconnue -> "Impossible de reconnaitre la commande 0").
+  printf '%s\n' '._FILEDIA 0' >>"$SCRFILE"
+  printf '%s\n' '._QUIT _N' >>"$SCRFILE"
 fi
 
 export OUTFILE ERRFILE STATUSFILE INPFILE
@@ -4095,22 +4108,42 @@ run_macos_bricscad_batch() {
 
 kill_bricscad_batch_process() {
   local pid=""
+  local pids=""
 
   if [[ "$BRICSCAD_BATCH_LAUNCHED" -ne 1 ]]; then
     return 0
   fi
-  if [[ -n "$BRICSCAD_BATCH_PID" ]]; then
-    pid="$BRICSCAD_BATCH_PID"
-  else
-    pid="$(find_bricscad_batch_pid || true)"
+
+  # Sur macOS, BricsCAD peut survivre apres un (command "_QUIT" ...) parce
+  # que l'app reste vivante meme sans document (convention macOS). On tue
+  # explicitement tout process bricscad dont l'argv contient notre SCRFILE
+  # -- pas seulement le premier match, au cas ou il y aurait plusieurs
+  # instances (rare mais possible avec relances apres erreur).
+  if [[ -n "${SCRFILE:-}" ]]; then
+    pids="$(ps -axo pid=,command= 2>/dev/null \
+              | awk -v scr="$SCRFILE" 'index($0, scr) { gsub(/^[[:space:]]+/, ""); split($0, f, /[[:space:]]+/); print f[1] }')"
   fi
-  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+  # Ajoute le PID tracke si pas deja dans la liste (resilient si SCRFILE
+  # est passe en var d'env plutot qu'en argv visible dans ps).
+  if [[ -n "${BRICSCAD_BATCH_PID:-}" ]]; then
+    case " $pids " in *" $BRICSCAD_BATCH_PID "*) ;; *) pids="$pids $BRICSCAD_BATCH_PID" ;; esac
+  fi
+
+  for pid in $pids; do
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    kill -0 "$pid" 2>/dev/null || continue
     kill -TERM "$pid" 2>/dev/null || true
-    sleep 1
+  done
+
+  sleep 1
+
+  for pid in $pids; do
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
     if kill -0 "$pid" 2>/dev/null; then
       kill -KILL "$pid" 2>/dev/null || true
     fi
-  fi
+  done
+
   reap_bricscad_batch_process || true
 }
 
