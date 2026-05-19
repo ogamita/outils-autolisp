@@ -3144,14 +3144,21 @@ EOLISP
 (defun autolisp-safe-setvar (name value)
   (setvar name value))
 
+;; Tente un setvar et avale silencieusement les erreurs. Indispensable pour
+;; les variables comme LOGFILENAME qui sont read-only sous AutoCAD mais
+;; read/write sous BricsCAD : on veut le best-effort sur les deux moteurs
+;; sans polluer ERRFILE quand le moteur rejette une variable connue.
+(defun autolisp-try-setvar (name value)
+  (vl-catch-all-apply 'setvar (list name value)))
+
 (defun autolisp-log-setup (/ old-mode old-path old-name)
   (setq old-mode (autolisp-safe-getvar "LOGFILEMODE"))
   (setq old-path (autolisp-safe-getvar "LOGFILEPATH"))
   (setq old-name (autolisp-safe-getvar "LOGFILENAME"))
-  (autolisp-safe-setvar "LOGFILEPATH" *AUTOLISP_LOGDIR*)
+  (autolisp-try-setvar "LOGFILEPATH" *AUTOLISP_LOGDIR*)
   (if *AUTOLISP_LOGNAME*
-    (autolisp-safe-setvar "LOGFILENAME" *AUTOLISP_LOGNAME*))
-  (autolisp-safe-setvar "LOGFILEMODE" 1)
+    (autolisp-try-setvar "LOGFILENAME" *AUTOLISP_LOGNAME*))
+  (autolisp-try-setvar "LOGFILEMODE" 1)
   (list old-mode old-path old-name))
 
 (defun autolisp-log-restore (state / old-mode old-path old-name)
@@ -3160,9 +3167,9 @@ EOLISP
       (setq old-mode (nth 0 state))
       (setq old-path (nth 1 state))
       (setq old-name (nth 2 state))
-      (if old-path (autolisp-safe-setvar "LOGFILEPATH" old-path))
-      (if old-name (autolisp-safe-setvar "LOGFILENAME" old-name))
-      (if old-mode (autolisp-safe-setvar "LOGFILEMODE" old-mode)))))
+      (if old-path (autolisp-try-setvar "LOGFILEPATH" old-path))
+      (if old-name (autolisp-try-setvar "LOGFILENAME" old-name))
+      (if old-mode (autolisp-try-setvar "LOGFILEMODE" old-mode)))))
 
 (setq _autolisp_log_setup_result (vl-catch-all-apply 'autolisp-log-setup nil))
 (if (vl-catch-all-error-p _autolisp_log_setup_result)
