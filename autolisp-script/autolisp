@@ -1510,17 +1510,85 @@ if autolisp_is_debug; then
   done
 fi
 
+# Liste les PIDs des processus acad.exe actuellement vivants, un par
+# ligne. Utilise tasklist en mode CSV sans en-tete pour fiabilite.
+list_acad_pids_now() {
+  MSYS_NO_PATHCONV=1 /c/Windows/System32/tasklist.exe \
+      /FI "IMAGENAME eq acad.exe" /FO CSV /NH 2>/dev/null \
+    | awk -F, '{gsub(/"/,"",$2); if ($2 ~ /^[0-9]+$/) print $2}' \
+    | sort -u
+}
+
+# Snapshot des PIDs acad.exe a un instant donne, dans le fichier passe.
+snapshot_acad_pids() {
+  list_acad_pids_now >"$1" 2>/dev/null || : >"$1"
+}
+
+# Recalcule la difference entre les acad.exe vivants maintenant et le
+# snapshot pris avant le lancement du pont COM. Le resultat (les
+# instances que le pont a fait apparaitre) est ecrit dans
+# WORKDIR/acad-com-pid.txt -- un PID par ligne. Le trap on_interrupt
+# lit ce fichier pour cibler les kill.
+update_com_launched_acad_pids() {
+  [[ -n "${WORKDIR:-}" ]] || return 0
+  local before="$WORKDIR/acad-pids-before.txt"
+  local now="$WORKDIR/acad-pids-now.txt"
+  local out="$WORKDIR/acad-com-pid.txt"
+  [[ -f "$before" ]] || return 0
+  list_acad_pids_now >"$now" 2>/dev/null || : >"$now"
+  # Lignes presentes dans now mais absentes de before = nouvelles instances.
+  comm -23 "$now" "$before" >"$out" 2>/dev/null || : >"$out"
+}
+
+# Tue le pont VBScript et toutes les instances acad.exe que ce pont a
+# *lancees* (jamais une instance attachee de l'utilisateur).
+# - cscript-pid.txt : pid du processus cscript que bash a lance en
+#   arriere-plan. Tuer cscript libere la boucle de polling du wrapper.
+# - acad-com-pid.txt : un PID par ligne, ecrit periodiquement par
+#   update_com_launched_acad_pids comme difference entre les acad.exe
+#   vivants maintenant et ceux presents AVANT le lancement de cscript.
+#   En sortie normale (app.Quit reussi), cette difference redevient
+#   vide. Le mode `attach` ne lance jamais de nouvelle instance, donc
+#   cette fonction ne touche aucune instance que l'utilisateur a
+#   ouverte lui-meme.
+kill_autocad_com_process() {
+  [[ -n "${WORKDIR:-}" ]] || return 0
+  local cs_pidfile="$WORKDIR/cscript-pid.txt"
+  local ac_pidfile="$WORKDIR/acad-com-pid.txt"
+  local pid
+  if [[ -f "$cs_pidfile" ]]; then
+    pid="$(head -n 1 "$cs_pidfile" 2>/dev/null | tr -dc '0-9' || true)"
+    if [[ -n "$pid" ]]; then
+      autolisp_debug "killing cscript bridge PID=$pid"
+      kill "$pid" 2>/dev/null || true
+      MSYS_NO_PATHCONV=1 /c/Windows/System32/taskkill.exe /F /PID "$pid" >/dev/null 2>&1 || true
+    fi
+    rm -f "$cs_pidfile" 2>/dev/null || true
+  fi
+  if [[ -f "$ac_pidfile" ]]; then
+    while IFS= read -r pid; do
+      pid="$(printf '%s' "$pid" | tr -dc '0-9')"
+      [[ -n "$pid" ]] || continue
+      autolisp_debug "killing COM-launched acad.exe PID=$pid"
+      MSYS_NO_PATHCONV=1 /c/Windows/System32/taskkill.exe /F /PID "$pid" >/dev/null 2>&1 || true
+    done <"$ac_pidfile"
+    rm -f "$ac_pidfile" 2>/dev/null || true
+  fi
+}
+
 on_interrupt() {
   INTERRUPT_COUNT=$((INTERRUPT_COUNT + 1))
   if [[ "$INTERRUPT_COUNT" -ge 2 ]]; then
     CLEANUP_WORKDIR="1"
     kill_bricscad_batch_process || true
+    kill_autocad_com_process || true
     echo "autolisp: second interrupt received; aborting now." >&2
     exit 130
   fi
   INTERRUPTED=1
   CLEANUP_WORKDIR="1"
   kill_bricscad_batch_process || true
+  kill_autocad_com_process || true
   echo "autolisp: interrupt requested; keeping workdir and finishing current handshake..." >&2
 }
 
@@ -3689,14 +3757,47 @@ run_windows_autocad() {
     fi
     autolisp_debug "cscript=${cscript:-<not found>}"
     if [[ -n "$cscript" ]]; then
-      local vbs cscript_rc
+      local vbs cscript_rc cscript_pid
       vbs="$(write_windows_autocad_vbs)"
       maybe_dry_run "$cscript" //nologo "$vbs"
       "$cscript" //nologo "$vbs" >"$WORKDIR/autocad-com-stdout.txt" 2>"$WORKDIR/autocad-com-stderr.txt" || true
       autolisp_debug "VBS bridge written: $vbs ($(wc -c <"$vbs" 2>/dev/null || echo ?) bytes)"
       autolisp_debug "run cscript+vbs: $(autolisp_debug_format_cmd "$cscript" //nologo "$vbs")"
-      "$cscript" //nologo "$vbs" >"$WORKDIR/autocad-com-stdout.txt" 2>"$WORKDIR/autocad-com-stderr.txt"
-      cscript_rc=$?
+      # Snapshot des PIDs acad.exe deja vivants AVANT le lancement du pont,
+      # de sorte qu'on puisse identifier les instances que CE wrapper a
+      # creees (par difference). WMI n'est pas accessible cote VBS sur
+      # certains postes (policy enterprise), donc cette approche bash
+      # via tasklist sert de capture fiable.
+      snapshot_acad_pids "$WORKDIR/acad-pids-before.txt"
+      # cscript est lance en arriere-plan + poll non bloquant. Le `wait`
+      # builtin de bash 5.2 sur MSYS2 ne reveille pas wait sur SIGINT
+      # quand on attend un process Windows natif (cscript.exe), donc on
+      # boucle a la main : sleep court + verification du flag INTERRUPTED
+      # (mis a 1 par le trap). Cela permet d'interrompre le pont COM
+      # bloque dans sa WaitStatus interne sans devoir patienter
+      # TIMEOUT_SECS.
+      "$cscript" //nologo "$vbs" >"$WORKDIR/autocad-com-stdout.txt" 2>"$WORKDIR/autocad-com-stderr.txt" &
+      cscript_pid=$!
+      printf '%s\n' "$cscript_pid" >"$WORKDIR/cscript-pid.txt"
+      autolisp_debug "cscript started in background pid=$cscript_pid"
+      while kill -0 "$cscript_pid" 2>/dev/null; do
+        # Met a jour la liste des acad.exe que le pont a fait apparaitre,
+        # pour que le trap puisse les tuer en cas d'interrupt.
+        update_com_launched_acad_pids
+        if [[ "$INTERRUPTED" -eq 1 ]]; then
+          autolisp_debug "INTERRUPTED detected during cscript wait; killing bridge"
+          kill_autocad_com_process || true
+          break
+        fi
+        sleep 0.5
+      done
+      cscript_rc=0
+      wait "$cscript_pid" 2>/dev/null || cscript_rc=$?
+      rm -f "$WORKDIR/cscript-pid.txt"
+      # En sortie normale (app.Quit reussi cote VBS), les acad.exe que
+      # nous avons lances ont disparu : recalcule la liste, ce qui
+      # videra le fichier marqueur.
+      update_com_launched_acad_pids
       autolisp_debug "cscript exit rc=$cscript_rc"
       if autolisp_is_debug; then
         autolisp_debug "VBS stdout (autocad-com-stdout.txt):"
@@ -4410,6 +4511,7 @@ fi
 
 if [[ "$wait_rc" -ne 0 ]]; then
   kill_bricscad_batch_process || true
+  kill_autocad_com_process || true
 fi
 
 stop_protocol_foreground_relay
