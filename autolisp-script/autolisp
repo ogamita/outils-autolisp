@@ -50,6 +50,8 @@ Generic options:
   -h, --help              Affiche ce message d'aide puis quitte.
   -q, --quiet             Supprime les messages d'information non essentiels.
   -v, --verbose           Affiche les labels structurés et davantage de diagnostics.
+  -d, --debug             Trace chaque étape interne (sondes [DEBUG] sur stderr,
+                          y compris les commandes externes lancées).
   -norc, --no-init        Inhibe le chargement de ~/.autolisp{,rc}{,.lsp}.
   --dry, --dry-run        Affiche la commande qui aurait été exécutée (CAD launch)
                           puis quitte sans rien lancer.
@@ -117,6 +119,7 @@ Environment overrides:
   AUTOLISP_VERBOSE        1 for extra diagnostics
   AUTOLISP_QUIET          1 to suppress informational messages
   AUTOLISP_DRY_RUN        1 -> idem --dry (print CAD launch cmd, exit)
+  AUTOLISP_DEBUG          1 to trace each step (idem -d|--debug)
   AUTOLISP_NO_INIT        1 to inhibit ~/.autolisp{,rc}{,.lsp,...} (idem -norc)
 
 Notes:
@@ -144,6 +147,8 @@ BOOTSTRAP_PHASE="${AUTOLISP_BOOTSTRAP_PHASE:-full}"
 INTERACTIVE=0
 CLI_VERBOSE=0
 CLI_QUIET=0
+CLI_DEBUG=0
+AUTOLISP_DEBUG="${AUTOLISP_DEBUG:-0}"
 VERSION_ONLY=0
 NO_INIT="${AUTOLISP_NO_INIT:-0}"
 QUIT_REQUESTED=0
@@ -247,6 +252,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     -q|--quiet)
       CLI_QUIET=1
+      shift
+      ;;
+    -d|--debug)
+      CLI_DEBUG=1
       shift
       ;;
     -x|--eval)
@@ -1407,6 +1416,17 @@ fi
 if [[ "$CLI_QUIET" -eq 1 ]]; then
   AUTOLISP_VERBOSITY=0
 fi
+if [[ "$CLI_DEBUG" -eq 1 ]]; then
+  AUTOLISP_DEBUG=1
+fi
+# Exporte pour propagation aux processus enfants (cscript, sous-shells, etc.).
+export AUTOLISP_DEBUG
+# FD 3 = copie de stderr "originale", utilisee par autolisp_debug. Les
+# redirections classiques 2>fichier appliquees aux fonctions wrapper
+# ne suivent pas FD 3, ce qui garantit que les sondes [DEBUG] restent
+# visibles sur le terminal meme quand on capture stderr d'une commande
+# externe.
+exec 3>&2
 
 autolisp_is_quiet() {
   [[ "$AUTOLISP_VERBOSITY" -le 0 ]]
@@ -1449,6 +1469,46 @@ autolisp_verbose_dump_file() {
   autolisp_is_verbose || return 0
   cat "$file" >&2
 }
+
+autolisp_is_debug() {
+  [[ "${AUTOLISP_DEBUG:-0}" == "1" ]]
+}
+
+# Ecrit toujours via FD 3 (cf. exec 3>&2 plus haut) pour rester visible
+# meme quand le caller redirige stderr.
+autolisp_debug() {
+  autolisp_is_debug || return 0
+  printf '[DEBUG] %s\n' "$*" >&3
+}
+
+# Pretty-print d'une ligne de commande pour les sondes [DEBUG run ...].
+autolisp_debug_format_cmd() {
+  local rendered=""
+  local a
+  for a in "$@"; do
+    rendered+="$(printf '%q ' "$a")"
+  done
+  printf '%s' "${rendered% }"
+}
+
+# Dump initial des choix CLI / environnement, des qu'on connait verbosite & debug.
+autolisp_debug "version=$(autolisp_version_string | tr -d '\n')"
+autolisp_debug "OS=$OS IS_WINDOWS=$IS_WINDOWS IS_MACOS=$IS_MACOS"
+autolisp_debug "ENGINE=$ENGINE BOOTSTRAP_PHASE=$BOOTSTRAP_PHASE"
+autolisp_debug "CAD_MODE=$CAD_MODE CAD_BACKEND=$CAD_BACKEND"
+autolisp_debug "AUTOCAD_COM_MODE=$AUTOCAD_COM_MODE BRICSCAD_COM_MODE=$BRICSCAD_COM_MODE"
+autolisp_debug "AUTOCAD_EXE=${AUTOCAD_EXE:-<unset>}"
+autolisp_debug "BRICSCAD_EXE=${BRICSCAD_EXE:-<unset>}"
+autolisp_debug "AUTOCAD_ACCORECONSOLE=${AUTOCAD_ACCORECONSOLE:-<unset>}"
+autolisp_debug "EPURE_REQUESTED=$EPURE_REQUESTED INTERACTIVE=$INTERACTIVE QUIT_REQUESTED=$QUIT_REQUESTED"
+autolisp_debug "MAIN=$MAIN MAIN_REQUESTED=$MAIN_REQUESTED HAS_DWG=$([ -n "$DWG" ] && echo 1 || echo 0)"
+autolisp_debug "TIMEOUT_SECS=$TIMEOUT_SECS AUTOLISP_WAIT_SECS=${AUTOLISP_WAIT_SECS:-<unset>}"
+autolisp_debug "actions=${#ACTION_KINDS[@]}"
+if autolisp_is_debug; then
+  for i in "${!ACTION_KINDS[@]}"; do
+    autolisp_debug "  action[$i]=${ACTION_KINDS[$i]}: ${ACTION_VALUES[$i]}"
+  done
+fi
 
 on_interrupt() {
   INTERRUPT_COUNT=$((INTERRUPT_COUNT + 1))
@@ -2134,6 +2194,8 @@ else
 fi
 mkdir -p "$BASE_WORKDIR"
 WORKDIR="$(mktemp -d "$BASE_WORKDIR/autolisp.XXXXXX")"
+autolisp_debug "WORKDIR=$WORKDIR"
+autolisp_debug "USE_REMOTE_PROTOCOL=$USE_REMOTE_PROTOCOL USE_FOREGROUND_BATCH_PROTOCOL=$USE_FOREGROUND_BATCH_PROTOCOL"
 PROTOCOL_REQUEST_SEQFILE="$WORKDIR/protocol-request-seq.txt"
 rm -f "$PROTOCOL_REQUEST_SEQFILE"
 autolisp_protocol_init_session "$WORKDIR"
@@ -2240,6 +2302,7 @@ fi
 if [[ $IS_WINDOWS -eq 1 && "$ENGINE" == "autocad" && "$AUTOCAD_COM_MODE" != "off" ]]; then
   QUIT_ON_FINISH=0
 fi
+autolisp_debug "QUIT_ON_FINISH=$QUIT_ON_FINISH"
 
 RUNLSPFILE="$WORKDIR/run-common.lsp"
 if [[ "$BOOTSTRAP_PHASE" == "marker" ]]; then
@@ -3300,6 +3363,7 @@ EOLISP
 EOLISP
 } >"$RUNLSPFILE"
 fi
+autolisp_debug "RUNLSPFILE=$RUNLSPFILE size=$(wc -c <"$RUNLSPFILE" 2>/dev/null || echo ?)"
 
 SCRFILE="$WORKDIR/run.scr"
 {
@@ -3329,9 +3393,15 @@ if [[ "$ENGINE" == "bricscad" && $IS_MACOS -eq 1 ]]; then
   printf '%s\n' '._FILEDIA 0' >>"$SCRFILE"
   printf '%s\n' '._QUIT _N' >>"$SCRFILE"
 fi
+autolisp_debug "SCRFILE=$SCRFILE size=$(wc -c <"$SCRFILE" 2>/dev/null || echo ?)"
 
 export OUTFILE ERRFILE STATUSFILE INPFILE
+autolisp_debug "OUTFILE=$OUTFILE"
+autolisp_debug "ERRFILE=$ERRFILE"
+autolisp_debug "STATUSFILE=$STATUSFILE"
+autolisp_debug "INPFILE=$INPFILE"
 
+autolisp_debug "calling start_protocol_interactive_helper"
 start_protocol_interactive_helper
 
 write_windows_autocad_vbs() {
@@ -3486,6 +3556,12 @@ Function CreateApp()
   On Error GoTo 0
 End Function
 
+' Initialise app/doc explicitement: sinon ces variants restent Empty quand
+' mode = "launch" (le bloc attach/auto ne les Set pas), et "If app Is
+' Nothing" plante avec "Objet requis" car Empty n'est pas un objet.
+Set app = Nothing
+Set doc = Nothing
+
 If mode = "attach" Or mode = "auto" Then
   Set app = AttachApp()
   If Not app Is Nothing Then attached = True
@@ -3596,6 +3672,7 @@ run_windows_autocad() {
   local win_scrfile=""
   local epure_control=""
   local workdir=""
+  autolisp_debug "run_windows_autocad: AUTOCAD_COM_MODE=$AUTOCAD_COM_MODE AUTOCAD_EXE=${AUTOCAD_EXE:-<unset>} EPURE_REQUESTED=$EPURE_REQUESTED"
   if [[ "$AUTOCAD_COM_MODE" != "off" ]]; then
     local cscript=""
     if command -v cscript >/dev/null 2>&1; then
@@ -3603,12 +3680,46 @@ run_windows_autocad() {
     elif [[ -x /c/Windows/System32/cscript.exe ]]; then
       cscript="/c/Windows/System32/cscript.exe"
     fi
+    autolisp_debug "cscript=${cscript:-<not found>}"
     if [[ -n "$cscript" ]]; then
-      local vbs
+      local vbs cscript_rc
       vbs="$(write_windows_autocad_vbs)"
       maybe_dry_run "$cscript" //nologo "$vbs"
       "$cscript" //nologo "$vbs" >"$WORKDIR/autocad-com-stdout.txt" 2>"$WORKDIR/autocad-com-stderr.txt" || true
+      autolisp_debug "VBS bridge written: $vbs ($(wc -c <"$vbs" 2>/dev/null || echo ?) bytes)"
+      autolisp_debug "run cscript+vbs: $(autolisp_debug_format_cmd "$cscript" //nologo "$vbs")"
+      "$cscript" //nologo "$vbs" >"$WORKDIR/autocad-com-stdout.txt" 2>"$WORKDIR/autocad-com-stderr.txt"
+      cscript_rc=$?
+      autolisp_debug "cscript exit rc=$cscript_rc"
+      if autolisp_is_debug; then
+        autolisp_debug "VBS stdout (autocad-com-stdout.txt):"
+        sed 's/^/[DEBUG] | /' "$WORKDIR/autocad-com-stdout.txt" >&3 2>/dev/null || true
+        if [[ -s "$WORKDIR/autocad-com-stderr.txt" ]]; then
+          autolisp_debug "VBS stderr (autocad-com-stderr.txt):"
+          sed 's/^/[DEBUG] | /' "$WORKDIR/autocad-com-stderr.txt" >&3 2>/dev/null || true
+        fi
+      fi
+      # cscript ne propage pas toujours les erreurs VBScript runtime via
+      # son code de sortie (rc=0 alors qu'une erreur fatale a ete emise sur
+      # stderr). Si on detecte un marqueur d'erreur VBScript, on ecrit un
+      # statut d'erreur immediat pour que wait_for_status sorte vite, au
+      # lieu de patienter TIMEOUT_SECS sur __PENDING__.
+      if [[ -s "$WORKDIR/autocad-com-stderr.txt" ]] \
+         && grep -qE 'Microsoft VBScript|Erreur d.x.cution Microsoft VBScript' "$WORKDIR/autocad-com-stderr.txt"; then
+        autolisp_debug "VBScript runtime error detected; failing fast"
+        {
+          printf 'ERROR COM bridge: VBScript runtime error (cscript exit %d).\n' "$cscript_rc"
+          cat "$WORKDIR/autocad-com-stderr.txt"
+        } >>"$ERRFILE"
+        echo "2" >"$STATUSFILE"
+      elif [[ "$cscript_rc" -ne 0 ]]; then
+        autolisp_debug "cscript exit non-zero ($cscript_rc); failing fast"
+        printf 'ERROR COM bridge: cscript exited %d.\n' "$cscript_rc" >>"$ERRFILE"
+        echo "$cscript_rc" >"$STATUSFILE"
+      fi
+      autolisp_debug "calling wait_for_status (timeout ${TIMEOUT_SECS}s)"
       wait_for_status
+      autolisp_debug "wait_for_status rc=$?"
       return 0
     fi
     echo "cscript.exe not found; falling back to direct AutoCAD launch." >&2
@@ -3624,14 +3735,19 @@ run_windows_autocad() {
       win_scrfile="$(to_windows_path "$SCRFILE")"
       workdir="$(windows_cad_workdir "$AUTOCAD_EXE")"
       maybe_dry_run "$AUTOCAD_EXE" /p Epure /b "$win_scrfile"
+      autolisp_debug "direct acad.exe + EPURE: workdir=$workdir scrfile=$win_scrfile"
+      autolisp_debug "run acad.exe /p Epure /b: $(autolisp_debug_format_cmd "$AUTOCAD_EXE" /p Epure /b "$win_scrfile")"
       (
         cd "$workdir"
         "$AUTOCAD_EXE" /p Epure /b "$win_scrfile" >"$WORKDIR/autocad-stdout.txt" 2>"$WORKDIR/autocad-stderr.txt"
       ) || true
+      autolisp_debug "acad.exe /p Epure /b exit rc=$?"
       return 0
     fi
     maybe_dry_run "$AUTOCAD_EXE" /b "$RUNLSPFILE"
+    autolisp_debug "run acad.exe /b: $(autolisp_debug_format_cmd "$AUTOCAD_EXE" /b "$RUNLSPFILE")"
     "$AUTOCAD_EXE" /b "$RUNLSPFILE" >"$WORKDIR/autocad-stdout.txt" 2>"$WORKDIR/autocad-stderr.txt" || true
+    autolisp_debug "acad.exe /b exit rc=$?"
     return 0
   fi
 
@@ -3645,6 +3761,7 @@ run_windows_autocad() {
     acc="$(ls -1 "/c/Program Files/Autodesk"/*/accoreconsole.exe 2>/dev/null | head -n 1 || true)"
   fi
   local dwg="${DWG:-${AUTOLISP_DWG:-}}"
+  autolisp_debug "accoreconsole fallback: acc=${acc:-<not found>} dwg=${dwg:-<unset>}"
   if [[ -z "$acc" || ! -f "$acc" ]]; then
     echo "Neither AutoCAD COM/direct nor accoreconsole.exe is available. Set AUTOCAD_EXE or AUTOCAD_ACCORECONSOLE." >&2
     return 3
@@ -3655,7 +3772,9 @@ run_windows_autocad() {
   fi
 
   maybe_dry_run "$acc" /i "$dwg" /s "$SCRFILE"
+  autolisp_debug "run accoreconsole: $(autolisp_debug_format_cmd "$acc" /i "$dwg" /s "$SCRFILE")"
   "$acc" /i "$dwg" /s "$SCRFILE" >"$WORKDIR/autocad-stdout.txt" 2>"$WORKDIR/autocad-stderr.txt" || true
+  autolisp_debug "accoreconsole exit rc=$?"
 }
 
 write_windows_bricscad_vbs() {
@@ -3807,24 +3926,35 @@ EOFVBS
 
 wait_for_status() {
   local timeout="$TIMEOUT_SECS"
+  local prev_status=""
+  autolisp_debug "wait_for_status start timeout=$TIMEOUT_SECS STATUSFILE=$STATUSFILE"
   while [[ "$timeout" -gt 0 ]]; do
     if [[ "$INTERRUPTED" -eq 1 ]]; then
+      autolisp_debug "wait_for_status: INTERRUPTED"
       return 130
     fi
     local s
     s="$(tr -d '[:space:]' <"$STATUSFILE" 2>/dev/null || true)"
+    if autolisp_is_debug && [[ "$s" != "$prev_status" ]]; then
+      autolisp_debug "wait_for_status: status='${s:-<empty>}' (remaining ${timeout}s)"
+      prev_status="$s"
+    fi
     if [[ -n "$s" && "$s" != "__PENDING__" && "$s" != "99" ]]; then
+      autolisp_debug "wait_for_status: ready status='$s'"
       return 0
     fi
     if batch_startup_stalled "$s"; then
+      autolisp_debug "wait_for_status: batch_startup_stalled"
       return 124
     fi
     if batch_runner_done_without_status "$s"; then
+      autolisp_debug "wait_for_status: batch_runner_done_without_status"
       return 1
     fi
     sleep 1
     timeout=$((timeout - 1))
   done
+  autolisp_debug "wait_for_status: timeout reached"
   autolisp_error "timeout waiting for CAD runner completion after ${TIMEOUT_SECS}s"
   if [[ "$ENGINE" == "bricscad" && $IS_WINDOWS -eq 0 && "$MACOS_ASYNC" -eq 1 ]]; then
     local status_trimmed has_output has_errors
@@ -4188,21 +4318,28 @@ run_direct_unix_cli() {
   "$exe" /b "$RUNLSPFILE" >"$WORKDIR/direct-stdout.txt" 2>"$WORKDIR/direct-stderr.txt" || true
 }
 
+autolisp_debug "engine dispatch: ENGINE=$ENGINE IS_WINDOWS=$IS_WINDOWS IS_MACOS=$IS_MACOS"
 case "$ENGINE" in
   autocad)
     if [[ $IS_WINDOWS -eq 1 ]]; then
+      autolisp_debug "-> run_windows_autocad"
       run_windows_autocad || true
+      autolisp_debug "<- run_windows_autocad"
     else
       if [[ -n "$AUTOCAD_EXE" ]]; then
+        autolisp_debug "-> run_direct_unix_cli AUTOCAD_EXE=$AUTOCAD_EXE"
         run_direct_unix_cli "$AUTOCAD_EXE" || run_macos_autocad_fallback || true
       else
+        autolisp_debug "-> run_macos_autocad_fallback (no AUTOCAD_EXE)"
         run_macos_autocad_fallback || true
       fi
     fi
     ;;
   bricscad)
     if [[ $IS_WINDOWS -eq 1 ]]; then
+      autolisp_debug "-> run_windows_bricscad"
       run_windows_bricscad || true
+      autolisp_debug "<- run_windows_bricscad"
     else
       if [[ $IS_MACOS -eq 1 ]]; then
         case "$BRICSCAD_MACOS_EFFECTIVE_MODE" in
