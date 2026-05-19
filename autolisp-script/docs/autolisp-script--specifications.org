@@ -287,6 +287,76 @@ options et variables d'environnement, le wrapper sort en =3=.
 
 Le mode =--interactive= impose =full=.
 
+* Pont COM AutoCAD (Windows)
+
+Sous Windows, l'option =--autocad= peut piloter une instance complète
+=acad.exe= via le pont COM =AutoCAD.Application=. Ce mode est requis
+pour les fonctions AutoLISP qui ne sont pas disponibles dans
+=accoreconsole.exe= (Core Console headless), notamment =vlisp-compile=
+qui sert à produire les =.vlx= : =vlide.dll= et =vl.arx= sont chargés
+dans =acad.exe= et il n'existe pas d'=vlide.exe= autonome, donc seule
+une instance complète peut exécuter =vlisp-compile=.
+
+** Variables d'environnement
+
+| Variable                | Valeurs                                  | Effet                                                         |
+|-------------------------+------------------------------------------+---------------------------------------------------------------|
+| =AUTOCAD_EXE=           | chemin                                   | =acad.exe= ou =acadlt.exe= ; auto-détecté si non défini.      |
+| =AUTOCAD_COM_MODE=      | =auto= \vert =attach= \vert =launch= \vert =off= | Mode du pont COM AutoCAD.                                     |
+| =AUTOCAD_ACCORECONSOLE= | chemin                                   | =accoreconsole.exe= ; utilisé seulement quand COM est =off=. |
+
+** Mapping =--mode= → =AUTOCAD_COM_MODE=
+
+| =--mode=     | =--backend= | =AUTOCAD_COM_MODE= effectif | Comportement                                                   |
+|--------------+-------------+-----------------------------+----------------------------------------------------------------|
+| (défaut)     | (sans objet) | =auto=                      | Attache une instance =acad.exe= ouverte, sinon en lance une.   |
+| =automation= | =attach=    | =attach=                    | Échoue si aucune instance ouverte.                             |
+| =automation= | =launch=    | =launch=                    | Lance une nouvelle instance via =CreateObject=.                |
+| =batch=      | (sans objet) | =off=                       | Désactive COM ; =acad.exe /b= ou =accoreconsole.exe= fallback. |
+
+Sans =--mode=, le pont COM est actif (=auto=) ; le runtime LISP ne
+fait pas =_QUIT= lui-même : c'est le VBScript qui décide via
+=app.Quit= en fonction de l'état d'origine (=created= vs =attached=)
+pour éviter de fermer une session ouverte par l'utilisateur.
+
+** Cas d'usage =vlisp-compile=
+
+#+begin_src text
+autolisp --autocad --mode automation \
+         -x '(vlisp-compile (quote lsa) "src-vlx/schmsplus.prj")' \
+         --quit
+#+end_src
+
+=vlisp-compile= n'existe pas dans =accoreconsole.exe= ; =--mode
+automation= (et donc le pont COM) est requis. Le second argument
+sélectionne le format de sortie : ='st= pour =.fas= non compressé,
+='lsa= pour =.vlx= application compressée.
+
+** Robustesse
+
+Le pont COM applique les protections suivantes avant l'exécution
+utilisateur :
+
+- attente sur =app.GetAcadState.IsQuiescent= avant le premier
+  =SendCommand=, plafonnée à =AUTOLISP_WAIT_SECS= (défaut 180 s), pour
+  laisser passer un éventuel splash, écran d'activation ou chargement
+  de profil ;
+- ouverture explicite d'un document neuf via =Documents.Add= si
+  =ActiveDocument= est absent (=vlisp-compile= exige un document) ;
+- attente sur =STATUSFILE= avant =app.Quit=, =SendCommand= étant
+  asynchrone côté AutoCAD ;
+- =app.Quit= conditionnel à =created = True= : on ne ferme pas une
+  instance attachée appartenant à l'utilisateur.
+
+** EPURE et profil
+
+Quand =--epure= est combiné à =--autocad= en mode COM, le pont active
+le profil =Epure= via =app.Preferences.Profiles.ActiveProfile=. Si le
+profil n'existe pas, un avertissement est journalisé dans =ERRFILE=
+et l'exécution continue avec le profil courant. Le script de
+bootstrap =control_path_epure_2022.scr= est ensuite envoyé via
+=._SCRIPT= avant le chargement du runtime.
+
 * Modes BricsCAD macOS
 
 ** =--mode automation=

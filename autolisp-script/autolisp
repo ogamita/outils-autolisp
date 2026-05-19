@@ -29,6 +29,9 @@ Examples:
   autolisp -x '(princ (+ 1 2))'
   autolisp --eval '(setq *x* 42)' test.lsp
   autolisp -i
+  autolisp --autocad --mode automation \
+           -x '(vlisp-compile (quote lsa) "src-vlx/schmsplus.prj")' \
+           --quit
 
 Semantics:
   - Les actions { [-l|--load] source.lsp | -x|--eval expression } sont traitées dans l'ordre.
@@ -72,8 +75,17 @@ Specific options:
 Technical options:
   --timeout N             Durée maximale d'attente du runtime CAD.
   --bootstrap-phase PHASE marker | core | log | full
-  --mode MODE             automation | batch (BricsCAD macOS)
-  --backend BACKEND       attach | launch (mode automation macOS)
+  --mode MODE             automation | batch
+                          Sur Windows + AutoCAD : automation active le
+                            pont COM AutoCAD.Application (acad.exe
+                            visible) ; batch lance acad.exe /b sans
+                            COM, ou accoreconsole.exe en fallback.
+                          Sur Windows + BricsCAD : automation active le
+                            pont COM BricsCAD.Application ; batch lance
+                            bricscad.exe /b sans COM.
+                          Sur macOS + BricsCAD : automation = AppleScript
+                            UI-bridge ; batch = bricscad headless.
+  --backend BACKEND       attach | launch (mode automation)
   --bricscad-macos-profile NAME   Profil BricsCAD pour le mode batch macOS.
 
 Environment overrides:
@@ -1328,9 +1340,25 @@ esac
 if [[ "$EPURE_REQUESTED" == "1" && $IS_WINDOWS -eq 1 ]]; then
   if [[ "$ENGINE" == "bricscad" ]]; then
     BRICSCAD_COM_MODE="off"
-  elif [[ "$ENGINE" == "autocad" ]]; then
-    AUTOCAD_COM_MODE="off"
   fi
+  # AutoCAD: le pont COM applique le profil EPURE via
+  # Preferences.Profiles.ActiveProfile ; pas de force-off ici.
+fi
+
+# Auto-detect AUTOCAD_EXE sous Windows si non defini. On prend l'install la
+# plus recente (tri lexicographique decroissant) entre acad.exe (AutoCAD
+# complet) et acadlt.exe (AutoCAD LT), avec preference au complet quand les
+# deux existent.
+if [[ $IS_WINDOWS -eq 1 && "$ENGINE" == "autocad" && -z "$AUTOCAD_EXE" ]]; then
+  _autocad_candidate=""
+  _autocad_candidate="$(ls -1 "/c/Program Files/Autodesk"/AutoCAD\ */acad.exe 2>/dev/null | sort -r | head -n 1 || true)"
+  if [[ -z "$_autocad_candidate" ]]; then
+    _autocad_candidate="$(ls -1 "/c/Program Files/Autodesk"/AutoCAD\ LT\ */acadlt.exe 2>/dev/null | sort -r | head -n 1 || true)"
+  fi
+  if [[ -n "$_autocad_candidate" && -f "$_autocad_candidate" ]]; then
+    AUTOCAD_EXE="$_autocad_candidate"
+  fi
+  unset _autocad_candidate
 fi
 
 BRICSCAD_BATCH_COMMAND_FILE=""
@@ -2125,6 +2153,14 @@ fi
 # --quit force la fin de la session, indépendamment du backend ou du mode interactif.
 if [[ "$QUIT_REQUESTED" -eq 1 ]]; then
   QUIT_ON_FINISH=1
+fi
+# Sous Windows + AutoCAD + pont COM actif, c'est le VBScript qui decide de
+# fermer (ou pas) l'instance via app.Quit en fonction de created/attached.
+# Si on attache une instance existante (mode auto avec AutoCAD deja ouvert),
+# un _QUIT cote LISP tuerait la session de l'utilisateur, meme si --quit
+# a ete demande. La decision est deleguee au pont COM dans tous les cas.
+if [[ $IS_WINDOWS -eq 1 && "$ENGINE" == "autocad" && "$AUTOCAD_COM_MODE" != "off" ]]; then
+  QUIT_ON_FINISH=0
 fi
 
 RUNLSPFILE="$WORKDIR/run-common.lsp"
@@ -3194,9 +3230,18 @@ start_protocol_interactive_helper
 
 write_windows_autocad_vbs() {
   local vbs="$WORKDIR/bridge-autocad.vbs"
-  local win_runlsp win_err win_exe
+  local win_runlsp win_err win_status win_epure win_exe
   win_runlsp="$(to_windows_path "$RUNLSPFILE")"
   win_err="$(to_windows_path "$ERRFILE")"
+  win_status="$(to_windows_path "$STATUSFILE")"
+  win_epure=""
+  if [[ "$EPURE_REQUESTED" == "1" ]]; then
+    local epure_unix
+    epure_unix="$(windows_epure_control_script autocad || true)"
+    if [[ -n "$epure_unix" ]]; then
+      win_epure="$epure_unix"
+    fi
+  fi
   win_exe="${AUTOCAD_EXE:-}"
   if [[ -n "$win_exe" ]]; then
     win_exe="$(to_windows_path "$win_exe")"
@@ -3204,14 +3249,20 @@ write_windows_autocad_vbs() {
 
   cat >"$vbs" <<EOFVBS
 Option Explicit
-Dim fso, shell, mode, exePath, runLsp, errFile
+Dim fso, shell, mode, exePath, runLsp, errFile, statusFile, epureScript, epureRequested
 Dim app, doc, cmd, progid, created, attached, rc
+Dim waitSecs, waited, statusText
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
 mode = "$(escape_vbs_string "$AUTOCAD_COM_MODE")"
 exePath = "$(escape_vbs_string "$win_exe")"
 runLsp = "$(escape_vbs_string "$win_runlsp")"
 errFile = "$(escape_vbs_string "$win_err")"
+statusFile = "$(escape_vbs_string "$win_status")"
+epureScript = "$(escape_vbs_string "$win_epure")"
+epureRequested = "$(escape_vbs_string "$EPURE_REQUESTED")"
+waitSecs = CLng("$(escape_vbs_string "${AUTOLISP_WAIT_SECS:-180}")")
+If waitSecs < 5 Then waitSecs = 5
 progid = "AutoCAD.Application"
 created = False
 attached = False
@@ -3222,6 +3273,88 @@ Sub AppendLine(path, text)
   Set f = fso.OpenTextFile(path, 8, True)
   f.WriteLine text
   f.Close
+End Sub
+
+Sub EmitFlags(att, cre)
+  Dim a, c
+  If att Then a = "1" Else a = "0"
+  If cre Then c = "1" Else c = "0"
+  WScript.StdOut.WriteLine "ATTACHED=" & a
+  WScript.StdOut.WriteLine "CREATED=" & c
+End Sub
+
+Function ReadStatusText(path)
+  Dim f, s
+  ReadStatusText = ""
+  If Not fso.FileExists(path) Then Exit Function
+  On Error Resume Next
+  Set f = fso.OpenTextFile(path, 1, False)
+  If Err.Number <> 0 Then
+    Err.Clear
+    Exit Function
+  End If
+  If Not f.AtEndOfStream Then
+    s = f.ReadAll
+  Else
+    s = ""
+  End If
+  f.Close
+  On Error GoTo 0
+  ReadStatusText = Trim(s)
+End Function
+
+Function StatusReady(path)
+  Dim s
+  s = ReadStatusText(path)
+  If s = "" Then
+    StatusReady = False
+  ElseIf s = "__PENDING__" Then
+    StatusReady = False
+  ElseIf s = "99" Then
+    StatusReady = False
+  Else
+    StatusReady = True
+  End If
+End Function
+
+Sub WaitQuiescent(a, secs)
+  Dim deadline, state, quiescent, supported
+  deadline = Timer + secs
+  supported = True
+  ' Premier sleep tres court: laisse passer un eventuel splash/profil avant
+  ' la premiere interrogation IsQuiescent.
+  WScript.Sleep 200
+  Do
+    quiescent = False
+    On Error Resume Next
+    Set state = a.GetAcadState
+    If Err.Number <> 0 Then
+      Err.Clear
+      supported = False
+      Exit Do
+    End If
+    quiescent = state.IsQuiescent
+    If Err.Number <> 0 Then
+      Err.Clear
+      supported = False
+      Exit Do
+    End If
+    On Error GoTo 0
+    If quiescent Then Exit Sub
+    WScript.Sleep 500
+  Loop While Timer < deadline
+  On Error GoTo 0
+  ' Si IsQuiescent n'est pas exploitable, on tombe en attente passive courte.
+  If Not supported Then WScript.Sleep 500
+End Sub
+
+Sub WaitStatus(path, secs)
+  Dim deadline
+  deadline = Timer + secs
+  Do
+    If StatusReady(path) Then Exit Sub
+    WScript.Sleep 500
+  Loop While Timer < deadline
 End Sub
 
 Function AttachApp()
@@ -3255,12 +3388,14 @@ End If
 If app Is Nothing Then
   If mode = "attach" Then
     AppendLine errFile, "ERROR COM attach: no running AutoCAD instance found."
+    EmitFlags False, False
     WScript.Quit 2
   End If
   If mode = "launch" Or mode = "auto" Then
     Set app = CreateApp()
     If app Is Nothing Then
       AppendLine errFile, "ERROR COM launch: unable to create AutoCAD COM application."
+      EmitFlags False, False
       WScript.Quit 3
     End If
     created = True
@@ -3269,12 +3404,28 @@ End If
 
 If app Is Nothing Then
   AppendLine errFile, "ERROR COM bridge: unsupported AutoCAD COM mode."
+  EmitFlags False, False
   WScript.Quit 4
 End If
 
 On Error Resume Next
 app.Visible = True
 If Err.Number <> 0 Then Err.Clear
+On Error GoTo 0
+
+If epureRequested = "1" Then
+  On Error Resume Next
+  app.Preferences.Profiles.ActiveProfile = "Epure"
+  If Err.Number <> 0 Then
+    AppendLine errFile, "WARN COM bridge: cannot activate AutoCAD profile 'Epure' (" & Err.Description & "); using current profile."
+    Err.Clear
+  End If
+  On Error GoTo 0
+End If
+
+WaitQuiescent app, waitSecs
+
+On Error Resume Next
 Set doc = app.ActiveDocument
 If Err.Number <> 0 Then
   Err.Clear
@@ -3283,13 +3434,30 @@ End If
 If doc Is Nothing Then
   Set doc = app.Documents.Add
   If Err.Number <> 0 Then
-    AppendLine errFile, "ERROR COM bridge: unable to get or create AutoCAD ActiveDocument."
+    AppendLine errFile, "ERROR COM bridge: unable to get or create AutoCAD ActiveDocument: " & Err.Description
     Err.Clear
+    If created Then
+      app.Quit
+    End If
+    EmitFlags attached, created
     WScript.Quit 5
   End If
 End If
+On Error GoTo 0
+
+If epureScript <> "" Then
+  cmd = "._SCRIPT " & Chr(34) & Replace(epureScript, "\", "/") & Chr(34) & vbCr
+  On Error Resume Next
+  Call doc.SendCommand(cmd)
+  If Err.Number <> 0 Then
+    AppendLine errFile, "WARN COM bridge: EPURE _SCRIPT send failed: " & Err.Description
+    Err.Clear
+  End If
+  On Error GoTo 0
+End If
+
 cmd = "(load """ & Replace(runLsp, "\", "/") & """)" & vbCr
-Err.Clear
+On Error Resume Next
 Call doc.SendCommand(cmd)
 If Err.Number <> 0 Then
   AppendLine errFile, "ERROR COM bridge: AutoCAD SendCommand failed: " & Err.Description
@@ -3297,6 +3465,22 @@ If Err.Number <> 0 Then
   rc = 6
 End If
 On Error GoTo 0
+
+' SendCommand est asynchrone : on attend que le runtime LISP ait ecrit
+' STATUSFILE avant d'envisager app.Quit (sinon on tuerait acad.exe en
+' plein chargement).
+If rc = 0 Then
+  WaitStatus statusFile, waitSecs
+End If
+
+If created Then
+  On Error Resume Next
+  app.Quit
+  If Err.Number <> 0 Then Err.Clear
+  On Error GoTo 0
+End If
+
+EmitFlags attached, created
 WScript.Quit rc
 EOFVBS
   printf '%s' "$vbs"
