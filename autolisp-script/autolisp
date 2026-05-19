@@ -2,6 +2,12 @@
 set -euo pipefail
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Repertoire d'ou l'utilisateur a appele autolisp. Capture des le debut, AVANT
+# que le script ne fasse des `cd` internes. Ce chemin est expose au runtime
+# LISP via *AUTOLISP_INVOCATION_DIR* et utilise pour resoudre les chemins
+# relatifs (acad.exe lance via COM a son propre cwd, generalement son dossier
+# d'install -- pas celui du shell appelant).
+AUTOLISP_INVOCATION_DIR="$(pwd -P 2>/dev/null || pwd)"
 # Shell-side helpers for the future remote I/O protocol.
 . "$SELF_DIR/lib/autolisp-remote-io.sh"
 VERSION_FILE="$SELF_DIR/VERSION.TXT"
@@ -1502,6 +1508,7 @@ autolisp_debug "BRICSCAD_EXE=${BRICSCAD_EXE:-<unset>}"
 autolisp_debug "AUTOCAD_ACCORECONSOLE=${AUTOCAD_ACCORECONSOLE:-<unset>}"
 autolisp_debug "EPURE_REQUESTED=$EPURE_REQUESTED INTERACTIVE=$INTERACTIVE QUIT_REQUESTED=$QUIT_REQUESTED"
 autolisp_debug "MAIN=$MAIN MAIN_REQUESTED=$MAIN_REQUESTED HAS_DWG=$([ -n "$DWG" ] && echo 1 || echo 0)"
+autolisp_debug "AUTOLISP_INVOCATION_DIR=$AUTOLISP_INVOCATION_DIR"
 autolisp_debug "TIMEOUT_SECS=$TIMEOUT_SECS AUTOLISP_WAIT_SECS=${AUTOLISP_WAIT_SECS:-<unset>}"
 autolisp_debug "actions=${#ACTION_KINDS[@]}"
 if autolisp_is_debug; then
@@ -2450,7 +2457,55 @@ else
   printf '(setq *AUTOLISP_LOGNAME* "%s")\n' "autolisp-session.log"
   printf '(setq *AUTOLISP_QUIT_ON_FINISH* %s)\n' "$QUIT_ON_FINISH"
   printf '(setq *AUTOLISP_BOOTSTRAP_PHASE* "%s")\n' "$(escape_lisp_string "$BOOTSTRAP_PHASE")"
+  printf '(setq *AUTOLISP_INVOCATION_DIR* "%s")\n' "$(escape_lisp_string "$(to_runtime_lisp_path "$AUTOLISP_INVOCATION_DIR")")"
   cat <<'EOLISP'
+;; --- Resolution des chemins relatifs ---
+;; acad.exe lance via COM CreateObject n'herite generalement pas du cwd du
+;; shell appelant ; ses chemins relatifs (load, findfile, vlisp-compile...)
+;; sont donc resolus contre son propre dossier d'install. On expose ici le
+;; cwd d'invocation du wrapper et un helper pour absolutiser les chemins
+;; cote LISP.
+
+(defun autolisp-absolute-path-p (p)
+  (cond
+    ((or (null p) (not (= (type p) 'STR)) (= p "")) nil)
+    ((or (= (substr p 1 1) "/")
+         (= (substr p 1 1) "\\")) T)
+    ((and (>= (strlen p) 2)
+          (= (substr p 2 1) ":")) T)
+    (T nil)))
+
+(defun autolisp-resolve-path (p)
+  (cond
+    ((or (null p) (not (= (type p) 'STR))) p)
+    ((autolisp-absolute-path-p p) p)
+    ((or (null *AUTOLISP_INVOCATION_DIR*) (= *AUTOLISP_INVOCATION_DIR* "")) p)
+    (T (strcat *AUTOLISP_INVOCATION_DIR* "/" p))))
+
+;; Shadow vlisp-compile : absolutise le chemin source contre le cwd
+;; d'invocation. La fonction d'origine est preservee sous
+;; *autolisp-original-vlisp-compile* pour appel via apply.
+;;
+;; Note: boundp ne dit pas si une SUBR est definie ; on tente donc une
+;; evaluation protegee par vl-catch-all-apply. Si vlisp-compile n'existe
+;; pas sur le moteur courant (Core Console, BricsCAD, etc.), le setup
+;; echoue silencieusement et aucun shadow n'est installe. L'appel a
+;; (vl-load-com) charge la couche COM, sans laquelle vlisp-compile peut
+;; etre inaccessible.
+(defun autolisp-install-vlisp-compile-shadow ( / orig-type r)
+  (vl-catch-all-apply 'vl-load-com nil)
+  (setq r (vl-catch-all-apply '(lambda () (type vlisp-compile)) nil))
+  (if (vl-catch-all-error-p r)
+    (setq orig-type nil)
+    (setq orig-type r))
+  (if (and orig-type
+           (or (= orig-type 'SUBR) (= orig-type 'USUBR) (= orig-type 'EXSUBR)))
+    (progn
+      (setq *autolisp-original-vlisp-compile* vlisp-compile)
+      (defun vlisp-compile (mode src / abs-src)
+        (setq abs-src (autolisp-resolve-path src))
+        (apply *autolisp-original-vlisp-compile* (list mode abs-src))))))
+
 (defun autolisp-bootstrap-append-line (path text / f)
   (if (and (= (type path) 'STR)
            (/= path ""))
@@ -3405,6 +3460,7 @@ EOLISP
   else
     cat <<'EOLISP'
 (defun autolisp-main-entry ()
+(vl-catch-all-apply 'autolisp-install-vlisp-compile-shadow nil)
 EOLISP
     for i in "${!ACTION_KINDS[@]}"; do
       kind="${ACTION_KINDS[$i]}"
@@ -3481,10 +3537,11 @@ start_protocol_interactive_helper
 
 write_windows_autocad_vbs() {
   local vbs="$WORKDIR/bridge-autocad.vbs"
-  local win_runlsp win_err win_status win_epure win_exe
+  local win_runlsp win_err win_status win_epure win_exe win_invocation_dir
   win_runlsp="$(to_windows_path "$RUNLSPFILE")"
   win_err="$(to_windows_path "$ERRFILE")"
   win_status="$(to_windows_path "$STATUSFILE")"
+  win_invocation_dir="$(to_windows_path "$AUTOLISP_INVOCATION_DIR")"
   win_epure=""
   if [[ "$EPURE_REQUESTED" == "1" ]]; then
     local epure_unix
@@ -3500,7 +3557,7 @@ write_windows_autocad_vbs() {
 
   cat >"$vbs" <<EOFVBS
 Option Explicit
-Dim fso, shell, mode, exePath, runLsp, errFile, statusFile, epureScript, epureRequested
+Dim fso, shell, mode, exePath, runLsp, errFile, statusFile, invocationDir, epureScript, epureRequested
 Dim app, doc, cmd, progid, created, attached, rc
 Dim waitSecs, waited, statusText
 Set fso = CreateObject("Scripting.FileSystemObject")
@@ -3510,8 +3567,23 @@ exePath = "$(escape_vbs_string "$win_exe")"
 runLsp = "$(escape_vbs_string "$win_runlsp")"
 errFile = "$(escape_vbs_string "$win_err")"
 statusFile = "$(escape_vbs_string "$win_status")"
+invocationDir = "$(escape_vbs_string "$win_invocation_dir")"
 epureScript = "$(escape_vbs_string "$win_epure")"
 epureRequested = "$(escape_vbs_string "$EPURE_REQUESTED")"
+
+' Aligne le cwd du process VBScript sur celui d'ou l'utilisateur a appele
+' autolisp, AVANT CreateObject. Sur Windows, un acad.exe out-of-process
+' COM server lance via activation peut heriter du cwd de l'activator dans
+' certains contextes ; meme si ce n'est pas garanti, cela aide pour les
+' chemins relatifs apparaissant dans (load ...), findfile, etc.
+If invocationDir <> "" Then
+  On Error Resume Next
+  If fso.FolderExists(invocationDir) Then
+    shell.CurrentDirectory = invocationDir
+  End If
+  Err.Clear
+  On Error GoTo 0
+End If
 waitSecs = CLng("$(escape_vbs_string "${AUTOLISP_WAIT_SECS:-180}")")
 If waitSecs < 5 Then waitSecs = 5
 progid = "AutoCAD.Application"
