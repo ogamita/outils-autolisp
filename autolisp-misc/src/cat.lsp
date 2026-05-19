@@ -16,7 +16,9 @@
 (setq cat 'cat)
 (defun cat--emit-line (line / result)
   (if (vl-catch-all-error-p
-        (setq result (vl-catch-all-apply 'autolisp-emit-user-line (list line))))
+       (vl-catch-all-apply
+        (function (lambda ()
+          (setq result (vl-catch-all-apply 'autolisp-emit-user-line (list line)))))))
     (progn
       (princ line)
       (terpri)))

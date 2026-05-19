@@ -3,9 +3,9 @@
   :NAME
   autolisp-misc
   :OWN-LIST
-  ("src/cat"
-   "src/format"
-   "src/fs")
+  ("src/browser"
+   "src/cat"
+   "src/format")
   :FAS-DIRECTORY
   nil
   :TMP-DIRECTORY

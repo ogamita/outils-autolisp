@@ -9,16 +9,17 @@ Ce document décrit l'API publique de la bibliothèque =autolisp-misc=.
 
 * Chargement
 
-Pour charger la fonction =cat= :
+Pour charger le module de navigation façon shell (=pwd=, =cd=, =pushd=,
+=popd=, =ls=, =cat=, =user-home-directory=, =home=) :
+
+#+begin_src lisp
+(load "src/browser.lsp")
+#+end_src
+
+Pour charger la fonction =cat= seule (sans les autres utilitaires) :
 
 #+begin_src lisp
 (load "src/cat.lsp")
-#+end_src
-
-Pour charger les utilitaires =pwd=, =cd= et =ls= :
-
-#+begin_src lisp
-(load "src/fs.lsp")
 #+end_src
 
 Pour charger la fonction =format= :
@@ -26,6 +27,11 @@ Pour charger la fonction =format= :
 #+begin_src lisp
 (load "src/format.lsp")
 #+end_src
+
+Note : =src/fs.lsp= reste dans le dépôt mais ne fait plus partie du
+projet. Il implémentait =pwd=, =cd= et =ls= avec un *cwd virtuel*
+stocké dans =*misc-cwd*= ; =browser.lsp= le remplace en agissant sur
+le *cwd réel* du processus.
 
 * API publique
 
@@ -55,23 +61,27 @@ Comportement :
 - si un fichier ne peut pas être ouvert, un message est affiché ;
 - la fonction retourne silencieusement avec =(princ)=.
 
-** Répertoire courant virtuel
+** Répertoire courant réel
 
-Les fonctions =pwd=, =cd= et =ls= (définies dans =src/fs.lsp=) partagent
-un *répertoire courant virtuel* stocké dans la variable globale
-=*misc-cwd*=. Ce cwd virtuel est initialisé au premier appel à partir
-de la variable d'environnement =PWD= (Unix/macOS) ou =CD= (Windows),
-ou à « =.= » en dernier recours.
+Les fonctions =pwd=, =cd=, =pushd=, =popd= et =ls= (définies dans
+=src/browser.lsp=) agissent sur le *répertoire courant réel* du
+processus AutoCAD / BricsCAD, via l'objet COM =WScript.Shell=. Toute
+fonction qui résout ses chemins via l'OS -- =(findfile ".")=,
+=(open ...)=, =(load ...)=, =(vl-directory-files ".")= -- voit donc
+les changements.
 
-Ce cwd virtuel n'est utilisé que par =pwd=, =cd= et =ls= ; il n'affecte
-pas les fonctions qui ouvrent des fichiers (=open=, =load=, =cat=,
-etc.), qui continuent d'utiliser le répertoire courant réel du
-processus.
+Le changement de cwd vaut pour la session CAO en cours. Au prochain
+démarrage, le cwd revient à celui du raccourci AutoCAD / BricsCAD
+(champ « Démarrer dans »).
+
+L'objet COM =WScript.Shell= est mis en cache dans =*browser-shell*= ;
+la pile partagée par =pushd= / =popd= est stockée dans
+=*browser-stack*=.
 
 ** =(pwd)=
 
-Affiche le chemin du répertoire courant virtuel et le renvoie sous
-forme de chaîne.
+Affiche le chemin du répertoire courant réel et le renvoie sous forme
+de chaîne.
 
 #+begin_src lisp
 (pwd)
@@ -79,31 +89,53 @@ forme de chaîne.
 
 ** =(cd path)=
 
-Change le répertoire courant virtuel. L'argument =path= est une chaîne
-représentant un chemin absolu ou relatif au cwd courant. Les segments
-=.= et =..= sont normalisés et les antislashs Windows sont convertis
-en =/=.
+Change le répertoire courant réel. L'argument =path= est une chaîne
+représentant un chemin absolu ou relatif au cwd courant.
 
-- Si le chemin résolu existe et désigne un répertoire, =*misc-cwd*= est
-  mis à jour et la fonction retourne la nouvelle valeur.
+- Si =path= désigne un répertoire existant, le cwd est mis à jour via
+  =WScript.Shell.CurrentDirectory= et la fonction retourne la nouvelle
+  valeur (telle que renvoyée par =CurrentDirectory= après affectation).
 - Sinon un message d'erreur est affiché via =prompt= et =cd= retourne
   =nil=.
 
 #+begin_src lisp
 (cd "docs")
 (cd "..")
-(cd "/tmp")
+(cd "C:/Users/Public")
+#+end_src
+
+** =(pushd path)=
+
+Empile le cwd courant dans =*browser-stack*= puis change de répertoire
+via =cd=. Retourne le nouveau cwd en cas de succès, =nil= sinon (auquel
+cas la pile n'est pas modifiée).
+
+#+begin_src lisp
+(pushd "docs")
+(pushd "..")
+#+end_src
+
+** =(popd)=
+
+Dépile la première entrée de =*browser-stack*= et restaure ce
+répertoire comme cwd courant. Retourne le cwd restauré, ou =nil= si la
+pile est vide (avec un message via =prompt=).
+
+#+begin_src lisp
+(popd)
 #+end_src
 
 ** =(ls flag)=
 
-Liste le contenu du répertoire courant virtuel.
+Liste le contenu du répertoire courant réel : fichiers *et*
+sous-répertoires. Les répertoires sont signalés par un =/= final, à la
+manière de =ls -F=.
 
 - =(ls nil)= : listing court, un nom par ligne, trié.
 - =(ls ':l)= ou =(ls ':long)= : listing détaillé avec, pour chaque
   entrée, le type (=d= pour un répertoire, =-= pour un fichier), la
   taille en octets, la date et heure de dernière modification, puis le
-  nom.
+  nom (suffixé de =/= pour les répertoires).
 
 Les entrées =.= et =..= sont omises. AutoLISP n'offre pas d'arguments
 optionnels : l'appel =(ls)= sans argument est invalide ; utilisez
@@ -113,6 +145,47 @@ optionnels : l'appel =(ls)= sans argument est invalide ; utilisez
 (ls nil)
 (ls ':l)
 (ls ':long)
+#+end_src
+
+** =(truename path)= et =(path path)=
+
+Résout un chemin contre le cwd réel :
+
+- un chemin *absolu* est renvoyé tel quel ;
+- un chemin *relatif* est préfixé par =(pwd)=.
+
+Dans les deux cas le résultat est normalisé : les antislashs Windows
+sont convertis en =/=, les segments =.= et =..= sont réduits.
+
+=path= est un simple alias de =truename=.
+
+Usage typique pour faire suivre =load= (ou tout autre opérateur qui
+ne respecte pas le cwd, comme =findfile=) au répertoire courant :
+
+#+begin_src lisp
+(cd "C:/a/b/c/")
+(load (path "foo.lsp"))   ;; charge C:/a/b/c/foo.lsp
+
+(truename "/usr/local")   ;; => "/usr/local"
+(truename "../sibling")   ;; relatif au pwd, normalisé
+#+end_src
+
+** =(user-home-directory)= et =(home)=
+
+Renvoient le répertoire personnel de l'utilisateur sous forme de
+chaîne, ou =nil= s'il n'est pas défini. =home= est un simple alias.
+
+Source de la valeur :
+
+- =USERPROFILE= (Windows) ;
+- =HOME= en repli (Unix / macOS) ;
+- =nil= si aucune des deux variables d'environnement n'est définie ou
+  si elles sont vides.
+
+#+begin_src lisp
+(user-home-directory)
+(home)
+(cd (home))
 #+end_src
 
 ** =(format control-string arguments)=
