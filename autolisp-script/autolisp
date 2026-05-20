@@ -2486,18 +2486,40 @@ else
 ;; d'invocation. La fonction d'origine est preservee sous
 ;; *autolisp-original-vlisp-compile* pour appel via apply.
 ;;
-;; Note: boundp ne dit pas si une SUBR est definie ; on tente donc une
-;; evaluation protegee par vl-catch-all-apply. Si vlisp-compile n'existe
-;; pas sur le moteur courant (Core Console, BricsCAD, etc.), le setup
-;; echoue silencieusement et aucun shadow n'est installe. L'appel a
-;; (vl-load-com) charge la couche COM, sans laquelle vlisp-compile peut
-;; etre inaccessible.
-(defun autolisp-install-vlisp-compile-shadow ( / orig-type r)
+;; Sous AutoCAD, vlisp-compile (et toutes les fonctions VLISP-*
+;; "interactives") n'est PAS exposee au demarrage tant que la
+;; fenetre VLIDE n'a pas ete chargee : il faut invoquer la commande
+;; _VLIDE pour faire apparaitre les bindings au runtime AutoLISP.
+;; On essaye donc d'abord (type vlisp-compile) ; si la fonction est
+;; absente, on charge VLIDE et on retente. Sous BricsCAD ou
+;; accoreconsole (pas de VLIDE), les deux essais echouent, aucun
+;; shadow n'est installe.
+(defun autolisp--type-of-vlisp-compile () (type vlisp-compile))
+
+(defun autolisp-install-vlisp-compile-shadow ( / orig-type r before-type)
   (vl-catch-all-apply 'vl-load-com nil)
-  (setq r (vl-catch-all-apply '(lambda () (type vlisp-compile)) nil))
+  (setq r (vl-catch-all-apply 'autolisp--type-of-vlisp-compile nil))
   (if (vl-catch-all-error-p r)
     (setq orig-type nil)
     (setq orig-type r))
+  (setq before-type orig-type)
+  ;; Premier essai infructueux : tenter de charger VLIDE via vl-cmdf
+  ;; (command ne marche pas depuis l'interieur d'un eval LISP). Si on
+  ;; reussit, vlisp-compile devient generalement accessible. Effet de
+  ;; bord visible : la fenetre VLIDE s'ouvre.
+  (if (not (or (= orig-type 'SUBR) (= orig-type 'USUBR) (= orig-type 'EXSUBR)))
+    (progn
+      (vl-catch-all-apply 'vl-cmdf (list "_VLIDE"))
+      (setq r (vl-catch-all-apply 'autolisp--type-of-vlisp-compile nil))
+      (if (vl-catch-all-error-p r)
+        (setq orig-type nil)
+        (setq orig-type r))))
+  ;; Trace dediee pour aider au diagnostic (ne pas polluer ERRFILE qui
+  ;; est rendu sur stderr final). A consulter avec AUTOLISP_KEEP_WORKDIR=1.
+  (autolisp-bootstrap-append-line
+    (strcat *AUTOLISP_LOGDIR* "/vlide-shadow.log")
+    (strcat "type-before-VLIDE=" (vl-princ-to-string before-type)
+            " type-after-VLIDE=" (vl-princ-to-string orig-type)))
   (if (and orig-type
            (or (= orig-type 'SUBR) (= orig-type 'USUBR) (= orig-type 'EXSUBR)))
     (progn
