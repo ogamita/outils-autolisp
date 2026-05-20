@@ -3797,12 +3797,19 @@ On Error GoTo 0
 
 ' SendCommand est asynchrone : on attend que le runtime LISP ait ecrit
 ' STATUSFILE avant d'envisager app.Quit (sinon on tuerait acad.exe en
-' plein chargement).
+' plein chargement). On distingue le succes (status final ecrit) du
+' timeout (statut reste a __PENDING__/99) : en cas de timeout, on
+' n'appelle PAS app.Quit, sinon on interromprait le runtime LISP encore
+' en cours. Le wrapper bash detecte ce cas et tue acad.exe via
+' kill_autocad_com_process.
+Dim statusReadyFlag
+statusReadyFlag = False
 If rc = 0 Then
   WaitStatus statusFile, waitSecs
+  statusReadyFlag = StatusReady(statusFile)
 End If
 
-If created Then
+If created And statusReadyFlag Then
   On Error Resume Next
   app.Quit
   If Err.Number <> 0 Then Err.Clear
@@ -3896,6 +3903,20 @@ run_windows_autocad() {
         autolisp_debug "cscript exit non-zero ($cscript_rc); failing fast"
         printf 'ERROR COM bridge: cscript exited %d.\n' "$cscript_rc" >>"$ERRFILE"
         echo "$cscript_rc" >"$STATUSFILE"
+      else
+        # cscript a quitte proprement. Si STATUSFILE est encore pending/99,
+        # c'est que WaitStatus du VBS a timeoute (TIMEOUT_SECS atteints sans
+        # final status). On marque 124 et on tue acad.exe immediatement, sinon
+        # les deux wait_for_status bash suivants ajoutent jusqu'a 2x TIMEOUT_SECS
+        # de plus pour rien.
+        local current_status
+        current_status="$(tr -d '[:space:]' <"$STATUSFILE" 2>/dev/null || true)"
+        if [[ -z "$current_status" || "$current_status" == "__PENDING__" || "$current_status" == "99" ]]; then
+          autolisp_debug "VBS WaitStatus timed out (STATUSFILE='$current_status'); marking 124 and killing acad.exe"
+          printf 'ERROR COM bridge: timeout after %ds waiting for LISP runtime to finish.\n' "$TIMEOUT_SECS" >>"$ERRFILE"
+          echo "124" >"$STATUSFILE"
+          kill_autocad_com_process || true
+        fi
       fi
       autolisp_debug "calling wait_for_status (timeout ${TIMEOUT_SECS}s)"
       wait_for_status
