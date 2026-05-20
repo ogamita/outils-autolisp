@@ -2503,23 +2503,38 @@ else
     (setq orig-type nil)
     (setq orig-type r))
   (setq before-type orig-type)
-  ;; Premier essai infructueux : tenter de charger VLIDE via vl-cmdf
-  ;; (command ne marche pas depuis l'interieur d'un eval LISP). Si on
-  ;; reussit, vlisp-compile devient generalement accessible. Effet de
-  ;; bord visible : la fenetre VLIDE s'ouvre.
+  ;; Premier essai infructueux : tenter de "demarrer" VLIDE par appel
+  ;; direct des fonctions LISP qui implementent l'IDE. Sous AutoCAD,
+  ;; VLIDE n'est PAS une commande au sens du command-processor : si on
+  ;; tape "VLIDE" au prompt ca marche grace a l'auto-load / l'alias
+  ;; LISP, mais (command "VLIDE") ou (vl-cmdf "VLIDE") emettent
+  ;; "Commande inconnue VLIDE". L'appel direct (c:vlide) ou
+  ;; (c:vlisp) — les fonctions "C:NAME" qui implementent les
+  ;; commandes user — est en revanche resolu par le LISP runtime.
+  ;; On tente plusieurs noms candidats ; le premier qui expose
+  ;; vlisp-compile a reussi.
+  (setq *autolisp-vlide-load-attempts* '())
   (if (not (or (= orig-type 'SUBR) (= orig-type 'USUBR) (= orig-type 'EXSUBR)))
-    (progn
-      (vl-catch-all-apply 'vl-cmdf (list "_VLIDE"))
-      (setq r (vl-catch-all-apply 'autolisp--type-of-vlisp-compile nil))
-      (if (vl-catch-all-error-p r)
-        (setq orig-type nil)
-        (setq orig-type r))))
+    (foreach name '(c:vlide c:vlisp vlide vlisp)
+      (setq r (vl-catch-all-apply name nil))
+      (setq *autolisp-vlide-load-attempts*
+        (cons (cons name
+                    (if (vl-catch-all-error-p r)
+                      (vl-catch-all-error-message r)
+                      "ok"))
+              *autolisp-vlide-load-attempts*))))
+  ;; Re-probe apres les tentatives.
+  (setq r (vl-catch-all-apply 'autolisp--type-of-vlisp-compile nil))
+  (if (vl-catch-all-error-p r)
+    (setq orig-type nil)
+    (setq orig-type r))
   ;; Trace dediee pour aider au diagnostic (ne pas polluer ERRFILE qui
   ;; est rendu sur stderr final). A consulter avec AUTOLISP_KEEP_WORKDIR=1.
   (autolisp-bootstrap-append-line
     (strcat *AUTOLISP_LOGDIR* "/vlide-shadow.log")
     (strcat "type-before-VLIDE=" (vl-princ-to-string before-type)
-            " type-after-VLIDE=" (vl-princ-to-string orig-type)))
+            " type-after-VLIDE=" (vl-princ-to-string orig-type)
+            " attempts=" (vl-princ-to-string (reverse *autolisp-vlide-load-attempts*))))
   (if (and orig-type
            (or (= orig-type 'SUBR) (= orig-type 'USUBR) (= orig-type 'EXSUBR)))
     (progn
