@@ -1497,6 +1497,30 @@ autolisp_debug_format_cmd() {
   printf '%s' "${rendered% }"
 }
 
+# Stream en temps reel les messages emis par le runtime AutoLISP
+# (autolisp-runtime-debug -> WORKDIR/debug.log). Actif seulement en
+# mode --debug. Le tail est lance en background et stoppe a la fin.
+DEBUG_TAIL_PID=""
+
+start_runtime_debug_tail() {
+  autolisp_is_debug || return 0
+  [[ -n "${WORKDIR:-}" ]] || return 0
+  : >"$WORKDIR/debug.log"
+  (
+    tail -F -n 0 "$WORKDIR/debug.log" 2>/dev/null | while IFS= read -r line; do
+      printf '[LISP-DEBUG] %s\n' "$line" >&3
+    done
+  ) &
+  DEBUG_TAIL_PID=$!
+  autolisp_debug "runtime debug tail started pid=$DEBUG_TAIL_PID -> $WORKDIR/debug.log"
+}
+
+stop_runtime_debug_tail() {
+  [[ -n "$DEBUG_TAIL_PID" ]] || return 0
+  kill "$DEBUG_TAIL_PID" 2>/dev/null || true
+  DEBUG_TAIL_PID=""
+}
+
 # Dump initial des choix CLI / environnement, des qu'on connait verbosite & debug.
 autolisp_debug "version=$(autolisp_version_string | tr -d '\n')"
 autolisp_debug "OS=$OS IS_WINDOWS=$IS_WINDOWS IS_MACOS=$IS_MACOS"
@@ -1600,6 +1624,7 @@ on_interrupt() {
 }
 
 cleanup_workdir() {
+  stop_runtime_debug_tail
   if [[ "${CLEANUP_WORKDIR}" != "1" ]]; then
     rm -rf "$WORKDIR"
   else
@@ -2270,6 +2295,7 @@ fi
 mkdir -p "$BASE_WORKDIR"
 WORKDIR="$(mktemp -d "$BASE_WORKDIR/autolisp.XXXXXX")"
 autolisp_debug "WORKDIR=$WORKDIR"
+start_runtime_debug_tail
 autolisp_debug "USE_REMOTE_PROTOCOL=$USE_REMOTE_PROTOCOL USE_FOREGROUND_BATCH_PROTOCOL=$USE_FOREGROUND_BATCH_PROTOCOL"
 PROTOCOL_REQUEST_SEQFILE="$WORKDIR/protocol-request-seq.txt"
 rm -f "$PROTOCOL_REQUEST_SEQFILE"
@@ -2458,6 +2484,8 @@ else
   printf '(setq *AUTOLISP_QUIT_ON_FINISH* %s)\n' "$QUIT_ON_FINISH"
   printf '(setq *AUTOLISP_BOOTSTRAP_PHASE* "%s")\n' "$(escape_lisp_string "$BOOTSTRAP_PHASE")"
   printf '(setq *AUTOLISP_INVOCATION_DIR* "%s")\n' "$(escape_lisp_string "$(to_runtime_lisp_path "$AUTOLISP_INVOCATION_DIR")")"
+  printf '(setq *AUTOLISP_DEBUG* %s)\n' "$( [[ "$AUTOLISP_DEBUG" == "1" ]] && echo "T" || echo "nil" )"
+  printf '(setq *AUTOLISP_DEBUGFILE* "%s")\n' "$(escape_lisp_string "$(to_runtime_lisp_path "$WORKDIR/debug.log")")"
   cat <<'EOLISP'
 ;; --- Resolution des chemins relatifs ---
 ;; acad.exe lance via COM CreateObject n'herite generalement pas du cwd du
@@ -2496,52 +2524,41 @@ else
 ;; shadow n'est installe.
 (defun autolisp--type-of-vlisp-compile () (type vlisp-compile))
 
-(defun autolisp-install-vlisp-compile-shadow ( / orig-type r before-type)
-  (vl-catch-all-apply 'vl-load-com nil)
-  (setq r (vl-catch-all-apply 'autolisp--type-of-vlisp-compile nil))
-  (if (vl-catch-all-error-p r)
-    (setq orig-type nil)
-    (setq orig-type r))
-  (setq before-type orig-type)
-  ;; Premier essai infructueux : tenter de "demarrer" VLIDE par appel
-  ;; direct des fonctions LISP qui implementent l'IDE. Sous AutoCAD,
-  ;; VLIDE n'est PAS une commande au sens du command-processor : si on
-  ;; tape "VLIDE" au prompt ca marche grace a l'auto-load / l'alias
-  ;; LISP, mais (command "VLIDE") ou (vl-cmdf "VLIDE") emettent
-  ;; "Commande inconnue VLIDE". L'appel direct (c:vlide) ou
-  ;; (c:vlisp) — les fonctions "C:NAME" qui implementent les
-  ;; commandes user — est en revanche resolu par le LISP runtime.
-  ;; On tente plusieurs noms candidats ; le premier qui expose
-  ;; vlisp-compile a reussi.
-  (setq *autolisp-vlide-load-attempts* '())
-  (if (not (or (= orig-type 'SUBR) (= orig-type 'USUBR) (= orig-type 'EXSUBR)))
-    (foreach name '(c:vlide c:vlisp vlide vlisp)
-      (setq r (vl-catch-all-apply name nil))
-      (setq *autolisp-vlide-load-attempts*
-        (cons (cons name
-                    (if (vl-catch-all-error-p r)
-                      (vl-catch-all-error-message r)
-                      "ok"))
-              *autolisp-vlide-load-attempts*))))
-  ;; Re-probe apres les tentatives.
-  (setq r (vl-catch-all-apply 'autolisp--type-of-vlisp-compile nil))
-  (if (vl-catch-all-error-p r)
-    (setq orig-type nil)
-    (setq orig-type r))
-  ;; Trace dediee pour aider au diagnostic (ne pas polluer ERRFILE qui
-  ;; est rendu sur stderr final). A consulter avec AUTOLISP_KEEP_WORKDIR=1.
-  (autolisp-bootstrap-append-line
-    (strcat *AUTOLISP_LOGDIR* "/vlide-shadow.log")
-    (strcat "type-before-VLIDE=" (vl-princ-to-string before-type)
-            " type-after-VLIDE=" (vl-princ-to-string orig-type)
-            " attempts=" (vl-princ-to-string (reverse *autolisp-vlide-load-attempts*))))
-  (if (and orig-type
-           (or (= orig-type 'SUBR) (= orig-type 'USUBR) (= orig-type 'EXSUBR)))
+;; Trace runtime ecrite dans WORKDIR/debug.log : permet a l'utilisateur
+;; (via --debug cote bash, qui tail ce fichier en arriere-plan) de voir
+;; en temps reel ou en est le runtime AutoLISP. No-op si *AUTOLISP_DEBUG*
+;; est nil.
+(defun autolisp-runtime-debug (msg)
+  (if *AUTOLISP_DEBUG*
+    (autolisp-bootstrap-append-line *AUTOLISP_DEBUGFILE* msg)))
+
+(defun autolisp-install-vlisp-compile-shadow ( / orig-type r)
+  ;; Idempotent : si le shadow est deja en place, on ne refait rien.
+  (if (boundp '*autolisp-original-vlisp-compile*)
+    nil
     (progn
-      (setq *autolisp-original-vlisp-compile* vlisp-compile)
-      (defun vlisp-compile (mode src / abs-src)
-        (setq abs-src (autolisp-resolve-path src))
-        (apply *autolisp-original-vlisp-compile* (list mode abs-src))))))
+      (vl-catch-all-apply 'vl-load-com nil)
+      (setq r (vl-catch-all-apply 'autolisp--type-of-vlisp-compile nil))
+      (if (vl-catch-all-error-p r)
+        (setq orig-type nil)
+        (setq orig-type r))
+      ;; Trace minimaliste pour aider au diagnostic. On loggue seulement
+      ;; aux moments interessants : premier appel (avant tout user-action)
+      ;; et chaque fois que le type devient un SUBR (l'utilisateur a
+      ;; charge VLIDE entretemps via (c:vlide) ou similaire).
+      (autolisp-bootstrap-append-line
+        (strcat *AUTOLISP_LOGDIR* "/vlide-shadow.log")
+        (strcat "probe: type-of-vlisp-compile=" (vl-princ-to-string orig-type)))
+      (if (and orig-type
+               (or (= orig-type 'SUBR) (= orig-type 'USUBR) (= orig-type 'EXSUBR)))
+        (progn
+          (setq *autolisp-original-vlisp-compile* vlisp-compile)
+          (defun vlisp-compile (mode src / abs-src)
+            (setq abs-src (autolisp-resolve-path src))
+            (apply *autolisp-original-vlisp-compile* (list mode abs-src)))
+          (autolisp-bootstrap-append-line
+            (strcat *AUTOLISP_LOGDIR* "/vlide-shadow.log")
+            "shadow installed"))))))
 
 (defun autolisp-bootstrap-append-line (path text / f)
   (if (and (= (type path) 'STR)
@@ -3503,6 +3520,7 @@ EOLISP
       kind="${ACTION_KINDS[$i]}"
       value="${ACTION_VALUES[$i]}"
       idx=$((i + 1))
+      printf '(autolisp-runtime-debug "begin action %s: %s")\n' "$idx" "$(escape_lisp_string "${kind}: ${value}")"
       if [[ "$kind" == "load" ]]; then
         abs_src="${LOAD_PATHS[$i]}"
         printf '(if (autolisp-run-load %s "%s") (autolisp-note-ok) (autolisp-note-fail))\n' "$idx" "$(escape_lisp_string "$abs_src")"
@@ -3510,6 +3528,11 @@ EOLISP
         eval_src="${EVAL_PATHS[$i]}"
         printf '(if (autolisp-run-eval-file %s "%s") (autolisp-note-ok) (autolisp-note-fail))\n' "$idx" "$(escape_lisp_string "$eval_src")"
       fi
+      printf '(autolisp-runtime-debug "end action %s")\n' "$idx"
+      # Reessaie l'installation du shadow apres chaque action :
+      # vlisp-compile peut etre devenu accessible suite a un (c:vlide)
+      # explicite par l'utilisateur dans une action precedente.
+      printf '(vl-catch-all-apply (quote autolisp-install-vlisp-compile-shadow) nil)\n'
     done
 
     if [[ "$HAS_LOAD_ACTION" -eq 1 ]]; then
@@ -3574,10 +3597,11 @@ start_protocol_interactive_helper
 
 write_windows_autocad_vbs() {
   local vbs="$WORKDIR/bridge-autocad.vbs"
-  local win_runlsp win_err win_status win_epure win_exe win_invocation_dir
+  local win_runlsp win_err win_status win_epure win_exe win_invocation_dir win_debug
   win_runlsp="$(to_windows_path "$RUNLSPFILE")"
   win_err="$(to_windows_path "$ERRFILE")"
   win_status="$(to_windows_path "$STATUSFILE")"
+  win_debug="$(to_windows_path "$WORKDIR/debug.log")"
   win_invocation_dir="$(to_windows_path "$AUTOLISP_INVOCATION_DIR")"
   win_epure=""
   if [[ "$EPURE_REQUESTED" == "1" ]]; then
@@ -3594,7 +3618,7 @@ write_windows_autocad_vbs() {
 
   cat >"$vbs" <<EOFVBS
 Option Explicit
-Dim fso, shell, mode, exePath, runLsp, errFile, statusFile, invocationDir, epureScript, epureRequested
+Dim fso, shell, mode, exePath, runLsp, errFile, statusFile, debugFile, debugFlag, invocationDir, epureScript, epureRequested
 Dim app, doc, cmd, progid, created, attached, rc
 Dim waitSecs, waited, statusText
 Set fso = CreateObject("Scripting.FileSystemObject")
@@ -3604,9 +3628,26 @@ exePath = "$(escape_vbs_string "$win_exe")"
 runLsp = "$(escape_vbs_string "$win_runlsp")"
 errFile = "$(escape_vbs_string "$win_err")"
 statusFile = "$(escape_vbs_string "$win_status")"
+debugFile = "$(escape_vbs_string "$win_debug")"
+debugFlag = "$(escape_vbs_string "$AUTOLISP_DEBUG")"
 invocationDir = "$(escape_vbs_string "$win_invocation_dir")"
 epureScript = "$(escape_vbs_string "$win_epure")"
 epureRequested = "$(escape_vbs_string "$EPURE_REQUESTED")"
+
+Sub VBSDebug(msg)
+  Dim f
+  If debugFlag <> "1" Then Exit Sub
+  On Error Resume Next
+  Set f = fso.OpenTextFile(debugFile, 8, True)
+  If Err.Number = 0 Then
+    f.WriteLine "[VBS] " & msg
+    f.Close
+  End If
+  Err.Clear
+  On Error GoTo 0
+End Sub
+
+VBSDebug "bridge start mode=" & mode & " exePath=" & exePath
 
 ' Aligne le cwd du process VBScript sur celui d'ou l'utilisateur a appele
 ' autolisp, AVANT CreateObject. Sur Windows, un acad.exe out-of-process
@@ -3709,12 +3750,23 @@ Sub WaitQuiescent(a, secs)
 End Sub
 
 Sub WaitStatus(path, secs)
-  Dim deadline
+  Dim deadline, lastStatus, currentStatus
   deadline = Timer + secs
+  lastStatus = ""
+  VBSDebug "WaitStatus begin secs=" & secs
   Do
-    If StatusReady(path) Then Exit Sub
+    currentStatus = ReadStatusText(path)
+    If currentStatus <> lastStatus Then
+      VBSDebug "WaitStatus status='" & currentStatus & "'"
+      lastStatus = currentStatus
+    End If
+    If StatusReady(path) Then
+      VBSDebug "WaitStatus ready"
+      Exit Sub
+    End If
     WScript.Sleep 500
   Loop While Timer < deadline
+  VBSDebug "WaitStatus timeout"
 End Sub
 
 Function AttachApp()
@@ -3747,24 +3799,32 @@ Set app = Nothing
 Set doc = Nothing
 
 If mode = "attach" Or mode = "auto" Then
+  VBSDebug "trying GetObject AttachApp"
   Set app = AttachApp()
-  If Not app Is Nothing Then attached = True
+  If Not app Is Nothing Then
+    attached = True
+    VBSDebug "attached to existing instance"
+  End If
 End If
 
 If app Is Nothing Then
   If mode = "attach" Then
     AppendLine errFile, "ERROR COM attach: no running AutoCAD instance found."
+    VBSDebug "attach failed: no running instance"
     EmitFlags False, False
     WScript.Quit 2
   End If
   If mode = "launch" Or mode = "auto" Then
+    VBSDebug "calling CreateObject (this can take 10-30s)"
     Set app = CreateApp()
     If app Is Nothing Then
       AppendLine errFile, "ERROR COM launch: unable to create AutoCAD COM application."
+      VBSDebug "CreateObject failed"
       EmitFlags False, False
       WScript.Quit 3
     End If
     created = True
+    VBSDebug "CreateObject ok, acad.exe should be running"
   End If
 End If
 
@@ -3823,10 +3883,12 @@ If epureScript <> "" Then
 End If
 
 cmd = "(load """ & Replace(runLsp, "\", "/") & """)" & vbCr
+VBSDebug "SendCommand " & cmd
 On Error Resume Next
 Call doc.SendCommand(cmd)
 If Err.Number <> 0 Then
   AppendLine errFile, "ERROR COM bridge: AutoCAD SendCommand failed: " & Err.Description
+  VBSDebug "SendCommand failed: " & Err.Description
   Err.Clear
   rc = 6
 End If
@@ -3847,12 +3909,14 @@ If rc = 0 Then
 End If
 
 If created And statusReadyFlag Then
+  VBSDebug "calling app.Quit (created=True, status ready)"
   On Error Resume Next
   app.Quit
   If Err.Number <> 0 Then Err.Clear
   On Error GoTo 0
 End If
 
+VBSDebug "bridge exit rc=" & rc & " attached=" & attached & " created=" & created
 EmitFlags attached, created
 WScript.Quit rc
 EOFVBS
