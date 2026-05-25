@@ -1,0 +1,33 @@
+We may want to use the browser functions on nn-MS-Windows systems.
+
+So when WScript.Shell or even COM is not available, fallback to the
+previous implementation.
+
+Note: clautolisp is an autolisp implementation written in Common Lisp
+and that will be able to run where sbcl, ccl or other CL
+implementation run. It targets macOS, Linux and MS-Windows.
+
+It will have some extensions, so it may be worth having a low-level
+module in the browser that we can hook for different platforms,
+wrapping what is done by COM WScript.Shell on MS-Windows under a
+common interface.
+
+
+_$ (misc)
+MISC
+_$ (pwd)
+clautolisp: runtime error: UNKNOWN-PROGID: MockHost has no COM template registered for ProgID WScript.Shell.
+AutoLISP backtrace (most recent call first, 12 frames):
+  in SUBR VLAX-CREATE-OBJECT: ("WScript.Shell")
+  in EVAL: (VLAX-CREATE-OBJECT "WScript.Shell")
+  in EVAL: (SETQ *BROWSER-SHELL* (VLAX-CREATE-OBJECT "WScript.Shell"))
+  in EVAL: (IF (NULL *BROWSER-SHELL*) (SETQ *BROWSER-SHELL* (VLAX-CREATE-OBJECT "WScript.Shell")))
+  in USUBR BROWSER--SHELL: ()
+  in EVAL: (BROWSER--SHELL)
+  in EVAL: (VLAX-GET-PROPERTY (BROWSER--SHELL) (QUOTE CURRENTDIRECTORY))
+  in USUBR BROWSER--GET-CWD: ()
+  in EVAL: (BROWSER--GET-CWD)
+  in EVAL: (SETQ DIR (BROWSER--GET-CWD))
+  in USUBR PWD: ()
+  in EVAL: (PWD)
+_$  
