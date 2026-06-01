@@ -1,0 +1,6 @@
+When a file ends with a comment ; foo
+loading it produces this error:
+
+ERROR protocol request 14: while loading /Users/pjb/works/sncf-reseau/bugs/bricscad-functions.lsp (form starting at line 27) at line 31, column 1: unexpected end of file while reading form
+
+The reader must expect that trying to read a lisp object leads to a end-of-file, even if it reads over a comment.

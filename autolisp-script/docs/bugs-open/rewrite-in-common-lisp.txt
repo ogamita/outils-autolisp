@@ -1,0 +1,7 @@
+If you feel the complexity of the autolisp script has overcome
+that which is reasonable for a bash script, we may decide to convert
+it to Common Lisp, using sbcl and/or ccl as target implementations. In
+Common Lisp, we can use the babel library to deal with character
+encoding and decoding. In that case tell it, and we'll pause this
+feature request until we reimplement autolisp in Common Lisp.
+

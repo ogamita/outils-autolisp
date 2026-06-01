@@ -1,0 +1,169 @@
+#+TITLE: Décision : réécriture de autolisp-script comme sous-projet de clautolisp
+#+AUTHOR: Pascal J. Bourguignon
+#+LANGUAGE: fr
+#+DATE: 2026-05-22
+#+OPTIONS: toc:2 num:t
+
+* Statut
+
+Décidé. Cette note clôt la demande
+[[file:../bugs-open/rewrite-in-common-lisp.txt]] et fixe le cadre de
+travail pour les évolutions ultérieures de =autolisp-script=.
+
+* Décision
+
+=autolisp-script= est réécrit en Common Lisp, comme *sous-projet de
+=clautolisp=* (=src/clautolisp/clautolisp/=).
+
+Le binaire historique =autolisp-script/autolisp= (bash, ~4 756
+lignes) est mis en gel fonctionnel :
+
+- aucun nouveau développement n'est entrepris dessus, à l'exception
+  des correctifs ponctuels strictement nécessaires pour les
+  utilisateurs en attente du nouveau binaire ;
+- les correctifs effectués dans le bash doivent rester
+  rétro-compatibles ;
+- la version =VERSION_PATCH= continue d'être incrémentée à chaque
+  modification d'un fichier runtime chargé par le script.
+
+* Périmètre du nouveau sous-projet
+
+Le nouveau sous-projet, provisoirement nommé =autolisp-script= dans
+l'arborescence =clautolisp=, livre :
+
+- un exécutable =autolisp= dont l'interface en ligne de commande est
+  un sur-ensemble strictement compatible de l'actuelle (cf.
+  =autolisp-script--specifications.org=) ;
+- trois backends, sélectionnables explicitement ou par défaut selon
+  le système :
+  + =bricscad= : pilote une instance réelle de BricsCAD ;
+  + =autocad=  : pilote une instance réelle d'AutoCAD ;
+  + =clautolisp= : évalue le code AutoLISP en
+    *in-process*, sans CAD, en s'appuyant sur le runtime déjà
+    présent dans =clautolisp= et sur ses hôtes =MockHost= ou
+    =LiveHost= (à venir) ;
+- une matrice de support croisant les trois backends et trois
+  systèmes : macOS, Linux, MS-Windows. Les combinaisons non
+  pertinentes (par exemple =autocad= sur macOS) sont documentées
+  comme telles et signalées proprement à l'utilisateur.
+
+* Justification
+
+Un audit du script bash a été conduit (cf. discussion du
+2026-05-22). Les conclusions :
+
+** Ce que =clautolisp= fournit déjà et qui élimine du code bash
+
+- =autolisp-reader= : lecteur AutoLISP complet (663 fichiers, ~100
+  kloc déjà lus). Remplace la vérification perl de complétude des
+  formes (=autolisp-script/autolisp= ~lignes 366–414).
+- =autolisp-runtime= : modèle d'objets, évaluateur, contexte
+  d'évaluation, environnement, gestion d'erreurs structurée.
+- =autolisp-builtins-core= : familles numériques, listes, chaînes,
+  fichiers, flux, impression.
+- =autolisp-host= : HAL définissant le contrat des backends, avec
+  =MockHost= déjà disponible.
+- =autolisp-file-compat= : harness de compatibilité avec gestion des
+  formats externes (préfigure le support natif du =--encoding=).
+- =autolisp-dcl= : DCL avec renderer terminal et sous-processus.
+- Dialect descriptors =:strict=, =:autocad-2026=, =:bricscad-v26=
+  partagés entre lecteur et runtime, déjà câblés dans l'exécutable
+  =clautolisp=.
+
+** Ce que la réécriture simplifie
+
+- *Lecture et complétude de formes* : déjà résolu par
+  =autolisp-reader=, gain immédiat.
+- *Encodages* : =babel= en in-process, supports tous les codecs et
+  fins de ligne ; transforme la spec de
+  =autolisp-encoding.txt= d'environ 150–200 lignes de bash fragile
+  en environ 30–50 lignes de Common Lisp.
+- *REPL interactif* : bibliothèques CL matures (linedit, repline)
+  contre une réimplémentation TTY+tampon en bash.
+- *Streaming de sortie, timeouts, debug, workdir/trap, help* :
+  =unwind-protect=, =internal-real-time-units=, =log4cl=,
+  docstrings ; lisible et maintenable.
+- *Conventions de nommage* : le nouveau code naît directement en
+  kebab-case, ce qui résout =bugs-open/kebab-case.txt= par
+  construction.
+- *Marqueur de runtime* : un =defparameter
+  =cl-user::*autolisp-version*= dans le bootstrap LISP du backend
+  remplace le marqueur historique =*AUTOLISP_BOOTSTRAP_PHASE*= et
+  résout =bugs-open/identification-mark.txt= par construction.
+
+** Risques honnêtes
+
+- *Cycle de vie macOS de BricsCAD* : découverte du =.app=, =open(1)=,
+  battement AppleScript, particularité =_QUIT= ne tue pas
+  l'application. Pas dans =clautolisp= aujourd'hui ; à porter, soit
+  via =uiop:launch-program= + un shim shell, soit via
+  =sb-ext:run-program= et =osascript=.
+- *VBScript Windows* (~520 lignes pour AutoCAD+BricsCAD) : la
+  complexité d'assemblage des bridges COM n'est pas réduite par le
+  passage en CL ; =format= remplace =heredoc= sans gain net.
+- *Contrôle de sous-processus en général* : =clautolisp= n'expose
+  pas encore de primitives de subprocess ; à ajouter (couche fine
+  au-dessus de =uiop:launch-program=).
+
+** Bilan
+
+Réécriture validée. Les gains se concentrent sur le cœur AutoLISP
+du script (lecture, encodages, REPL, streaming) qui est précisément
+la portion la moins adaptée au bash. Les portions de pure plomberie
+(VBS, gestion de processus) restent à coût comparable, sans
+régression.
+
+* Conséquences sur les items ouverts
+
+| Item                   | Statut après décision                                                                                            |
+|------------------------+------------------------------------------------------------------------------------------------------------------|
+| [[file:../bugs-open/rewrite-in-common-lisp.txt][rewrite-in-common-lisp]] | Résolu par la présente décision. Déplacé vers =bugs-closed/=.                                                    |
+| [[file:../bugs-open/autolisp-encoding.txt][autolisp-encoding]]      | Pause sur le bash. Spec intégrée à la nouvelle spec exhaustive et implémentée nativement dans le sous-projet CL. |
+| [[file:../bugs-open/kebab-case.txt][kebab-case]]             | Sans objet sur le bash. Convention appliquée d'office par le nouveau code.                                       |
+| [[file:../bugs-open/identification-mark.txt][identification-mark]]    | Sans objet sur le bash. =*autolisp-version*= défini d'office par le bootstrap du nouveau runtime.                |
+| [[file:../bugs-open/final-comment.txt][final-comment]]          | Reste ouvert sur le bash. Correctif léger envisageable à court terme ; déjà couvert par le lecteur CL.           |
+
+* Référence : structure du sous-projet =autolisp-script=
+
+À titre indicatif, et à raffiner pendant l'implémentation, le
+sous-projet s'insère dans =clautolisp= avec la disposition
+suivante :
+
+#+begin_example
+clautolisp/
+├── autolisp-script/
+│   ├── PLAN.md
+│   ├── README.org
+│   ├── documentation/
+│   │   ├── specification.org           ; cf. autolisp-script--specifications.org enrichi
+│   │   └── protocol.org                ; cf. batch-repl-protocol-spec.org enrichi
+│   ├── source/
+│   │   ├── package.lisp
+│   │   ├── cli.lisp                    ; parsing options + dispatch backend
+│   │   ├── workdir.lisp                ; création/cleanup workdir
+│   │   ├── protocol/                   ; protocole REPL fichier-based
+│   │   ├── backend/
+│   │   │   ├── clautolisp.lisp        ; backend in-process (par défaut hors CAD)
+│   │   │   ├── bricscad/
+│   │   │   │   ├── common.lisp
+│   │   │   │   ├── macos.lisp         ; bundle, osascript, batch via open -b
+│   │   │   │   ├── linux.lisp
+│   │   │   │   └── windows.lisp       ; COM via cscript + VBS generation
+│   │   │   └── autocad/
+│   │   │       ├── common.lisp
+│   │   │       └── windows.lisp       ; COM, accoreconsole, EPURE
+│   │   └── runtime-template/          ; templates LISP injectés côté CAD
+│   ├── tests/
+│   └── tools/
+└── ...
+#+end_example
+
+* Référence : versionnage
+
+Le sous-projet suit la règle =MAJOR.MINOR.DEVELOP= déjà en vigueur
+pour =clautolisp= (cf.
+=tools/clautolisp/source/version.lisp=). Toute modification d'un
+fichier source du sous-projet incrémente automatiquement =DEVELOP=.
+
+Pendant la phase de cohabitation, la version du nouveau binaire est
+indépendante du =VERSION.TXT= du bash legacy.

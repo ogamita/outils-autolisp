@@ -1,0 +1,92 @@
+-*- coding: utf-8 -*-
+
+autolisp encoding options.
+
+By default, all the reading aemnd printing done by autolisp follows the
+LC environment variables.
+
+-l|--load maps to (load …) which is the autolisp script load function.
+This autolisp script load function, as well as all other text I/O
+functions implemented by autolisp, need to use a *load-encoding*
+variable.  If nil, the encoding is inherited from the LC environment
+variables.  Otherwise, *load-encoding* is a symbol naming a coding
+system, similar to emacs coding systems. At minimum, the following
+coding systems must be supported:
+
+- windows-1252
+- iso-8859-1
+- utf-8
+
+This symbol may be suffixed by:
+- -dos    -> CR LF
+- -mac    -> CR
+- -unix   -> LF
+to indicate the line termination. By default, -unix is taken.
+
+An option:      -e coding-system
+equivalent to:  -x (setq *load-encoding* (quote windows-1252-dos))
+
+An option:      -E coding-system
+specifies the coding systems used by interactive I/O
+superseding the LC_ environment variables.
+
+For example:
+    autolisp -E iso-8859-1-mac -i < macintosh-source.lsp
+
+
+        
+autolisp -x (setq *load-encoding* (quote windows-1252-dos)) \
+         -l windows-file.lsp \
+         -e utf-8 \
+         -x (load "modern-unix-unicode-file.lsp") \
+         -i
+;; interactive input and output follow LC_* environment variables by default.
+
+And, importantly, the command-line arguments are to be decoded using
+the LC_ environment variables too!
+
+LC_CTYPE=iso-8850-1
+autolisp \
+    -x '(princ "À Noël, où Mélanie préfère brûler du maïs rôti, Gérard déçu s’écria : “Fœhn, ça va ?” tandis qu’Ægir jugeait l’île exiguë.")' \
+    -x '(terpri)' \
+    -x '(princ (length "À Noël, où Mélanie préfère brûler du maïs rôti, Gérard déçu s’écria : “Fœhn, ça va ?” tandis qu’Ægir jugeait l’île exiguë."))' \
+    -x '(terpri)' \
+    -q
+
+devrait imprimer:
+À Noël, où Mélanie préfère brûler du maïs rôti, Gérard déçu s’écria : “Fœhn, ça va ?” tandis qu’Ægir jugeait l’île exiguë.
+122
+
+and if we have two files:
+- pangrammatique-utf-8-mac.lsp
+- pangrammatique-windows-1252-dos.lsp
+containing:
+
+(let ((sentence  "À Noël, où Mélanie préfère brûler du maïs rôti, Gérard déçu s’écria : “Fœhn, ça va ?” tandis qu’Ægir jugeait l’île exiguë."))
+ (princ sentence)
+ (terpri)
+ (princ (length sentence))
+ (terpri)) 
+
+then:
+
+LC_TYPE=en_EN.iso-8859-1
+autolisp \
+    -e utf-8-mac        -l pangrammatique-utf-8-mac.lsp \
+    -e windows-1242-dos -l pangrammatique-windows-1242-dos.lsp \
+    -q
+devrait imprimer (en iso-8859-1):
+
+À Noël, où Mélanie préfère brûler du maïs rôti, Gérard déçu s’écria : “Fœhn, ça va ?” tandis qu’Ægir jugeait l’île exiguë.
+122
+À Noël, où Mélanie préfère brûler du maïs rôti, Gérard déçu s’écria : “Fœhn, ça va ?” tandis qu’Ægir jugeait l’île exiguë.
+122
+
+
+Note: this is a question of front-end.  The backend autolisp
+implementation (bricscad, autocad, etc) may support each its own list
+of coding systems (perhaps only 1 coding system). The autolisp script
+must know what coding system is used by the backend, and perform the
+conversion when doing I/O (either loading, reading or writing files,
+or doing I/O on the terminal.
+

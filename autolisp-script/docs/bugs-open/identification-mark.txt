@@ -1,0 +1,13 @@
+schms utilise comme Marqueur autolisp : *AUTOLISP_BOOTSTRAP_PHASE*
+(toujours défini par le wrappelior) Ce serait plus joli d'avoir une
+variable *AUTOLISP-VERSION* définie avant même
+*AUTOLISP_BOOTSTRAP_PHASE* comme variable à tester pour savoir si le
+run-time autolisp est chargé (avec ses overrides de princ et al.).
+
+(if (boundp '*autolisp-version*)
+  (princ "")
+  (princ))
+
+Modifier autolisp en conséquence,
+et mettre à jour les sources de ../../schms/.
+

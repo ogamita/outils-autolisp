@@ -1,0 +1,5 @@
+
+I'd prefer if you followed the usual lisp convention of using kebab
+case (ie, using dashes instead of underlines in symbol names.  Rename
+all *AUTOLISP_… symbols s/_/-/g and simiarly for autolisp_… and other 
+symbols we own (functions, variables).
