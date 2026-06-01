@@ -1,5 +1,13 @@
 #+TITLE: autolisp-script -- Batch REPL and Remote I/O Specification
 
+#+begin_quote
+*NOTE — Document intégré.* Ce document a été *intégré* dans la
+spécification exhaustive
+[[file:autolisp-script--specifications.org]] (section
+/Protocole REPL distant/). C'est désormais cette dernière qui fait
+foi. Le présent document est conservé pour la postérité.
+#+end_quote
+
 * Objectif
 
 Ce document spécifie le protocole de communication entre :

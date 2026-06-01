@@ -1,452 +1,1718 @@
-#+TITLE: autolisp-script -- Specifications
+#+TITLE: autolisp-script -- Spécification exhaustive
 #+AUTHOR: Pascal J. Bourguignon
 #+LANGUAGE: fr
-#+OPTIONS: toc:2 num:t
+#+OPTIONS: toc:3 num:t
 
 * Objet et portée
 
-Ce document spécifie le contrat du programme =autolisp-script/autolisp=,
-un wrapper shell qui exécute du code AutoLISP dans une instance d'AutoCAD
-ou de BricsCAD et restitue les sorties à l'environnement appelant.
+Ce document est la *spécification de référence* du programme
+=autolisp= : un exécutable d'orchestration qui évalue du code
+AutoLISP, soit dans une instance réelle d'AutoCAD ou de BricsCAD,
+soit en in-process via le runtime AutoLISP fourni par =clautolisp=.
 
-Sont spécifiés ici :
-
-- l'interface en ligne de commande ;
-- l'ordre d'exécution des actions ;
-- le contrat I/O échangé avec le runtime AutoLISP ;
-- les variables globales injectées dans l'environnement AutoLISP ;
-- les conventions de codes de retour et de gestion d'erreur ;
-- les invariants attendus selon le système, le moteur et le mode.
-
-Ne sont pas spécifiés ici :
-
-- les tutoriels d'usage et exemples (voir [[file:autolisp-script.md]]) ;
-- le protocole interne de REPL distant (voir
-  [[file:autolisp-script--batch-repl-protocol-spec.org]]).
-
-* Vocabulaire
-
-- /Wrapper/ : le programme shell =autolisp-script/autolisp=.
-- /Moteur/ : l'exécutable CAD effectivement lancé, soit AutoCAD, soit
-  BricsCAD.
-- /Workdir/ : répertoire temporaire propre à une exécution, créé par
-  le wrapper pour héberger les fichiers de transit.
-- /Action/ : un élément de la liste positionnelle d'arguments, sous
-  forme d'un fichier source (=source.lsp=) ou d'une expression à
-  évaluer (=-x expression=).
-- /MAIN/ : la commande AutoLISP appelée à la fin des actions, par
-  défaut =C:MAIN=, modifiable via =--main=.
-
-* Interface en ligne de commande
-
-** Synopsis
-
-#+begin_src text
-  autolisp -V|--version | -h|--help
-  autolisp [options]... { [-l|--load] source.lsp
-                        | -x|--eval expression
-                        | -i|--interactive
-                        | --main C:MAIN
-                        | --quit }...
-#+end_src
-
-Les options d'action ci-dessus peuvent être mélangées à volonté et
-sont traitées dans l'ordre où elles apparaissent.
-
-** Options reconnues
-
-|----------------------------+------------------------------------------------+----------------------------------------------------------------------------|
-| Options génériques         | Argument                                       | Effet normatif                                                             |
-|----------------------------+------------------------------------------------+----------------------------------------------------------------------------|
-| =-V= ou =--version=        |                                                | Affiche la version, puis quitte.                                           |
-| =-h= ou =--help=           |                                                | Affiche un message d'aide listant les options, puis quitte.                |
-| =-q= ou =--quiet=          |                                                | Supprime les messages d'information non essentiels.                        |
-| =-v= ou =--verbose=        |                                                | Affiche les labels structurés et davantage de diagnostics.                 |
-| =-norc= ou =--no-init=     |                                                | Inhibe le chargement de ~/.autolisp{,rc}{,.lsp}                  |
-|----------------------------+------------------------------------------------+----------------------------------------------------------------------------|
-| Options interactives       | Argument                                       | Effet normatif                                                             |
-|----------------------------+------------------------------------------------+----------------------------------------------------------------------------|
-| =-x= ou =--eval=           | =expression=                                   | Action : évaluation d'une forme AutoLISP.                                  |
-| =-l= ou =--load=           | =fichier.lsp=                                  | Action : charger un fichier AutoLISP (load).                               |
-| =-i= ou =--interactive=    |                                                | Active le mode REPL.                                                       |
-| =--main=                   | =C:MAIN=                                       | Nom de la commande appelée après les actions.                              |
-| =--quit=                   |                                                | Force the script to quit once the previous options are processed.          |
-|----------------------------+------------------------------------------------+----------------------------------------------------------------------------|
-| Options moteur             | Argument                                       | Effet normatif                                                             |
-|----------------------------+------------------------------------------------+----------------------------------------------------------------------------|
-| =--dwg=                    | =fichier.dwg=                                  | DWG fourni au Core Console AutoCAD.                                        |
-| =--autocad=                |                                                | Force le moteur AutoCAD.                                                   |
-| =--bricscad=               |                                                | Force le moteur BricsCAD.                                                  |
-|----------------------------+------------------------------------------------+----------------------------------------------------------------------------|
-| Options spécifique         | Argument                                       | Effet normatif                                                             |
-|----------------------------+------------------------------------------------+----------------------------------------------------------------------------|
-| =--epure=                  |                                                | Bootstrap EPURE (voir section EPURE) ; sans effet hors Windows.            |
-|----------------------------+------------------------------------------------+----------------------------------------------------------------------------|
-| Options techniques         | Argument                                       | Effet normatif                                                             |
-|----------------------------+------------------------------------------------+----------------------------------------------------------------------------|
-| =--timeout=                | =N= secondes                                   | Durée maximale d'attente du runtime CAD.                                   |
-| =--bootstrap-phase=        | =marker= \vert =core= \vert =log= \vert =full= | Sélectionne la phase de bootstrap LISP (voir section Phases de bootstrap). |
-| =--mode=                   | =automation= \vert =batch=                     | Mode BricsCAD macOS ; ignoré ailleurs sauf indication explicite.           |
-| =--backend=                | =attach= \vert =launch=                        | Backend du mode =automation= macOS.                                        |
-| =--bricscad-macos-profile= | =NOM=                                          | Ajoute =-P NOM= au lancement BricsCAD macOS batch.                         |
-|----------------------------+------------------------------------------------+----------------------------------------------------------------------------|
-
-* Sémantique d'exécution
-
-Les options =-v=,  =--verbose=, =-h=, =--help== sont prioritaires. Si
-elles apparaissent sur la ligne de commande, elles sont prise en
-compte et les autres options sont ignorées, qu'elles soient valides ou
-non. 
-
-Les options =-x= ou =--eval= et =-l= ou =--load=, et =--epure=, ainsi
-que  =-i= ou =--interactive=,  =--main= =MAINFUN= et =--quit= sont
-traitées dans l'ordre donné.
-
-L'option =-norc= ou =--no-init= empêche le chargement du fichier
-d'initialisation s'il est présent.  Quand =-norc= ou =--no-init= n'est
-pas présent, c'est comme s'il y avait en début de la liste d'options
-=--load= =RCFILE=. (Cette option peut figurer en n'importe quelle
-position avec le même effet, il est conseillé de l'écrire en début de
-liste). 
-
-Le =RCFILE= est le premier fichier trouvé dans la liste:
-
-| =~/.autolisp=                   |
-| =~/.autolisp.{fas,vlx,des,…}=   |
-| =~/.autolisp.lsp=               |
-| =~/.autolisprc=                 |
-| =~/.autolisprc.{fas,vlx,des,…}= |
-| =~/.autolisprc.lsp=             |
-
-D'autres extensions de fichiers compilés sont possibles selon les
-moteurs.  Les fichiers compilés ne sont considérés que si leur date de
-modification est plus récente que celle du fichiers =.lsp=
-correspondant, si ce dernier existe.
-
-L'option =--epure= effectue un =load= du logiciel EPURE installé sur
-le système.
-
-Chaque =source.lsp= est exécuté via =(load "...")=.
-
-Pour chaque =-x= =expression= ou =--eval= =expression=, l'=expression=
-est lue et évaluée comme une forme AutoLISP (comme si elle avait été
-saisi dans le REPL interactif de =--interactive=.
-
-L'option =-i= ou =--interactive= active un REPL lisp interactif
-permettant à l'utilisateur d'envoyer des formes lisp au moteur,
-d'interagir en entrée/sortie sur le terminal, et d'en obtenir le
-résultat, itérativement.  Il en sort avec la fonction =(quit)=  ou
-=(exit)=  (alias de =(autolisp-exit)=):
-
-| =(quit)=                    | (command "._QUIT") | Termine le moteur et autolisp. Les options suivantes sont ignorées.            |
-| =(exit)=, =(autolisp-exit)= | N/A                | Sort simplement du REPL interactif. Les options suivantes sont alors traitées. |
-
-L'option =--main= permet d'appeler une fonction ou commande quelconque
-(probablement une chargée dans l'un des fichiers spécifiés par
-=--load= mais pas forcément).  Cette fonction ou commande contient
-habituellement un appel à =(quit)= ou =(command "._QUIT")= ou
-équivalent, avec l'effet induit.  Si ce n'est pas le cas, et qu'elle
-retourne simplement, alors les options suivantes sont traités.
-
-L'option =--quit= termine le moteur et autolisp. Les options suivantes
-sur la ligne de commande sont ignorées.
-
-Un =--quit= implicite est appliqué à la fin de la ligne de commande,
-après le traitement de la dernière option. C'est ce qui garantit que
-=-i= terminé par =(exit)= (alias de =(autolisp-exit)=) provoque la
-sortie effective du wrapper et la fermeture du moteur, plutôt qu'un
-processus suspendu.
-
-Avec =--autocad --epure=, =AUTOCAD_EXE= est requis.
-
-** Codes de retour
-
-| Code | Signification                                                              |
-|------+----------------------------------------------------------------------------|
-|    0 | Toutes les actions et l'éventuel appel à MAIN ont réussi.                  |
-|    1 | Au moins un =load=, un =eval= ou =MAIN= a échoué.                          |
-|    2 | Argument invalide, fichier introuvable ou option incomplète.               |
-|    3 | Aucun moteur CAD trouvé ou exécutable manquant.                            |
-
-Le wrapper initialise le statut interne à =99=. Un script LISP peut
-écrire un statut intermédiaire via =autolisp-set-status= ; le wrapper
-écrase cette valeur par le statut normatif final ci-dessus, s'il n'est
-pas 0.
-
-* Contrat I/O
-
-** Workdir
-
-Pour chaque exécution, le wrapper crée un répertoire de session unique :
-
-- racine par défaut : =autolisp-script/.autolisp-runs= ;
-- exception BricsCAD macOS =batch= : =${TMPDIR:-/tmp}/autolisp-runs= ;
-- override explicite : variable d'environnement =AUTOLISP_WORKDIR=.
-
-Fichiers réservés du workdir :
-
-- =run-common.lsp= : runtime AutoLISP généré ;
-- =run.scr= : script de démarrage CAD ;
-- =output.txt= : sortie utilisateur (=OUTFILE=) ;
-- =errors.txt= : sortie d'erreur (=ERRFILE=) ;
-- =status.txt= : code de statut (=STATUSFILE=) ;
-- =input.lsp= : canal d'entrée du REPL distant (=INPFILE=) ;
-- =logs/= : journal CAD éventuel.
-
-Le workdir est supprimé en fin d'exécution sauf si
-=AUTOLISP_KEEP_WORKDIR=1= est défini.
-
-** Sortie standard et sortie d'erreur
-
-- =stdout= du wrapper est reconstruit à partir de =OUTFILE=.
-- =stderr= du wrapper provient de =ERRFILE=, complété de diagnostics
-  shell.
-- Les sorties utilisateur AutoLISP (=print=, =princ=, =prin1=,
-  =prompt=) sont miroirées dans =OUTFILE= pendant les phases =load=,
-  =eval= et =main=.
-
-** Verbosité
-
-| Niveau              | Format de =stdout=                                                                                         |
-|---------------------+------------------------------------------------------------------------------------------------------------|
-| =-q= ou =--quiet=   | Sorties utilisateur et valeurs finales uniquement.                                                         |
-| Normal              | Identique à =--quiet= côté =stdout= ; messages shell de courtoisie.                                        |
-| =-v= ou =--verbose= | Labels structurés (=LOAD=, =EVAL=, =OUTPUT=, =RESULT=, =MAIN=, =TOTAL=, ...) et diagnostics shell étendus. |
-
-
-Si =-q= ou =--quiet= ne sont pas donnés, ou si =-v= ou =--verbose=
-sont donnés, alors au démarrage le script autolisp affiche sa version :
-
-#+begin_quote
-autolisp 1.0.0
-#+end_quote
-
-et lorsque le moteur est lancé, le numéro de version du moteur est
-obtenu et affiché :
-
-#+begin_quote
-BricsCAD 26.0.1
-#+end_quote
-
-
-* Contrat AutoLISP
 
 ** Variables globales injectées
 
 Le runtime généré dans =run-common.lsp= expose les variables
 suivantes au moment où les actions et =MAIN= sont exécutées :
 
-- =*AUTOLISP_OUTFILE*= : chemin vers =OUTFILE= ;
-- =*AUTOLISP_ERRFILE*= : chemin vers =ERRFILE= ;
-- =*AUTOLISP_STATUSFILE*= : chemin vers =STATUSFILE= ;
-- =*AUTOLISP_INPFILE*= : chemin vers =INPFILE= ;
-- =*AUTOLISP_LOGDIR*= : chemin du dossier =logs/= ;
-- =*AUTOLISP_LOGNAME*= : préfixe pour les fichiers de journal ;
-- =*AUTOLISP_QUIT_ON_FINISH*= : indicateur indiquant si le runtime
-  doit fermer le moteur CAD à la fin.
+| Variable                              | Rôle                                                                               |
+|---------------------------------------+------------------------------------------------------------------------------------|
+| =*AUTOLISP-VERSION*=                  | Version du wrapper, sous la forme =(MAJOR MINOR DEVELOP)=. *Nouveau*, résout =bugs-open/identification-mark.txt=. |
+| =*AUTOLISP-OUTFILE*=                  | Chemin vers =OUTFILE=.                                                             |
+| =*AUTOLISP-ERRFILE*=                  | Chemin vers =ERRFILE=.                                                             |
+| =*AUTOLISP-STATUSFILE*=               | Chemin vers =STATUSFILE=.                                                          |
+| =*AUTOLISP-INPFILE*=                  | Chemin vers =INPFILE= (REPL historique).                                           |
+| =*AUTOLISP-LOGDIR*=                   | Chemin du dossier =logs/=.                                                         |
+| =*AUTOLISP-RENDERFILE*=               | Chemin du fichier de rendu intermédiaire.                                          |
+| =*AUTOLISP-LOGNAME*=                  | Préfixe du fichier de journal CAD (défaut =autolisp-session.log=).                 |
+| =*AUTOLISP-QUIT-ON-FINISH*=           | =T= si le runtime doit fermer le moteur CAD à la fin, =nil= sinon.                 |
+| =*AUTOLISP-BOOTSTRAP-PHASE*=          | Phase de bootstrap effective (=marker= / =core= / =log= / =full=).                 |
+| =*AUTOLISP-INVOCATION-DIR*=           | Chemin absolu du répertoire courant au moment de l'invocation du wrapper.          |
+| =*AUTOLISP-DEBUG*=                    | =T= si =--debug= est actif, =nil= sinon.                                           |
+| =*AUTOLISP-DEBUGFILE*=                | Chemin vers =debug.log=.                                                           |
+| =*AUTOLISP-USE-REMOTE-PROTOCOL*=      | =1= si le protocole REPL distant est actif, =0= sinon.                             |
+| =*AUTOLISP-PROTOCOL-DIR*=             | Chemin du sous-répertoire =protocol/=.                                             |
+| =*AUTOLISP-PROTOCOL-STATUSFILE*=      | =protocol/status.txt=.                                                             |
+| =*AUTOLISP-PROTOCOL-STDINFILE*=       | =protocol/stdin.txt=.                                                              |
+| =*AUTOLISP-PROTOCOL-STDOUTFILE*=      | =protocol/stdout.txt=.                                                             |
+| =*AUTOLISP-PROTOCOL-STDERRFILE*=      | =protocol/stderr.txt=.                                                             |
+| =*AUTOLISP-PROTOCOL-CONTROLFILE*=     | =protocol/control.txt=.                                                            |
+| =*AUTOLISP-PROTOCOL-HEARTBEATFILE*=   | =protocol/heartbeat.txt=.                                                          |
+| =*AUTOLISP-PROTOCOL-READFILE*=        | =protocol/read-buffer.lsp=.                                                        |
+| =*AUTOLISP-PROTOCOL-INFOFILE*=        | =protocol/runtime-info.txt=.                                                       |
+| =*AUTOLISP-PROTOCOL-RUNTIMEFILE*=     | Chemin vers le runtime AutoLISP du protocole (=runtime/autolisp-remote-io.lsp=).   |
 
-** Helpers
+** Helpers exposés
 
-- =(autolisp-log-out string)= : journalise une ligne dans =OUTFILE=.
-- =(autolisp-log-err string)= : journalise une ligne dans =ERRFILE=.
-- =(autolisp-set-status int)= : écrit un statut intermédiaire dans
-  =STATUSFILE=. Le wrapper en réécrira la valeur finale.
+| Fonction                          | Rôle                                                                                  |
+|-----------------------------------+---------------------------------------------------------------------------------------|
+| =(autolisp-log-out string)=       | Journalise une ligne dans =OUTFILE=.                                                  |
+| =(autolisp-log-err string)=       | Journalise une ligne dans =ERRFILE=.                                                  |
+| =(autolisp-set-status int)=       | Écrit un statut numérique dans =STATUSFILE=. Le wrapper réécrira la valeur finale.    |
+| =(autolisp-set-status-text text)= | Écrit un statut textuel dans =STATUSFILE= (utilisé par le protocole).                 |
+| =(autolisp-resolve-path path)=    | Résout =path= relativement à =*AUTOLISP-INVOCATION-DIR*= s'il n'est pas absolu.      |
+| =(autolisp-exit)=                 | Alias de =(exit)= : sort du REPL sans tuer le moteur.                                 |
+| =(quit)=                          | Demande l'arrêt du moteur ; lève le signal =*AUTOLISP-QUIT-SIGNAL*=.                  |
+| =(autolisp-runtime-debug msg)=    | Émet une ligne dans =debug.log= si =*AUTOLISP-DEBUG*= est =T=.                        |
 
 ** Exemple minimal
 
 #+begin_src lisp
-(defun C:MAIN ( / )
-  (autolisp-log-out "Hello from AutoLISP.")
-  (autolisp-set-status 0)
-  (princ))
+  (defun C:MAIN ( / )
+    (setq *error*
+          (lambda (msg)
+            (autolisp-log-err (strcat "ERROR: " msg))
+            (autolisp-set-status 1)
+            (princ)))
+
+    (autolisp-log-out "Hello from AutoLISP.")
+    ;; ... votre code ...
+    (autolisp-set-status 0)
+    (princ))
 #+end_src
 
-* Sélection du moteur
+** Phases de bootstrap
 
-Si ni =--autocad= ni =--bricscad= n'est fourni :
+| Phase    | Comportement normatif                                                                          |
+|----------+------------------------------------------------------------------------------------------------|
+| =marker= | Écrit uniquement un marqueur de démarrage et un statut. Les actions ne sont pas exécutées.     |
+| =core=   | Exécute les actions avec l'I/O fichier de base ; pas de capture de =print=/=princ=/=prompt=.   |
+| =log=    | Comme =core=, plus le setup du log CAD (=LOGFILEMODE=, =LOGFILEPATH=, =LOGFILENAME=).          |
+| =full=   | Comportement normal : log CAD, capture des sorties Lisp, REPL batch si =-i=, protocole distant si =*AUTOLISP-USE-REMOTE-PROTOCOL*= = =1=. |
 
-- sous Windows, le wrapper essaie AutoCAD puis BricsCAD selon les
-  exécutables détectés ;
-- hors Windows, le moteur par défaut est BricsCAD.
+Le mode =--interactive= impose =full= ; toute autre combinaison
+sort en code =2=.
 
-Variables d'environnement de localisation :
+** Template =run-common.lsp= émis
 
-- =AUTOCAD_EXE=, =AUTOCAD_ACCORECONSOLE=, =BRICSCAD_EXE=.
+Le template ci-dessous est celui émis pour une session
+=--bricscad --mode batch -i= en phase =full=. Les placeholders
+=${VAR}= sont substitués par le wrapper. Le contenu effectif est
+issu de l'agglomération de plusieurs blocs émis successivement par
+le wrapper bash actuel (cf. =autolisp:2409–3563=) ; les portions
+omises avec =;; …= correspondent à des helpers volumineux dont le
+détail figure dans le code de référence aux lignes citées.
 
-Si aucun exécutable adéquat n'est trouvé après application des
-options et variables d'environnement, le wrapper sort en =3=.
+#+begin_src lisp
+  ;; --- Variables globales injectées (autolisp:2466-2488) ---
+  (setq _autolisp_old_srchpath nil)
+  (setq *AUTOLISP-OUTFILE*                "${LISP_OUTFILE}")
+  (setq *AUTOLISP-ERRFILE*                "${LISP_ERRFILE}")
+  (setq *AUTOLISP-STATUSFILE*             "${LISP_STATUSFILE}")
+  (setq *AUTOLISP-INPFILE*                "${LISP_INPFILE}")
+  (setq *AUTOLISP-LOGDIR*                 "${LISP_LOGDIR}")
+  (setq *AUTOLISP-RENDERFILE*             "${LISP_RENDERFILE}")
+  (setq *AUTOLISP-PROTOCOL-DIR*           "${LISP_PROTOCOL_DIR}")
+  (setq *AUTOLISP-PROTOCOL-STATUSFILE*    "${LISP_PROTOCOL_STATUSFILE}")
+  (setq *AUTOLISP-PROTOCOL-STDINFILE*     "${LISP_PROTOCOL_STDINFILE}")
+  (setq *AUTOLISP-PROTOCOL-STDOUTFILE*    "${LISP_PROTOCOL_STDOUTFILE}")
+  (setq *AUTOLISP-PROTOCOL-STDERRFILE*    "${LISP_PROTOCOL_STDERRFILE}")
+  (setq *AUTOLISP-PROTOCOL-CONTROLFILE*   "${LISP_PROTOCOL_CONTROLFILE}")
+  (setq *AUTOLISP-PROTOCOL-HEARTBEATFILE* "${LISP_PROTOCOL_HEARTBEATFILE}")
+  (setq *AUTOLISP-PROTOCOL-READFILE*      "${LISP_PROTOCOL_READFILE}")
+  (setq *AUTOLISP-PROTOCOL-INFOFILE*      "${LISP_PROTOCOL_INFOFILE}")
+  (setq *AUTOLISP-PROTOCOL-RUNTIMEFILE*   "${LISP_PROTOCOL_RUNTIME_FILE}")
+  (setq *AUTOLISP-USE-REMOTE-PROTOCOL*    ${USE_REMOTE_PROTOCOL})
+  (setq *AUTOLISP-LOGNAME*                "autolisp-session.log")
+  (setq *AUTOLISP-QUIT-ON-FINISH*         ${QUIT_ON_FINISH})
+  (setq *AUTOLISP-BOOTSTRAP-PHASE*        "${BOOTSTRAP_PHASE}")
+  (setq *AUTOLISP-INVOCATION-DIR*         "${INVOCATION_DIR}")
+  (setq *AUTOLISP-DEBUG*                  ${T_or_nil})
+  (setq *AUTOLISP-DEBUGFILE*              "${DEBUGFILE}")
+  (setq *AUTOLISP-VERSION*                '(${MAJOR} ${MINOR} ${DEVELOP}))
+  
+  ;; --- Helpers de chemin (autolisp:2497-2561) ---
+  (defun autolisp-absolute-path-p (p)
+    (cond
+      ((or (null p) (not (= (type p) 'STR)) (= p "")) nil)
+      ((or (= (substr p 1 1) "/")
+           (= (substr p 1 1) "\\")) T)
+      ((and (>= (strlen p) 2)
+            (= (substr p 2 1) ":")) T)
+      (T nil)))
 
-* Phases de bootstrap
+  (defun autolisp-resolve-path (p)
+    (cond
+      ((or (null p) (not (= (type p) 'STR))) p)
+      ((autolisp-absolute-path-p p) p)
+      ((or (null *AUTOLISP-INVOCATION-DIR*) (= *AUTOLISP-INVOCATION-DIR* "")) p)
+      (T (strcat *AUTOLISP-INVOCATION-DIR* "/" p))))
 
-| Phase    | Comportement normatif                                                                        |
-|----------+----------------------------------------------------------------------------------------------|
-| =marker= | Écrit uniquement un marqueur de démarrage et un statut. Les actions ne sont pas exécutées.   |
-| =core=   | Exécute les actions avec l'I/O fichier de base ; pas de capture de =print=/=princ=/=prompt=. |
-| =log=    | Comme =core=, plus le setup du log CAD ; pas de redéfinition des sorties standard Lisp.      |
-| =full=   | Comportement normal : log CAD, capture des sorties Lisp, REPL batch si =-i=.                 |
+  (defun autolisp-runtime-debug (msg)
+    (if *AUTOLISP-DEBUG*
+      (autolisp-bootstrap-append-line *AUTOLISP-DEBUGFILE* msg)))
 
-Le mode =--interactive= impose =full=.
+  ;; --- Helpers d'écriture I/O (autolisp:2563-2636) ---
+  (defun autolisp-bootstrap-append-line (path text / f)
+    (if (and (= (type path) 'STR) (/= path ""))
+      (progn
+        (setq f (open path "a"))
+        (if f (progn (write-line text f) (close f))))))
 
-* Pont COM AutoCAD (Windows)
+  (defun autolisp-bootstrap-write-line (path text / f)
+    (if (and (= (type path) 'STR) (/= path ""))
+      (progn
+        (setq f (open path "w"))
+        (if f (progn (write-line text f) (close f))))))
 
-Sous Windows, l'option =--autocad= peut piloter une instance complète
-=acad.exe= via le pont COM =AutoCAD.Application=. Ce mode est requis
-pour les fonctions AutoLISP qui ne sont pas disponibles dans
-=accoreconsole.exe= (Core Console headless), notamment =vlisp-compile=
-qui sert à produire les =.vlx= : =vlide.dll= et =vl.arx= sont chargés
-dans =acad.exe= et il n'existe pas d'=vlide.exe= autonome, donc seule
-une instance complète peut exécuter =vlisp-compile=.
+  (defun autolisp-bootstrap-mark-fatal (phase err / msg)
+    (setq msg (autolisp-bootstrap-render-error err))
+    (autolisp-bootstrap-append-line *AUTOLISP-ERRFILE*
+                                    (strcat "ERROR " phase ": " msg))
+    (autolisp-bootstrap-write-line *AUTOLISP-STATUSFILE* "1")
+    (autolisp-bootstrap-write-line *AUTOLISP-PROTOCOL-STATUSFILE*
+                                   (strcat "FAILED " phase))
+    (if *AUTOLISP-QUIT-ON-FINISH*
+      (progn
+        (vl-catch-all-apply 'setvar (list "FILEDIA" 0))
+        (vl-catch-all-apply 'command (list "_QUIT" "_N"))))
+    1)
 
-** Variables d'environnement
+  ;; --- Helpers utilisateur (autolisp:2638-2747) ---
+  (defun autolisp-set-status (code / f)
+    (setq f (open *AUTOLISP-STATUSFILE* "w"))
+    (if f (progn (write-line (itoa code) f) (close f)))
+    code)
 
-| Variable                | Valeurs                                  | Effet                                                         |
-|-------------------------+------------------------------------------+---------------------------------------------------------------|
-| =AUTOCAD_EXE=           | chemin                                   | =acad.exe= ou =acadlt.exe= ; auto-détecté si non défini.      |
-| =AUTOCAD_COM_MODE=      | =auto= \vert =attach= \vert =launch= \vert =off= | Mode du pont COM AutoCAD.                                     |
-| =AUTOCAD_ACCORECONSOLE= | chemin                                   | =accoreconsole.exe= ; utilisé seulement quand COM est =off=. |
+  (defun autolisp-set-status-text (text / f)
+    (setq f (open *AUTOLISP-STATUSFILE* "w"))
+    (if f (progn (write-line text f) (close f)))
+    text)
 
-** Mapping =--mode= → =AUTOCAD_COM_MODE=
+  (defun autolisp-log-out (text)
+    (autolisp-write-line *AUTOLISP-OUTFILE* text))
 
-| =--mode=     | =--backend= | =AUTOCAD_COM_MODE= effectif | Comportement                                                   |
-|--------------+-------------+-----------------------------+----------------------------------------------------------------|
-| (défaut)     | (sans objet) | =auto=                      | Attache une instance =acad.exe= ouverte, sinon en lance une.   |
-| =automation= | =attach=    | =attach=                    | Échoue si aucune instance ouverte.                             |
-| =automation= | =launch=    | =launch=                    | Lance une nouvelle instance via =CreateObject=.                |
-| =batch=      | (sans objet) | =off=                       | Désactive COM ; =acad.exe /b= ou =accoreconsole.exe= fallback. |
+  (defun autolisp-log-err (text)
+    (autolisp-write-line *AUTOLISP-ERRFILE* text))
 
-Sans =--mode=, le pont COM est actif (=auto=) ; le runtime LISP ne
-fait pas =_QUIT= lui-même : c'est le VBScript qui décide via
-=app.Quit= en fonction de l'état d'origine (=created= vs =attached=)
-pour éviter de fermer une session ouverte par l'utilisateur.
+  ;; --- Signal d'arrêt (autolisp:~3290) ---
+  (setq *AUTOLISP-QUIT-SIGNAL* "--AUTOLISP-QUIT-SIGNAL--")
+  (setq *AUTOLISP-QUIT-REQUESTED* nil)
 
-** Cas d'usage =vlisp-compile=
+  (defun autolisp-quit-signal-p (msg)
+    (and (= (type msg) 'STR)
+         (= msg *AUTOLISP-QUIT-SIGNAL*)))
 
-#+begin_src text
-autolisp --autocad --mode automation \
-         -x '(vlisp-compile (quote lsa) "src-vlx/schmsplus.prj")' \
-         --quit
+  (defun quit () (setq *AUTOLISP-QUIT-REQUESTED* T)
+                 (error *AUTOLISP-QUIT-SIGNAL*))
+  (defun exit () (quit))
+  (defun autolisp-exit () nil)         ; sortie REPL sans quit moteur
+
+  ;; --- Phase LOG (autolisp:3324-3367) ---
+  (defun autolisp-log-setup (/ old-mode old-path old-name)
+    (setq old-mode (autolisp-safe-getvar "LOGFILEMODE"))
+    (setq old-path (autolisp-safe-getvar "LOGFILEPATH"))
+    (setq old-name (autolisp-safe-getvar "LOGFILENAME"))
+    (autolisp-try-setvar "LOGFILEPATH" *AUTOLISP-LOGDIR*)
+    (if *AUTOLISP-LOGNAME*
+      (autolisp-try-setvar "LOGFILENAME" *AUTOLISP-LOGNAME*))
+    (autolisp-try-setvar "LOGFILEMODE" 1)
+    (list old-mode old-path old-name))
+
+  ;; --- Phase FULL : capture des sorties (autolisp:3369-3506) ---
+  (defun print (obj)
+    (autolisp-princ-newline)
+    (autolisp-emit-user-out obj))
+
+  (defun princ (obj)
+    (autolisp-emit-user-line (autolisp-str obj))
+    obj)
+
+  (defun prin1 (obj)
+    (autolisp-emit-user-out obj))
+
+  (defun prompt (msg)
+    (if msg (progn (autolisp-emit-user-line (autolisp-str msg)) msg) msg))
+
+  ;; --- Boucle REPL batch historique (utilisée si pas de protocole distant) ---
+  (defun autolisp-repl-loop (/ keep-going)
+    (autolisp-set-status-text "READY 0")
+    (setq keep-going T)
+    (while keep-going
+      (while (not (findfile *AUTOLISP-INPFILE*))
+        (autolisp-sleep-ms 100))
+      (if (not (autolisp-run-repl-request))
+        (setq keep-going nil)))
+    (if *AUTOLISP-QUIT-ON-FINISH*
+      (command "_QUIT" "_Y")))
+
+  ;; --- Évaluation d'une requête forme par forme ---
+  (defun autolisp-eval-request-form (form)
+    (setq form (autolisp-normalize-princ-call form))
+    (if (autolisp-load-form-p form)
+      (autolisp-eval-load-form form)
+      (eval form)))
+
+  ;; --- Point d'entrée principal (autolisp:3508-3562) ---
+  (autolisp-write-runtime-info)
+
+  ;; Trois variantes alternatives selon le mode (le wrapper en émet
+  ;; UNE seule, sélectionnée par USE-REMOTE-PROTOCOL / INTERACTIVE / ENGINE) :
+
+  ;; Variante A : protocole distant
+  (defun autolisp-main-entry ()
+    (load *AUTOLISP-PROTOCOL-RUNTIMEFILE*)
+    (autolisp-protocol-server-loop))
+
+  ;; Variante B : REPL batch interactif (BricsCAD macOS batch -i)
+  (defun autolisp-main-entry ()
+    (autolisp-repl-loop))
+
+  ;; Variante C : exécution séquentielle des actions
+  (defun autolisp-main-entry ()
+    (vl-catch-all-apply 'autolisp-install-vlisp-compile-shadow nil)
+    (if (autolisp-run-load 1 "${abs_src_1}")
+      (autolisp-note-ok) (autolisp-note-fail))
+    ;; …  une ligne par action …
+    (if (= *AUTOLISP-FAIL* 0)
+      (if (autolisp-run-main 2 "${MAIN}")
+        (autolisp-note-ok) (autolisp-note-fail)))
+    (autolisp-log-out (autolisp-summary-line))
+    (if (> *AUTOLISP-FAIL* 0)
+      (autolisp-finish 1)
+      (autolisp-finish 0)))
+
+  ;; --- Finalisation bootstrap (autolisp:3557-3562) ---
+  (setq _autolisp_main_result (vl-catch-all-apply 'autolisp-main-entry nil))
+  (if (vl-catch-all-error-p _autolisp_main_result)
+    (autolisp-bootstrap-mark-fatal "bootstrap" _autolisp_main_result)
+    _autolisp_main_result)
 #+end_src
 
-=vlisp-compile= n'existe pas dans =accoreconsole.exe= ; =--mode
-automation= (et donc le pont COM) est requis. Le second argument
-sélectionne le format de sortie : ='st= pour =.fas= non compressé,
-='lsa= pour =.vlx= application compressée.
+** Vocabulaire des status
 
-** Robustesse
+Les statuts numériques écrits dans =STATUSFILE= :
 
-Le pont COM applique les protections suivantes avant l'exécution
-utilisateur :
+| Code | Sémantique                              |
+|------+-----------------------------------------|
+| =0=  | Succès final.                           |
+| =1=  | Échec.                                  |
+| =99= | Marqueur d'initialisation (transient).  |
+
+Les statuts textuels écrits dans
+=*AUTOLISP-PROTOCOL-STATUSFILE*= (protocole distant) :
+
+| Statut texte           | Sémantique                                          |
+|------------------------+-----------------------------------------------------|
+| =BOOTING=              | Le runtime démarre.                                 |
+| =READY 0=              | Initialisé, en attente.                             |
+| =READY N=              | A traité la requête N, prêt pour la suivante.       |
+| =RUNNING N=            | Traite la requête N en cours.                       |
+| =DONE N OK=            | Requête N terminée avec succès.                     |
+| =DONE N FAIL=          | Requête N terminée en échec.                        |
+| =DONE N QUIT=          | Requête N a déclenché une demande d'arrêt.          |
+| =STOPPING=             | Arrêt demandé et accepté.                           |
+| =STOPPED=              | Boucle runtime terminée.                            |
+| =WAITING-INPUT=        | Le runtime attend une ligne d'entrée.               |
+| =FAILED <phase>=       | Erreur fatale dans la phase nommée.                 |
+| =FAILED READ=          | Erreur fatale lors d'une lecture de protocole.      |
+
+* Sélection du moteur et matrice backend × système
+
+** Algorithme par défaut
+
+#+begin_example
+si --bricscad, --autocad ou --clautolisp explicite :
+    utiliser ce backend
+sinon si MS-Windows :
+    si AUTOCAD_EXE ou AUTOCAD_ACCORECONSOLE ou
+       glob "C:/Program Files/Autodesk/*/accoreconsole.exe" :
+        backend = autocad
+    sinon si BRICSCAD_EXE ou
+            glob "C:/Program Files*/Bricsys/*/bricscad.exe" :
+        backend = bricscad
+    sinon :
+        backend = clautolisp     ; nouveau : fallback in-process
+sinon (macOS, Linux) :
+    si /Applications/BricsCAD*.app (macOS) ou BRICSCAD_EXE :
+        backend = bricscad
+    sinon :
+        backend = clautolisp     ; nouveau : fallback in-process
+#+end_example
+
+Le fallback historique « pas de CAD => exit 3 » est remplacé par
+le backend =clautolisp= qui rend l'outil utilisable sans aucune
+installation CAD.
+
+** Matrice supportée
+
+| Backend      | macOS                                           | Linux             | MS-Windows                                                      |
+|--------------+-------------------------------------------------+-------------------+-----------------------------------------------------------------|
+| =bricscad=   | =batch= (défaut) ; =automation= via AppleScript | Non supporté¹     | =automation= via COM (défaut) ; =batch= via =-B run.scr=        |
+| =autocad=    | Non supporté²                                   | Non supporté²     | =automation= via COM (défaut) ; =batch= via =accoreconsole.exe= |
+| =clautolisp= | Toujours supporté                               | Toujours supporté | Toujours supporté                                               |
+
+¹ BricsCAD est distribué pour Linux par Bricsys, mais le wrapper
+historique ne le gérait pas. La nouvelle implémentation doit
+reprendre le même pattern que macOS batch (=bricscad -b run.scr=)
+en ajustant les chemins, sans pont AppleScript.
+
+² Autodesk ne distribue ni AutoCAD ni =accoreconsole= pour macOS ou
+Linux. La combinaison =--autocad= sur ces systèmes échoue
+proprement avec code =3=.
+
+* Backend bricscad
+:PROPERTIES:
+:CUSTOM_ID: backend-bricscad
+:END:
+
+** macOS
+
+*** Découverte du bundle
+
+L'algorithme cherche, dans l'ordre :
+
+1. =$BRICSCAD_EXE= si la variable pointe sur un fichier existant ;
+2. le premier match de =/Applications/BricsCAD*.app= ;
+3. à défaut, échec =3=.
+
+L'exécutable réel est =$app/Contents/MacOS/bricscad=.
+
+Référence d'implémentation : =autolisp:1661–1679= (=find_macos_bricscad_app=,
+=find_macos_bricscad_cli=).
+
+*** Découverte du template
+
+Le wrapper a besoin d'un fichier DWG/DWT à ouvrir pour éviter la
+boîte de dialogue /Nouveau dessin/. Ordre de recherche :
+
+1. =$AUTOLISP_BRICSCAD_TEMPLATE= ;
+2. =--dwg FILE= / =$DWG= ;
+3. =~/Library/Application Support/Bricsys/BricsCAD/V*/en_US/Templates/Default-mm.dwt= ;
+4. ... idem en =Default-m.dwt=, puis sans le sous-répertoire =en_US/= ;
+5. mêmes chemins en =/Library/Application Support/...= (system-wide).
+
+Référence : =autolisp:1681–1716= (=find_macos_bricscad_template=).
+
+*** Mode =batch=
+
+C'est le défaut sur macOS quand =find_macos_bricscad_cli= réussit.
+
+Commande effective :
+
+#+begin_example
+/Applications/BricsCAD V26.app/Contents/MacOS/bricscad \
+    <template.dwt> \
+    [-P <BRICSCAD_MACOS_PROFILE>] \      ; défaut "lisp"
+    -B <WORKDIR/run.scr>
+#+end_example
+
+Le script =run.scr= émis pour macOS batch :
+
+#+begin_example
+(load "<RUNLSPFILE>")
+._FILEDIA 0
+._QUIT _N
+#+end_example
+
+Les deux dernières lignes sont des garde-fous : si le =(load …)=
+échoue avant que =autolisp-finish= soit atteint, =._FILEDIA 0=
+force les invites en ligne de commande (évite tout dialogue
+modal), puis =._QUIT _N= ferme sans sauvegarder.
+
+Détection du PID : le wrapper poll =ps -axo pid=,command== à la
+recherche d'un process dont la ligne de commande contient
+=$SCRFILE=. Référence : =autolisp:1863–1881=
+(=find_bricscad_batch_pid=).
+
+Surveillance du process : =kill -0 $pid= sur le PID tracké ;
+si le PID ne répond plus, =find_bricscad_batch_pid= est relancé pour
+retrouver une éventuelle ré-instance. Référence : =autolisp:1883–1897=.
+
+Particularité du =_QUIT= sur macOS :
+=(command "_QUIT" "_Y")= côté AutoLISP *ne tue pas* le process
+BricsCAD (convention macOS : l'application reste vivante sans
+document). Après que LISP a écrit son statut final, le wrapper
+attend la fin du process pendant =BRICSCAD_BATCH_EXIT_TIMEOUT_SECS=
+(défaut =10= s), puis envoie =SIGTERM= ; si le process persiste 1
+seconde après, =SIGKILL=. Référence : =autolisp:641–666=
+(=wait_for_batch_process_exit=) et =autolisp:4549–4588=
+(=kill_bricscad_batch_process=).
+
+Workdir : exception au défaut, le mode batch macOS utilise
+=${TMPDIR:-/tmp}/autolisp-runs= comme racine.
+
+*** Mode =automation=
+
+Sélectionné si =--mode automation= est explicite, ou si
+=find_macos_bricscad_cli= échoue (aucun binaire CLI trouvé).
+=--backend attach= exige une instance déjà ouverte. =--backend
+launch= ouvre BricsCAD avant l'injection.
+
+Le wrapper utilise =osascript= pour injecter le formulaire
+=(load "...")= dans la ligne de commande de l'instance BricsCAD
+active. Le script AppleScript émis verbatim :
+
+#+begin_src applescript
+  on resetBricscadUI(appName, resetEscapes, resetDelay, commandDelay)
+    tell application appName to activate
+    tell application "System Events"
+      tell process appName
+        set frontmost to true
+        if (count of windows) > 0 then
+          try
+            perform action "AXRaise" of window 1
+          end try
+        end if
+      end tell
+      delay commandDelay
+      repeat resetEscapes times
+        key code 53                    -- ESC
+        delay resetDelay
+      end repeat
+      keystroke "_.COMMANDLINE"
+      key code 36                      -- Return
+      delay commandDelay
+      repeat 2 times
+        key code 53
+        delay resetDelay
+      end repeat
+      delay commandDelay
+    end tell
+  end resetBricscadUI
+
+  on run argv
+    set appName to item 1 of argv
+    set lispCmd to item 2 of argv
+    set resetEscapes to (item 3 of argv) as integer
+    set resetDelay to (item 4 of argv) as real
+    set commandDelay to (item 5 of argv) as real
+
+    delay 1
+    resetBricscadUI(appName, resetEscapes, resetDelay, commandDelay)
+    tell application "System Events"
+      keystroke lispCmd
+      key code 36
+    end tell
+  end run
+#+end_src
+
+Référence : =autolisp:4409–4455=.
+
+Vérification qu'une instance tourne :
+
+#+begin_src applescript
+  on run argv
+    set appName to item 1 of argv
+    tell application "System Events"
+      if exists process appName then
+        return "1"
+      end if
+    end tell
+    return "0"
+  end run
+#+end_src
+
+Référence : =autolisp:1899–1916= (=macos_app_running=).
+
+Paramètres de réglage (env vars, tous optionnels) :
+
+| Variable                                     | Défaut | Rôle                                     |
+|----------------------------------------------+--------+------------------------------------------|
+| =AUTOLISP_MACOS_BRICSCAD_RESET_ESCAPES=      | =6=    | Nombre d'appuis sur ESC en /reset/.      |
+| =AUTOLISP_MACOS_BRICSCAD_RESET_DELAY_SECS=   | =0.25= | Délai entre deux ESC.                    |
+| =AUTOLISP_MACOS_BRICSCAD_COMMAND_DELAY_SECS= | =0.4=  | Délai avant et après injection commande. |
+
+Restrictions connues :
+
+- Autorisation /Accessibilité/ obligatoire pour le process
+  =osascript= (ou pour le terminal hôte).
+- Workspace =2D Drafting (Modern)= peut bloquer l'injection ; le
+  workspace =2D Drafting= classique est recommandé.
+- La séquence =_.COMMANDLINE= bascule la fenêtre BricsCAD en mode
+  ligne de commande ; l'utilisateur peut le voir.
+
+*** Cleanup et signaux
+
+Trap =EXIT= : =rm -rf $WORKDIR= sauf si =CLEANUP_WORKDIR=1=.
+Trap =INT TERM= : pose =CLEANUP_WORKDIR=1=, conserve le workdir,
+tue les process BricsCAD batch et les bridges COM, et finit la
+poignée de main en cours. Référence : =autolisp:1614–1637=.
+
+** Linux
+
+Pas supporté par le wrapper historique. La nouvelle implémentation
+doit, sur Linux :
+
+- chercher =$BRICSCAD_EXE= puis un binaire =bricscad= dans =$PATH=
+  (Bricsys installe en =/opt/bricsys/bricscad/V<N>/bricscad= par
+  défaut) ;
+- utiliser le même pattern que macOS batch : =bricscad <template.dwg> -B run.scr= ;
+- gérer le mode =automation= via D-Bus ou via le mode batch avec
+  une boucle REPL (selon disponibilité côté BricsCAD Linux).
+
+L'absence de support historique signifie qu'aucun template
+opérationnel n'est documenté ; à instruire pendant
+l'implémentation.
+
+** MS-Windows
+
+*** Découverte de l'exécutable
+
+| Variable        | Effet                                            |
+|-----------------+--------------------------------------------------|
+| =BRICSCAD_EXE=  | Chemin explicite vers =bricscad.exe=.            |
+
+À défaut, glob =/c/Program Files*/Bricsys/*/bricscad.exe=, ordre
+descendant lexicographique (la plus récente d'abord).
+
+*** Mode =automation= (COM, défaut)
+
+Le wrapper génère =bridge-bricscad.vbs= et le lance via :
+
+#+begin_example
+cscript //nologo <WORKDIR>/bridge-bricscad.vbs \
+    >"<WORKDIR>/bricscad-com-stdout.txt" \
+    2>"<WORKDIR>/bricscad-com-stderr.txt"
+#+end_example
+
+Le mode COM est sélectionné par =BRICSCAD_COM_MODE= :
+
+| Valeur    | Sémantique                                                       |
+|-----------+------------------------------------------------------------------|
+| =auto=    | Tente d'attacher une instance ; en lance une à défaut. (défaut.) |
+| =attach=  | Échoue si aucune instance n'est ouverte.                         |
+| =launch=  | Lance toujours une nouvelle instance.                            |
+| =off=     | Désactive COM ; bascule en mode =batch=.                         |
+
+L'option =--mode= surcharge =BRICSCAD_COM_MODE= (et son équivalent
+=AUTOCAD_COM_MODE=) globalement.
+
+VBScript verbatim (=bridge-bricscad.vbs=) :
+
+#+begin_src vbnet
+  Option Explicit
+  Dim fso, shell, mode, exePath, runLsp, statusFile, outFile, errFile
+  Dim app, doc, cmd, created, attached, rc
+  Set fso = CreateObject("Scripting.FileSystemObject")
+  Set shell = CreateObject("WScript.Shell")
+  mode = "<MODE>"
+  exePath = "<WIN_BRICSCAD_EXE>"
+  runLsp = "<WIN_RUNLSP>"
+  statusFile = "<WIN_STATUSFILE>"
+  outFile = "<WIN_OUTFILE>"
+  errFile = "<WIN_ERRFILE>"
+  created = False
+  attached = False
+  rc = 0
+
+  Sub AppendLine(path, text)
+    Dim f
+    Set f = fso.OpenTextFile(path, 8, True)
+    f.WriteLine text
+    f.Close
+  End Sub
+
+  Function TryGetApp()
+    On Error Resume Next
+    Set TryGetApp = GetObject(, "BricscadApp.AcadApplication")
+    If Err.Number <> 0 Then
+      Err.Clear
+      Set TryGetApp = Nothing
+    End If
+    On Error GoTo 0
+  End Function
+
+  Function TryCreateApp()
+    On Error Resume Next
+    If exePath <> "" Then
+      shell.Environment("PROCESS")("BRICSCAD_LOCATION") = exePath
+    End If
+    Set TryCreateApp = CreateObject("BricscadApp.AcadApplication")
+    If Err.Number <> 0 Then
+      Err.Clear
+      Set TryCreateApp = Nothing
+    End If
+    On Error GoTo 0
+  End Function
+
+  Set app = Nothing
+  If mode = "attach" Or mode = "auto" Then
+    Set app = TryGetApp()
+    If Not app Is Nothing Then attached = True
+  End If
+
+  If app Is Nothing Then
+    If mode = "attach" Then
+      AppendLine errFile, "ERROR COM attach: no running BricsCAD instance found."
+      rc = 2
+      WScript.Echo "ATTACHED=0"
+      WScript.Echo "CREATED=0"
+      WScript.Quit rc
+    End If
+    If mode = "launch" Or mode = "auto" Then
+      Set app = TryCreateApp()
+      If app Is Nothing Then
+        AppendLine errFile, "ERROR COM launch: unable to create BricsCAD COM application."
+        rc = 3
+        WScript.Echo "ATTACHED=0"
+        WScript.Echo "CREATED=0"
+        WScript.Quit rc
+      End If
+      created = True
+    End If
+  End If
+
+  If app Is Nothing Then
+    AppendLine errFile, "ERROR COM bridge: unsupported mode or COM unavailable."
+    rc = 4
+    WScript.Echo "ATTACHED=0"
+    WScript.Echo "CREATED=0"
+    WScript.Quit rc
+  End If
+
+  On Error Resume Next
+  app.Visible = True
+  If Err.Number <> 0 Then Err.Clear
+  Set doc = app.ActiveDocument
+  If Err.Number <> 0 Then
+    Err.Clear
+    Set doc = Nothing
+  End If
+  If doc Is Nothing Then
+    Set doc = app.Documents.Add
+    If Err.Number <> 0 Then
+      AppendLine errFile, "ERROR COM bridge: unable to get or create ActiveDocument."
+      Err.Clear
+      rc = 5
+      If attached Then
+        WScript.Echo "ATTACHED=1"
+      Else
+        WScript.Echo "ATTACHED=0"
+      End If
+      If created Then
+        WScript.Echo "CREATED=1"
+      Else
+        WScript.Echo "CREATED=0"
+      End If
+      WScript.Quit rc
+    End If
+  End If
+  cmd = "(load """ & Replace(runLsp, "\", "/") & """)" & vbCr
+  Err.Clear
+  Call doc.SendCommand(cmd)
+  If Err.Number <> 0 Then
+    AppendLine errFile, "ERROR COM bridge: SendCommand failed: " & Err.Description
+    Err.Clear
+    rc = 6
+  Else
+    rc = 0
+  End If
+  On Error GoTo 0
+  If attached Then
+    WScript.Echo "ATTACHED=1"
+  Else
+    WScript.Echo "ATTACHED=0"
+  End If
+  If created Then
+    WScript.Echo "CREATED=1"
+  Else
+    WScript.Echo "CREATED=0"
+  End If
+  WScript.Quit rc
+#+end_src
+
+Différences notables avec le pont AutoCAD :
+
+- ProgID =BricscadApp.AcadApplication= (vs =AutoCAD.Application=).
+- Variable d'environnement passée au moteur :
+  =BRICSCAD_LOCATION= (vs =AUTOCAD_LOCATION=).
+- Pas de boucle =WaitQuiescent= : =SendCommand= est considéré
+  synchrone côté BricsCAD ; le bridge sort immédiatement et le
+  wrapper poll =STATUSFILE= ensuite.
+- Pas de gestion EPURE : si =--epure= est demandé sous BricsCAD,
+  le wrapper force =BRICSCAD_COM_MODE=off= et passe en mode batch.
+- Pas de fichier debug ni de =VBSDebug= sub.
+
+Codes de sortie du bridge :
+
+| Code | Cause                                                       |
+|------+-------------------------------------------------------------|
+|   =0= | Succès.                                                     |
+|   =2= | =mode=attach= et aucune instance trouvée.                   |
+|   =3= | =CreateObject= a échoué.                                    |
+|   =4= | Mode COM non supporté ou indisponible.                      |
+|   =5= | Impossible d'obtenir ou de créer =ActiveDocument=.          |
+|   =6= | =SendCommand= a levé une erreur.                            |
+
+Le bridge écrit sur =stdout= deux lignes =ATTACHED=0|1= et
+=CREATED=0|1= que le wrapper parse pour décider du cleanup.
+
+*** Mode =batch=
+
+Sélectionné par =--mode batch= ou par =BRICSCAD_COM_MODE=off=.
+Lance =bricscad.exe= avec =-B <run.scr>=, équivalent du mode batch
+macOS. Le =run.scr= émis est minimal :
+
+#+begin_example
+(load "<RUNLSPFILE>")
+#+end_example
+
+Les garde-fous =._FILEDIA 0= / =._QUIT _N= ne sont émis que sur
+macOS, car =bricscad.exe= Windows respecte =(command "_QUIT" "_Y")=.
+
+* Backend autocad
+:PROPERTIES:
+:CUSTOM_ID: backend-autocad
+:END:
+
+** macOS et Linux
+
+AutoCAD n'est pas distribué pour ces systèmes. =--autocad= y sort
+proprement avec code =3= et un message d'erreur.
+
+** MS-Windows
+
+*** Découverte de l'exécutable
+
+| Variable                | Effet                                                                |
+|-------------------------+----------------------------------------------------------------------|
+| =AUTOCAD_EXE=           | Chemin explicite vers =acad.exe= ou =acadlt.exe=.                    |
+| =AUTOCAD_ACCORECONSOLE= | Chemin explicite vers =accoreconsole.exe= (uniquement mode =batch=). |
+
+À défaut, glob :
+
+1. =/c/Program Files/Autodesk/AutoCAD\ */acad.exe=, tri descendant ;
+2. =/c/Program Files/Autodesk/AutoCAD\ LT\ */acadlt.exe=, tri descendant.
+
+Référence : =autolisp:1395–1405=.
+
+*** Mode =automation= (COM, défaut)
+
+Requis pour les fonctions AutoLISP qui ne sont pas disponibles
+dans =accoreconsole.exe= (Core Console headless), notamment
+=vlisp-compile= qui produit les =.vlx= : =vlide.dll= et =vl.arx=
+sont chargés dans =acad.exe= et il n'existe pas de =vlide.exe=
+autonome, donc seule une instance complète peut exécuter
+=vlisp-compile=.
+
+Le wrapper génère =bridge-autocad.vbs= et le lance via :
+
+#+begin_example
+cscript //nologo <WORKDIR>/bridge-autocad.vbs \
+    >"<WORKDIR>/autocad-com-stdout.txt" \
+    2>"<WORKDIR>/autocad-com-stderr.txt"
+#+end_example
+
+Le mode COM est sélectionné par =AUTOCAD_COM_MODE= : valeurs
+=auto= (défaut), =attach=, =launch=, =off=. L'option =--mode= a
+priorité.
+
+VBScript verbatim (=bridge-autocad.vbs=) :
+
+#+begin_src vbnet
+  Option Explicit
+  Dim fso, shell, mode, exePath, runLsp, errFile, statusFile, debugFile, debugFlag, invocationDir, epureScript, epureRequested
+  Dim app, doc, cmd, progid, created, attached, rc
+  Dim waitSecs, waited, statusText
+  Set fso = CreateObject("Scripting.FileSystemObject")
+  Set shell = CreateObject("WScript.Shell")
+  mode = "<AUTOCAD_COM_MODE>"
+  exePath = "<WIN_AUTOCAD_EXE>"
+  runLsp = "<WIN_RUNLSP>"
+  errFile = "<WIN_ERRFILE>"
+  statusFile = "<WIN_STATUSFILE>"
+  debugFile = "<WIN_DEBUGFILE>"
+  debugFlag = "<AUTOLISP_DEBUG>"
+  invocationDir = "<WIN_INVOCATION_DIR>"
+  epureScript = "<WIN_EPURE_SCR>"
+  epureRequested = "<EPURE_REQUESTED>"
+
+  Sub VBSDebug(msg)
+    Dim f
+    If debugFlag <> "1" Then Exit Sub
+    On Error Resume Next
+    Set f = fso.OpenTextFile(debugFile, 8, True)
+    If Err.Number = 0 Then
+      f.WriteLine "[VBS] " & msg
+      f.Close
+    End If
+    Err.Clear
+    On Error GoTo 0
+  End Sub
+
+  VBSDebug "bridge start mode=" & mode & " exePath=" & exePath
+
+  ' Aligne le cwd du process VBScript sur celui d'ou l'utilisateur a appele
+  ' autolisp, AVANT CreateObject. Sur Windows, un acad.exe out-of-process
+  ' COM server lance via activation peut heriter du cwd de l'activator dans
+  ' certains contextes ; meme si ce n'est pas garanti, cela aide pour les
+  ' chemins relatifs apparaissant dans (load ...), findfile, etc.
+  If invocationDir <> "" Then
+    On Error Resume Next
+    If fso.FolderExists(invocationDir) Then
+      shell.CurrentDirectory = invocationDir
+    End If
+    Err.Clear
+    On Error GoTo 0
+  End If
+  waitSecs = CLng("<AUTOLISP_WAIT_SECS>")
+  If waitSecs < 5 Then waitSecs = 5
+  progid = "AutoCAD.Application"
+  created = False
+  attached = False
+  rc = 0
+
+  Sub AppendLine(path, text)
+    Dim f
+    Set f = fso.OpenTextFile(path, 8, True)
+    f.WriteLine text
+    f.Close
+  End Sub
+
+  Sub EmitFlags(att, cre)
+    Dim a, c
+    If att Then a = "1" Else a = "0"
+    If cre Then c = "1" Else c = "0"
+    WScript.StdOut.WriteLine "ATTACHED=" & a
+    WScript.StdOut.WriteLine "CREATED=" & c
+  End Sub
+
+  Function ReadStatusText(path)
+    Dim f, s
+    ReadStatusText = ""
+    If Not fso.FileExists(path) Then Exit Function
+    On Error Resume Next
+    Set f = fso.OpenTextFile(path, 1, False)
+    If Err.Number <> 0 Then
+      Err.Clear
+      Exit Function
+    End If
+    If Not f.AtEndOfStream Then
+      s = f.ReadAll
+    Else
+      s = ""
+    End If
+    f.Close
+    On Error GoTo 0
+    ReadStatusText = Trim(s)
+  End Function
+
+  Function StatusReady(path)
+    Dim s
+    s = ReadStatusText(path)
+    If s = "" Then
+      StatusReady = False
+    ElseIf s = "__PENDING__" Then
+      StatusReady = False
+    ElseIf s = "99" Then
+      StatusReady = False
+    Else
+      StatusReady = True
+    End If
+  End Function
+
+  Sub WaitQuiescent(a, secs)
+    Dim deadline, state, quiescent, supported
+    deadline = Timer + secs
+    supported = True
+    ' Premier sleep tres court: laisse passer un eventuel splash/profil avant
+    ' la premiere interrogation IsQuiescent.
+    WScript.Sleep 200
+    Do
+      quiescent = False
+      On Error Resume Next
+      Set state = a.GetAcadState
+      If Err.Number <> 0 Then
+        Err.Clear
+        supported = False
+        Exit Do
+      End If
+      quiescent = state.IsQuiescent
+      If Err.Number <> 0 Then
+        Err.Clear
+        supported = False
+        Exit Do
+      End If
+      On Error GoTo 0
+      If quiescent Then Exit Sub
+      WScript.Sleep 500
+    Loop While Timer < deadline
+    On Error GoTo 0
+    ' Si IsQuiescent n'est pas exploitable, on tombe en attente passive courte.
+    If Not supported Then WScript.Sleep 500
+  End Sub
+
+  Sub WaitStatus(path, secs)
+    Dim deadline, lastStatus, currentStatus
+    deadline = Timer + secs
+    lastStatus = ""
+    VBSDebug "WaitStatus begin secs=" & secs
+    Do
+      currentStatus = ReadStatusText(path)
+      If currentStatus <> lastStatus Then
+        VBSDebug "WaitStatus status='" & currentStatus & "'"
+        lastStatus = currentStatus
+      End If
+      If StatusReady(path) Then
+        VBSDebug "WaitStatus ready"
+        Exit Sub
+      End If
+      WScript.Sleep 500
+    Loop While Timer < deadline
+    VBSDebug "WaitStatus timeout"
+  End Sub
+
+  Function AttachApp()
+    On Error Resume Next
+    Set AttachApp = GetObject(, progid)
+    If Err.Number <> 0 Then
+      Err.Clear
+      Set AttachApp = Nothing
+    End If
+    On Error GoTo 0
+  End Function
+
+  Function CreateApp()
+    On Error Resume Next
+    If exePath <> "" Then
+      shell.Environment("PROCESS")("AUTOCAD_LOCATION") = exePath
+    End If
+    Set CreateApp = CreateObject(progid)
+    If Err.Number <> 0 Then
+      Err.Clear
+      Set CreateApp = Nothing
+    End If
+    On Error GoTo 0
+  End Function
+
+  ' Initialise app/doc explicitement: sinon ces variants restent Empty quand
+  ' mode = "launch" (le bloc attach/auto ne les Set pas), et "If app Is
+  ' Nothing" plante avec "Objet requis" car Empty n'est pas un objet.
+  Set app = Nothing
+  Set doc = Nothing
+
+  If mode = "attach" Or mode = "auto" Then
+    VBSDebug "trying GetObject AttachApp"
+    Set app = AttachApp()
+    If Not app Is Nothing Then
+      attached = True
+      VBSDebug "attached to existing instance"
+    End If
+  End If
+
+  If app Is Nothing Then
+    If mode = "attach" Then
+      AppendLine errFile, "ERROR COM attach: no running AutoCAD instance found."
+      VBSDebug "attach failed: no running instance"
+      EmitFlags False, False
+      WScript.Quit 2
+    End If
+    If mode = "launch" Or mode = "auto" Then
+      VBSDebug "calling CreateObject (this can take 10-30s)"
+      Set app = CreateApp()
+      If app Is Nothing Then
+        AppendLine errFile, "ERROR COM launch: unable to create AutoCAD COM application."
+        VBSDebug "CreateObject failed"
+        EmitFlags False, False
+        WScript.Quit 3
+      End If
+      created = True
+      VBSDebug "CreateObject ok, acad.exe should be running"
+    End If
+  End If
+
+  If app Is Nothing Then
+    AppendLine errFile, "ERROR COM bridge: unsupported AutoCAD COM mode."
+    EmitFlags False, False
+    WScript.Quit 4
+  End If
+
+  On Error Resume Next
+  app.Visible = True
+  If Err.Number <> 0 Then Err.Clear
+  On Error GoTo 0
+
+  If epureRequested = "1" Then
+    On Error Resume Next
+    app.Preferences.Profiles.ActiveProfile = "Epure"
+    If Err.Number <> 0 Then
+      AppendLine errFile, "WARN COM bridge: cannot activate AutoCAD profile 'Epure' (" & Err.Description & "); using current profile."
+      Err.Clear
+    End If
+    On Error GoTo 0
+  End If
+
+  WaitQuiescent app, waitSecs
+
+  On Error Resume Next
+  Set doc = app.ActiveDocument
+  If Err.Number <> 0 Then
+    Err.Clear
+    Set doc = Nothing
+  End If
+  If doc Is Nothing Then
+    Set doc = app.Documents.Add
+    If Err.Number <> 0 Then
+      AppendLine errFile, "ERROR COM bridge: unable to get or create AutoCAD ActiveDocument: " & Err.Description
+      Err.Clear
+      If created Then
+        app.Quit
+      End If
+      EmitFlags attached, created
+      WScript.Quit 5
+    End If
+  End If
+  On Error GoTo 0
+
+  If epureScript <> "" Then
+    cmd = "._SCRIPT " & Chr(34) & Replace(epureScript, "\", "/") & Chr(34) & vbCr
+    On Error Resume Next
+    Call doc.SendCommand(cmd)
+    If Err.Number <> 0 Then
+      AppendLine errFile, "WARN COM bridge: EPURE _SCRIPT send failed: " & Err.Description
+      Err.Clear
+    End If
+    On Error GoTo 0
+  End If
+
+  cmd = "(load """ & Replace(runLsp, "\", "/") & """)" & vbCr
+  VBSDebug "SendCommand " & cmd
+  On Error Resume Next
+  Call doc.SendCommand(cmd)
+  If Err.Number <> 0 Then
+    AppendLine errFile, "ERROR COM bridge: AutoCAD SendCommand failed: " & Err.Description
+    VBSDebug "SendCommand failed: " & Err.Description
+    Err.Clear
+    rc = 6
+  End If
+  On Error GoTo 0
+
+  ' SendCommand est asynchrone : on attend que le runtime LISP ait ecrit
+  ' STATUSFILE avant d'envisager app.Quit (sinon on tuerait acad.exe en
+  ' plein chargement). On distingue le succes (status final ecrit) du
+  ' timeout (statut reste a __PENDING__/99) : en cas de timeout, on
+  ' n'appelle PAS app.Quit, sinon on interromprait le runtime LISP encore
+  ' en cours. Le wrapper bash detecte ce cas et tue acad.exe via
+  ' kill_autocad_com_process.
+  Dim statusReadyFlag
+  statusReadyFlag = False
+  If rc = 0 Then
+    WaitStatus statusFile, waitSecs
+    statusReadyFlag = StatusReady(statusFile)
+  End If
+
+  If created And statusReadyFlag Then
+    VBSDebug "calling app.Quit (created=True, status ready)"
+    On Error Resume Next
+    app.Quit
+    If Err.Number <> 0 Then Err.Clear
+    On Error GoTo 0
+  End If
+
+  VBSDebug "bridge exit rc=" & rc & " attached=" & attached & " created=" & created
+  EmitFlags attached, created
+  WScript.Quit rc
+#+end_src
+
+Robustesse appliquée par le pont avant l'exécution utilisateur :
 
 - attente sur =app.GetAcadState.IsQuiescent= avant le premier
-  =SendCommand=, plafonnée à =AUTOLISP_WAIT_SECS= (défaut 180 s), pour
-  laisser passer un éventuel splash, écran d'activation ou chargement
-  de profil ;
+  =SendCommand=, plafonnée à =AUTOLISP_WAIT_SECS= (défaut =180= s) ;
 - ouverture explicite d'un document neuf via =Documents.Add= si
   =ActiveDocument= est absent (=vlisp-compile= exige un document) ;
 - attente sur =STATUSFILE= avant =app.Quit=, =SendCommand= étant
   asynchrone côté AutoCAD ;
-- =app.Quit= conditionnel à =created = True= : on ne ferme pas une
-  instance attachée appartenant à l'utilisateur.
+- =app.Quit= conditionnel à =created = True And statusReadyFlag=
+  pour ne pas fermer une instance attachée appartenant à
+  l'utilisateur, ni interrompre un runtime encore en cours.
 
-** EPURE et profil
+Codes de sortie du bridge :
 
-Quand =--epure= est combiné à =--autocad= en mode COM, le pont active
-le profil =Epure= via =app.Preferences.Profiles.ActiveProfile=. Si le
-profil n'existe pas, un avertissement est journalisé dans =ERRFILE=
-et l'exécution continue avec le profil courant. Le script de
-bootstrap =control_path_epure_2022.scr= est ensuite envoyé via
-=._SCRIPT= avant le chargement du runtime.
+| Code | Cause                                                       |
+|------+-------------------------------------------------------------|
+|   =0= | Succès.                                                     |
+|   =2= | =mode=attach= et aucune instance trouvée.                   |
+|   =3= | =CreateObject= a échoué.                                    |
+|   =4= | Mode COM non supporté.                                      |
+|   =5= | Impossible d'obtenir ou de créer =ActiveDocument=.          |
+|   =6= | =SendCommand= a levé une erreur.                            |
 
-* Modes BricsCAD macOS
+*** Mode =batch= (=accoreconsole=)
 
-** =--mode automation=
+Sélectionné par =--mode batch= ou par =AUTOCAD_COM_MODE=off=.
 
-- Cible une session BricsCAD GUI déjà ouverte ou ouvrable.
-- Envoie =._COMMANDLINE= puis =(load ".../run-common.lsp")= via
-  =osascript=.
-- =--backend attach= échoue si aucune instance n'est ouverte.
-- =--backend launch= ouvre BricsCAD avant l'injection.
-- Sensible à l'autorisation Accessibilité et au workspace
-  =2D Drafting= (le workspace =2D Drafting (Modern)= peut empêcher
-  l'injection).
+Recherche de l'exécutable :
 
-** =--mode batch=
+#+begin_src bash
+  local acc="${AUTOCAD_ACCORECONSOLE:-}"
+  if [[ -z "$acc" ]]; then
+    acc="$(ls -1 "/c/Program Files/Autodesk"/*/accoreconsole.exe 2>/dev/null | head -n 1 || true)"
+  fi
+#+end_src
 
-C'est le mode par défaut.
+Pré-requis :
 
-- Lance une nouvelle instance BricsCAD avec =-b run.scr=.
-- =run.scr= charge =run-common.lsp= puis termine par
-  =(command "_QUIT" "_Y")=.
-- Toute l'I/O passe par les fichiers du workdir ; la sortie standard
-  de BricsCAD n'est pas considérée comme exploitable.
-- =-i= active un REPL via =INPFILE= et =STATUSFILE=, en gardant une
-  seule instance active.
-- Une erreur fatale en bootstrap ou en =load= doit produire une
-  écriture dans =STATUSFILE=, journaliser l'erreur, et fermer
-  explicitement BricsCAD pour éviter une session bloquée en =BOOTING=.
+- un DWG : =--dwg FILE= ou =$AUTOLISP_DWG= ;
+- un fichier =.scr= (LSP transformé en script, à =$SCRFILE=).
+
+Commande :
+
+#+begin_example
+"<acc>" /i "<dwg>" /s "<SCRFILE>" \
+    >"<WORKDIR>/autocad-stdout.txt" \
+    2>"<WORKDIR>/autocad-stderr.txt"
+#+end_example
+
+Flags :
+
+- =/i <dwg>= : drawing d'entrée ;
+- =/s <scr>= : script AutoCAD ou LSP compilé.
+
+*** Cas d'usage =vlisp-compile=
+
+#+begin_src bash
+  autolisp --autocad --mode automation \
+           -x '(vlisp-compile (quote lsa) "src-vlx/schmsplus.prj")' \
+           --quit
+#+end_src
+
+=vlisp-compile= n'existe pas dans =accoreconsole.exe= ;
+=--mode automation= (et donc le pont COM) est requis. Le second
+argument sélectionne le format de sortie : ='st= pour =.fas= non
+compressé, ='lsa= pour =.vlx= application compressée.
+
+*** Helper d'échappement VBS
+
+#+begin_src bash
+  escape_vbs_string() {
+    local s="$1"
+    s=${s//\"/\"\"}
+    printf '%s' "$s"
+  }
+#+end_src
+
+Doublement des guillemets uniquement (convention VBScript). Les
+backslashes ne sont pas échappés : les chemins Windows traversent
+en l'état et =Replace(..., "\", "/")= est effectué côté VBS pour
+les chemins passés à =(load …)=.
+
+* Backend clautolisp
+:PROPERTIES:
+:CUSTOM_ID: backend-clautolisp
+:END:
+
+** Vue d'ensemble
+
+Le backend =clautolisp= évalue le code AutoLISP *en in-process*
+dans le runtime Common Lisp fourni par =clautolisp=. Aucun moteur
+CAD n'est lancé. C'est le backend par défaut sur tout système quand
+aucun CAD n'est détecté, et il est utilisable sans installation
+CAD.
+
+Tous les autres backends ont vocation à converger vers ce socle :
+l'évaluation des actions =-l= / =-x= passe par les mêmes structures
+internes (=run-autolisp-file=, =run-autolisp-string=) ; seul change
+le HAL effectif (=NullHost=, =MockHost=, =LiveHost=).
+
+** Modules =clautolisp= utilisés
+
+| Module                    | Rôle dans =autolisp-script=                                                   |
+|---------------------------+-------------------------------------------------------------------------------|
+| =autolisp-reader=         | Lecture des sources et complétude des formes pour le REPL.                    |
+| =autolisp-runtime=        | Évaluateur, contexte, environnement, gestion d'erreurs structurée.            |
+| =autolisp-builtins-core=  | Builtins (numériques, listes, chaînes, fichiers, flux).                       |
+| =autolisp-host=           | HAL : contrat des backends.                                                   |
+| =autolisp-mock-host=      | Hôte mock pour =--host mock= (par défaut).                                    |
+
+** Dialecte
+
+| =--dialect=    | Sémantique                                                          |
+|----------------+---------------------------------------------------------------------|
+| =strict=       | Reader strict, runtime conforme à la spec locale =clautolisp=.      |
+| =autocad-2026= | Dialecte AutoCAD 2026 (tolérances de lecture, sémantique builtins). |
+| =bricscad-v26= | Dialecte BricsCAD V26.                                              |
+| =clautolisp=   | Dialecte Clautolisp (avec extensions spécifiques).                  |
+
+Quand le backend explicite est =bricscad=, le dialecte par défaut
+est =bricscad-v26= ; pour =autocad=, =autocad-2026= ; pour
+=clautolisp=, =strict=.
+
+** Mode d'invocation
+
+Le wrapper exécute en in-process — il n'y a *pas* d'IPC fichier
+pour ce backend. Néanmoins, par souci de symétrie avec les backends
+CAD et pour faciliter le diagnostic, un workdir est créé et les
+canaux =output.txt= / =errors.txt= / =status.txt= sont alimentés
+en parallèle de l'écriture sur =stdout= / =stderr=. Le protocole
+distant n'est pas activé.
+
+Le binaire =autolisp= peut :
+
+- soit charger le runtime CL et l'exécuter en process unique
+  (recommandé) ;
+- soit déléguer à =clautolisp= via =uiop:launch-program= (mode
+  /shim/ pendant la phase de transition).
+
+** Encodages
+
+Support complet via =babel= : tous les codings et toutes les fins
+de ligne. =-e= règle =*load-encoding*= pour =(load …)= ; =-E=
+règle le codage des I/O. Aucune dépendance à =iconv= ou à =LC_*=
+au-delà de la valeur par défaut.
+
+** macOS, Linux, MS-Windows
+
+Le backend est identique sur les trois systèmes ; les seules
+différences sont :
+
+- sur Windows, les chemins normalisés en =/= dans les arguments
+  passés à =(load …)= (cohérence avec les autres backends) ;
+- =$TMPDIR= consulté comme racine de workdir (défaut =/tmp= sur
+  Unix, =%TEMP%= sur Windows).
 
 * EPURE
+:PROPERTIES:
+:CUSTOM_ID: epure
+:END:
 
-L'option =--epure= est /Windows-only/ et provoque, avant l'exécution
-du script principal :
+Note: cette option est spécifique à un utilisateur.  Il faudrait
+trouver un moyen de définir de telles options comme plug-ins de façon
+modulaire.
 
-- BricsCAD : lancement avec =/P Epure=, puis chargement et exécution de
-  =%APPDATA%\sncf\epure\epure 2022_b\control_path_epure_2022.scr= ;
-- AutoCAD : lancement avec =/p Epure=, puis chargement et exécution de
-  =%APPDATA%\sncf\epure\epure 2022\control_path_epure_2022.scr= ;
-- AutoCAD nécessite =AUTOCAD_EXE= ; =accoreconsole.exe= est exclu.
 
-Hors Windows, =--epure= est ignoré.
+L'option =--epure= est *Windows-only* et provoque, avant
+l'exécution du script principal :
+
+- BricsCAD : lancement avec =/P Epure=, puis chargement et
+  exécution de
+  =%APPDATA%\sncf\epure\epure 2022_b\control_path_epure_2022.scr=.
+  Quand =--epure= est demandé sous BricsCAD, =BRICSCAD_COM_MODE=
+  est forcé à =off= (le pont COM ne gère pas EPURE pour BricsCAD).
+- AutoCAD : profil =Epure= activé via
+  =app.Preferences.Profiles.ActiveProfile=, puis exécution de
+  =%APPDATA%\sncf\epure\epure 2022\control_path_epure_2022.scr=
+  via =._SCRIPT=. =AUTOCAD_EXE= est requis ;
+  =accoreconsole.exe= est exclu (pas de support des profils).
+
+Hors Windows, =--epure= est ignoré silencieusement (compatibilité
+descendante). Une future évolution pourra le supporter sous
+=clautolisp= si un équivalent du logiciel EPURE est disponible.
+
+* Protocole REPL distant
+:PROPERTIES:
+:CUSTOM_ID: protocole-repl-distant
+:END:
+
+** Objectif
+
+Spécifie la communication entre :
+
+- le client shell (=autolisp=) ;
+- le runtime AutoLISP embarqué dans =run-common.lsp= et chargeant
+  =autolisp-remote-io.lsp=.
+
+L'idée centrale : tout passe par un même modèle d'entrées / sorties
+Lisp distantes, plutôt que de séparer /requêtes métier/ et
+/entrées utilisateur/. Le shell devient le /terminal distant/ du
+runtime Lisp.
+
+** Principes
+
+- Communication uniquement par fichiers.
+- Protocole synchrone, piloté par un état explicite.
+- Écritures shell vers les canaux d'entrée et de contrôle :
+  atomiques (=écrire dans temp.X.tmp= puis =mv=).
+- Écritures AutoLISP vers les canaux de sortie : ordonnées et
+  déterministes.
+- Le socle de lecture est la *ligne*, pas la forme Lisp.
+- =read= est reconstruit au-dessus de =read-line= et peut consommer
+  plusieurs lignes si la forme est incomplète.
+
+** Répertoire de session du protocole
+
+Sous le workdir, le sous-répertoire =protocol/= contient les
+fichiers réservés énumérés dans la section [[#workdir-section][Workdir]].
+
+** Modèle d'exécution
+
+Le shell lance le moteur avec un script minimal du type :
+
+#+begin_example
+._COMMANDLINE
+(load "/.../run-common.lsp")
+._QUIT _Y
+#+end_example
+
+Le rôle de =run.scr= est volontairement minimal :
+
+- préparer la ligne de commande ;
+- charger =run-common.lsp= ;
+- quitter le moteur quand =run-common.lsp= rend la main.
+
+La vraie logique de protocole vit dans :
+
+- le shell (=lib/autolisp-remote-io.sh=) ;
+- =run-common.lsp= (helpers locaux) ;
+- =runtime/autolisp-remote-io.lsp= (chargé par =run-common.lsp= ou
+  par le shell le passant en argument).
+
+** Rôles
+
+*** Shell
+
+Le shell :
+
+- crée =WORKDIR/protocol/= ;
+- initialise les fichiers de session ;
+- lance le moteur ;
+- écrit l'entrée distante dans =stdin.txt= atomiquement ;
+- écrit les commandes hors bande dans =control.txt= atomiquement ;
+- lit =stdout.txt= et =stderr.txt= incrémentalement ;
+- attend les transitions de =status.txt= ;
+- tue le process moteur en dernier recours.
+
+*** Runtime AutoLISP
+
+Le runtime AutoLISP :
+
+- shadowe certaines fonctions d'I/O ;
+- publie son état dans =status.txt= ;
+- lit les lignes entrantes depuis =stdin.txt= ;
+- écrit les sorties dans =stdout.txt= et =stderr.txt= ;
+- surveille =control.txt= ;
+- maintient éventuellement un =heartbeat.txt= ;
+- termine proprement la session lorsque l'arrêt est demandé.
+
+** Fonctions d'I/O shadowées
+
+Le protocole repose sur le shadowing des fonctions interactives ou
+semi-interactives.
+
+Cibles prioritaires :
+
+- =read-line=
+- =read=
+- =princ=
+- =print=
+- =prin1=
+- =prompt=
+
+À considérer ensuite :
+
+- =read-char=
+- =getstring=
+- =getint=
+- =getreal=
+- =getpoint= et autres primitives CAD interactives, si elles
+  doivent être prises en charge.
+
+Contraintes :
+
+- le shadowing ne concerne que les flux interactifs distants ;
+- les appels explicites sur un vrai file handle continuent à
+  fonctionner comme attendu : =(read f)= doit continuer à lire
+  dans =f= ; =(read)= sans argument peut être redirigé vers
+  l'entrée distante.
+
+** Modèle de lecture
+
+Primitive : =autolisp-protocol-remote-read-line= attend qu'une
+ligne soit disponible dans =stdin.txt=, la consomme, la renvoie.
+
+=read= n'est pas un aller-retour unique : il accumule des lignes
+jusqu'à équilibre syntaxique (parens, strings, commentaires) puis
+retourne l'objet Lisp lu. Cela supporte naturellement :
+
+#+begin_src lisp
+  (loop (print (eval (read))))
+#+end_src
+
+** États publiés dans =status.txt=
+
+Cf. tableau dans la section [[#contrat-autolisp][Contrat AutoLISP]] (vocabulaire des
+status).
+
+** Canal =stdin.txt=
+
+Transporte les lignes d'entrée fournies par le shell.
+
+- le shell écrit dans un fichier temporaire (=stdin.txt.tmp.$$.RAND=) ;
+- le shell publie atomiquement via =mv= vers =stdin.txt= ;
+- le runtime consomme les lignes publiées, puis supprime le
+  fichier (=vl-file-delete=).
+
+La consommation est destructive : une fois lue, =stdin.txt=
+disparaît jusqu'à la prochaine publication.
+
+** Canal =control.txt=
+
+Réservé au plan hors bande. Commandes :
+
+- =PING= : provoque un battement de heartbeat ;
+- =SHUTDOWN= : demande un arrêt propre de la boucle runtime, qui
+  publie =STOPPING= puis sort, puis =STOPPED= ;
+- =INTERRUPT= : interruption coopérative ; positionne
+  =*AUTOLISP_PROTOCOL_INTERRUPT*= ; les boucles utilisateur
+  coopératives peuvent consulter ce drapeau.
+
+Le runtime consomme ces commandes indépendamment du flux normal
+=stdin.txt=.
+
+** Heartbeat
+
+=heartbeat.txt= est optionnel mais recommandé. Le runtime y écrit
+un timestamp (=rtos (getvar "DATE") 2 8=) périodiquement. Le shell
+distingue ainsi un runtime vivant mais inactif d'un runtime figé.
+
+** Boucle principale du serveur
+
+1. publier =BOOTING= ;
+2. initialiser les helpers d'I/O distants ;
+3. publier =READY 0= ;
+4. lire une forme via =autolisp-protocol-remote-read= ;
+5. publier =RUNNING N= ;
+6. évaluer la forme via =autolisp-eval-request-form= ;
+7. publier =DONE N OK= ou =DONE N FAIL= ou =DONE N QUIT= ;
+8. publier =READY N= et boucler ;
+9. sur =SHUTDOWN= ou =(quit)=, publier =STOPPING= puis sortir, puis
+   =STOPPED= ;
+10. =run-common.lsp= rend la main ; =run.scr= reprend et exécute
+    =._QUIT _Y=.
+
+Implémentation de référence : =autolisp-protocol-server-loop=
+dans =runtime/autolisp-remote-io.lsp:232–292=.
+
+** Helpers shell
+
+Implémentation de référence : =lib/autolisp-remote-io.sh=, en
+particulier :
+
+- =autolisp_protocol_init_session WORKDIR= : crée
+  =$WORKDIR/protocol/= et initialise les chemins ;
+- =autolisp_protocol_export_session= : exporte vers
+  l'environnement, à destination du runtime ;
+- =autolisp_protocol_reset_session= : réinitialise les canaux,
+  publie =BOOTING= ;
+- =autolisp_protocol_write_atomic_file target content= : écrit
+  dans =target.tmp.$$.RAND= puis =mv= ;
+- =autolisp_protocol_send_stdin TEXT= : attend que le slot
+  =stdin.txt= soit libre puis publie ;
+- =autolisp_protocol_send_control TEXT= : idem pour =control.txt= ;
+- =autolisp_protocol_read_status= : lit la dernière ligne non vide
+  de =status.txt= ;
+- =autolisp_protocol_wait_for_status EXPECTED TIMEOUT= et
+  =autolisp_protocol_wait_for_status_prefix PREFIX TIMEOUT=.
+
+** Interruptions
+
+AutoLISP ne fournit pas de mécanisme de préemption asynchrone
+général utilisable. L'interruption est donc coopérative :
+
+- =autolisp-protocol-handle-control= lit =control.txt=, détecte
+  =INTERRUPT=, positionne un drapeau ;
+- les boucles utilisateur peuvent consulter ce drapeau et sortir
+  proprement.
+
+Cas non interruptibles : forme Lisp monolithique longue, boucle
+utilisateur non coopérative, commande CAD bloquante. Dans ces cas,
+le shell doit pouvoir constater le timeout, conserver =WORKDIR=,
+puis tuer le process moteur.
+
+** Invariants de sûreté
+
+- Le shell n'écrit jamais =stdin.txt= ou =control.txt= sans
+  publication atomique.
+- Le runtime ne traite jamais de données partiellement publiées.
+- Le shell n'écrit pas de nouvelle entrée si le runtime n'est pas
+  dans un état compatible.
+- Les sorties sont stables quand l'état repasse de =RUNNING= à
+  =READY=.
+- Les commandes hors bande restent séparées du flux normal
+  d'entrée.
+
+** Cas d'usage visés
+
+*** REPL distant
+Le shell lit une ligne utilisateur, la publie dans =stdin.txt=,
+puis affiche les sorties distantes.
+
+*** =read= interactif
+=(read)= consomme autant de lignes distantes que nécessaire jusqu'à
+forme complète. Exemple : =42= retourne la valeur Lisp =42=. Une
+liste incomplète demande des continuations jusqu'à fermeture
+équilibrée.
+
+*** Mini-REPL Lisp côté utilisateur
+
+#+begin_src lisp
+  (loop (print (eval (read))))
+#+end_src
+
+doit fonctionner sans protocole spécifique « requête métier ».
+
+** Questions ouvertes
+
+- granularité caractère via =read-char= (ou rester strictement
+  ligne par ligne dans un premier temps) ;
+- format exact de consommation de =stdin.txt= ;
+- stratégie précise de purge de =control.txt= ;
+- niveau de compatibilité attendu avec les fonctions interactives
+  spécifiques CAD ;
+- manière la plus propre de distinguer =stdout=, =stderr= et
+  /résultat REPL/ côté UX shell.
 
 * Variables d'environnement
 
-| Variable                     | Valeurs                              | Effet                                                                |
-|------------------------------+--------------------------------------+----------------------------------------------------------------------|
-| =AUTOCAD_ACCORECONSOLE=      | chemin                               | Chemin vers =accoreconsole.exe=.                                     |
-| =AUTOCAD_COM_MODE=           | =auto= \vert =attach= \vert =launch= \vert =off=         | Mode du pont COM AutoCAD (Windows).                                  |
-| =AUTOCAD_EXE=                | chemin                               | Chemin vers =acad.exe= ou =acadlt.exe= (Windows).                    |
-| =BRICSCAD_EXE=               | chemin                               | Chemin vers =bricscad.exe=.                                          |
-| =BRICSCAD_COM_MODE=          | =auto= \vert =attach= \vert =launch= \vert =off=         | Mode du pont COM BricsCAD (Windows).                                 |
-| =AUTOLISP_MODE=              | =auto= \vert =automation= \vert =batch=          | Mode CAD ; idem =--mode=.                                            |
-| =AUTOLISP_BACKEND=           | =attach= \vert =launch=                  | Backend du mode =automation=.                                        |
-| =BRICSCAD_MACOS_PROFILE=     | nom                                  | Profil BricsCAD macOS batch ; idem =--bricscad-macos-profile=.       |
-| =AUTOLISP_BOOTSTRAP_PHASE=   | =marker= \vert =core= \vert =log= \vert =full=         | Phase de bootstrap.                                                  |
-| =AUTOLISP_DWG=               | chemin                               | DWG par défaut pour le Core Console AutoCAD.                         |
-| =AUTOLISP_EPURE=             | =1=                                  | Active =--epure=.                                                    |
-| =AUTOLISP_TIMEOUT=           | secondes                             | Ancien nom de timeout, encore accepté.                               |
-| =AUTOLISP_WAIT_SECS=         | secondes                             | Timeout d'attente global ; défaut =180=.                             |
-| =AUTOLISP_WORKDIR=           | chemin                               | Racine des workdirs.                                                 |
-| =AUTOLISP_KEEP_WORKDIR=      | =1=                                  | Conserve le workdir en fin d'exécution.                              |
-| =AUTOLISP_VERBOSE=           | =1=                                  | Diagnostics étendus, affiche le workdir conservé.                    |
-| =AUTOLISP_QUIET=             | =1=                                  | Équivaut à =--quiet=.                                                |
-| =AUTOLISP_NO_INIT=           | =1=                                  | Équivaut à =-norc= ou =--no-init=.                                   |
-| =AUTOLISP_REMOTE_IO_MODE=    | =auto= \vert =on= \vert =off=                  | Active ou non le protocole REPL distant.                             |
+Liste consolidée. La colonne /CLI/ indique l'option équivalente
+quand elle existe.
+
+** Verbosité et debug
+
+| Variable                            | Valeurs   | CLI         | Effet                                                       |
+|-------------------------------------+-----------+-------------+-------------------------------------------------------------|
+| =AUTOLISP_VERBOSE=                  | =1=       | =--verbose= | Diagnostics étendus.                                        |
+| =AUTOLISP_QUIET=                    | =1=       | =--quiet=   | Supprime messages non essentiels.                           |
+| =AUTOLISP_DEBUG=                    | =1=       | =--debug=   | Traces =[DEBUG]= et =runtime.debug.log=.                    |
+| =AUTOLISP_DRY_RUN=                  | =1=       | =--dry-run= | N'exécute pas le moteur.                                    |
+| =AUTOLISP_KEEP_WORKDIR=             | =1=       |             | Conserve le workdir en fin d'exécution.                     |
+| =AUTOLISP_SUPPRESS_VERSION_BANNER=  | =1=       |             | Supprime la bannière de version (usage interne).            |
+
+** Workdir et timeout
+
+| Variable                                   | Valeurs    | CLI         | Effet                                                              |
+|--------------------------------------------+------------+-------------+--------------------------------------------------------------------|
+| =AUTOLISP_WORKDIR=                         | chemin     |             | Racine des workdirs.                                               |
+| =AUTOLISP_WAIT_SECS=                       | secondes   | =--timeout= | Timeout global d'attente du moteur (défaut =180=).                 |
+| =AUTOLISP_TIMEOUT=                         | secondes   |             | Ancien nom, encore accepté en fallback.                            |
+| =AUTOLISP_BRICSCAD_BATCH_STARTUP_TIMEOUT=  | secondes   |             | Timeout de démarrage BricsCAD batch macOS (défaut =15=).            |
+| =AUTOLISP_BRICSCAD_BATCH_EXIT_TIMEOUT=     | secondes   |             | Timeout de sortie après statut final (défaut =10=).                |
+| =TMPDIR=                                   | chemin     |             | Racine alternative pour le workdir BricsCAD macOS batch et REPL.   |
+
+** Sélection du backend et du moteur
+
+| Variable                  | Valeurs                              | CLI                          | Effet                                                            |
+|---------------------------+--------------------------------------+------------------------------+------------------------------------------------------------------|
+| =AUTOLISP_MODE=           | =auto= \vert =automation= \vert =batch= | =--mode=                     | Mode CAD ; mappe sur =AUTOCAD_COM_MODE= / =BRICSCAD_COM_MODE=.   |
+| =AUTOLISP_BACKEND=        | =attach= \vert =launch=              | =--backend=                  | Backend du mode =automation= (défaut =launch=).                  |
+| =AUTOLISP_OS=             | =Darwin= \vert =Linux= \vert =MINGW64_NT-*= |                       | Surchage la détection d'OS (=uname -s= par défaut).              |
+| =AUTOLISP_BOOTSTRAP_PHASE=| =marker= \vert =core= \vert =log= \vert =full= | =--bootstrap-phase= | Phase de bootstrap.                                              |
+| =AUTOLISP_REMOTE_IO_MODE= | =auto= \vert =on= \vert =off=        |                              | Active/désactive le protocole REPL distant (=auto= : si =-i=).   |
+| =AUTOLISP_DWG=            | chemin                               | =--dwg=                      | DWG par défaut pour =accoreconsole=.                             |
+| =AUTOLISP_EPURE=          | =1=                                  | =--epure=                    | Active =--epure=.                                                |
+
+** Spécifiques backend
+
+| Variable                  | Valeurs                              | Backend / Système        | Effet                                                |
+|---------------------------+--------------------------------------+--------------------------+------------------------------------------------------|
+| =AUTOCAD_EXE=             | chemin                               | autocad / Windows        | Chemin =acad.exe= / =acadlt.exe=.                    |
+| =AUTOCAD_ACCORECONSOLE=   | chemin                               | autocad / Windows        | Chemin =accoreconsole.exe=.                          |
+| =AUTOCAD_COM_MODE=        | =auto= \vert =attach= \vert =launch= \vert =off= | autocad / Windows | Mode COM AutoCAD.                                    |
+| =BRICSCAD_EXE=            | chemin                               | bricscad / tous          | Chemin du binaire BricsCAD.                          |
+| =BRICSCAD_COM_MODE=       | =auto= \vert =attach= \vert =launch= \vert =off= | bricscad / Windows | Mode COM BricsCAD.                                   |
+| =BRICSCAD_MACOS_PROFILE=  | nom                                  | bricscad / macOS batch   | Profil BricsCAD (défaut =lisp=).                     |
+| =AUTOLISP_BRICSCAD_TEMPLATE= | chemin                            | bricscad / macOS batch   | Template DWG/DWT explicite.                          |
+
+** Tuning AppleScript (bricscad macOS automation)
+
+| Variable                                       | Défaut | Effet                                       |
+|------------------------------------------------+--------+---------------------------------------------|
+| =AUTOLISP_MACOS_BRICSCAD_RESET_ESCAPES=        |    =6= | Nombre d'ESC dans la séquence de reset.     |
+| =AUTOLISP_MACOS_BRICSCAD_RESET_DELAY_SECS=     | =0.25= | Délai entre ESC successifs.                 |
+| =AUTOLISP_MACOS_BRICSCAD_COMMAND_DELAY_SECS=   |  =0.4= | Délai avant/après injection commande.       |
+
+** Protocole REPL distant
+
+| Variable                       | Effet                                                                |
+|--------------------------------+----------------------------------------------------------------------|
+| =AUTOLISP_PROTOCOL_DIR=        | Sous-répertoire protocol/.                                           |
+| =AUTOLISP_PROTOCOL_STATUSFILE= | (exportée par le shell vers le runtime ; cf. =lib/autolisp-remote-io.sh=) |
+| =AUTOLISP_PROTOCOL_STDINFILE=  | idem                                                                 |
+| =AUTOLISP_PROTOCOL_STDOUTFILE= | idem                                                                 |
+| =AUTOLISP_PROTOCOL_STDERRFILE= | idem                                                                 |
+| =AUTOLISP_PROTOCOL_CONTROLFILE= | idem                                                                |
+| =AUTOLISP_PROTOCOL_HEARTBEATFILE= | idem                                                              |
+| =AUTOLISP_PROTOCOL_READFILE=   | idem                                                                 |
+| =AUTOLISP_PROTOCOL_INFOFILE=   | idem ; reçoit les métadonnées produit côté CAD.                      |
+
+** Expérimental
+
+| Variable                                  | Effet                                                                  |
+|-------------------------------------------+------------------------------------------------------------------------|
+| =AUTOLISP_EXPERIMENTAL_MACOS_BATCH_OPEN=  | Active un chemin de lancement alternatif pour BricsCAD macOS batch.    |
+
+** Inhibition d'init
+
+| Variable                | CLI         | Effet                                       |
+|-------------------------+-------------+---------------------------------------------|
+| =AUTOLISP_NO_INIT=      | =--no-init= | Équivaut à =--no-init=.                     |
 
 * Versionnage
 
-- La version est lue depuis =autolisp-script/VERSION.TXT= via
-  =VERSION_MAJOR=, =VERSION_MINOR= et =VERSION_PATCH=.
-- =autolisp --version= affiche =autolisp <MAJOR>.<MINOR>.<PATCH>= sur
-  =stdout= et sort en =0=.
-- Toute modification du script =autolisp-script/autolisp= ou d'une
-  dépendance runtime qu'il charge incrémente automatiquement
-  =VERSION_PATCH=.
+- La version du wrapper bash existant est lue depuis
+  =autolisp-script/VERSION.TXT= via =VERSION_MAJOR=,
+  =VERSION_MINOR= et =VERSION_PATCH=.
+- Le sous-projet =clautolisp/autolisp-script/= suit la convention
+  =MAJOR.MINOR.DEVELOP= déjà appliquée à =clautolisp= (cf.
+  =tools/clautolisp/source/version.lisp=, actuel =0.0.30=).
+- =autolisp --version= affiche =autolisp <MAJOR>.<MINOR>.<DEVELOP>=
+  sur =stdout= et sort en =0=.
+- Toute modification du script wrapper ou d'une dépendance runtime
+  qu'il charge incrémente automatiquement le composant le plus à
+  droite (=VERSION_PATCH= pour le bash, =DEVELOP= pour la version
+  CL).
 
 * Invariants testés
 
 - =-x= avec et sans sortie visible.
 - =load= d'un fichier =.lsp= ; sortie produite pendant le =load=.
 - =--main= avec un point d'entrée personnalisé.
-- Mode =--interactive= : forme multi-lignes, échec d'évaluation, REPL
-  protocolaire BricsCAD macOS batch.
-- Backend =fake-cad= validant la génération de =run-common.lsp= et
-  l'enchaînement des actions sans CAD réel.
+- =--interactive= : forme multi-lignes, échec d'évaluation,
+  protocole REPL distant.
+- Mode =--epure= sous Windows pour les deux backends CAD.
+- Backend =fake-cad= validant la génération de =run-common.lsp=
+  et l'enchaînement des actions sans CAD réel (historique).
+- Backend =clautolisp --host mock= (nouveau) couvrant les actions
+  =-x=, =-l=, =--main=, =--interactive=, et la lecture multi-ligne
+  via le lecteur =autolisp-reader=.
+- Encodages : round-trip =utf-8=, =iso-8859-1=, =windows-1252=
+  avec les trois terminaisons de ligne, pour les =-l= comme pour
+  les I/O interactives.
 
-* Non garanti
+* Limitations connues et non garanti
 
 - L'intégration COM réelle Windows est exercée hors CI ; sa
-  spécification effective dépend des installations AutoCAD/BricsCAD.
+  spécification effective dépend des installations
+  AutoCAD/BricsCAD.
 - Le bootstrap =automation= macOS dépend des autorisations
   Accessibilité du système et du workspace BricsCAD courant.
-- Le format détaillé de =--verbose= est susceptible d'évoluer ; seuls
-  les invariants couverts par les tests sont normatifs.
+- Le format détaillé de =--verbose= est susceptible d'évoluer ;
+  seuls les invariants couverts par les tests sont normatifs.
+- L'interruption d'un appel CAD bloquant ne peut être que
+  forcée (kill du process) ; le protocole ne permet pas
+  d'interruption préemptive du code AutoLISP.
+- Le backend =bricscad= sur Linux est à instruire pendant
+  l'implémentation ; aucun template opérationnel n'est documenté à
+  ce jour.
+- =vlisp-compile= reste exclusif au mode =--autocad --mode automation=
+  sous Windows ; aucun équivalent in-process n'est prévu dans
+  =clautolisp= à court terme.
+
+* Annexes
+:PROPERTIES:
+:CUSTOM_ID: annexes
+:END:
+
+** A. Suivi des décisions
+
+- [[file:bugs-closed/rewrite-in-common-lisp-decision.org][bugs-closed/rewrite-in-common-lisp-decision.org]] : décision de
+  réécriture, périmètre, justification, conséquences sur les items
+  ouverts.
+
+** B. Fichiers de référence à reprendre tels quels
+
+- [[file:../runtime/autolisp-remote-io.lsp]] : implémentation
+  AutoLISP du protocole, à porter en CL (helpers locaux) puis à
+  réémettre côté CAD pour les backends =bricscad= et =autocad=.
+- [[file:../lib/autolisp-remote-io.sh]] : helpers shell du
+  protocole, à porter en CL (côté driver).
+
+** C. Mapping des items bugs-open vers la nouvelle implémentation
+
+| Item                                                          | Statut                                                                                                     |
+|---------------------------------------------------------------+------------------------------------------------------------------------------------------------------------|
+| [[file:bugs-open/autolisp-encoding.txt][autolisp-encoding]]   | Intégré section [[#encodages][Encodages]] ; implémentation native via =babel= dans le sous-projet CL.       |
+| [[file:bugs-open/kebab-case.txt][kebab-case]]                 | Sans objet : convention appliquée d'office par le nouveau code.                                            |
+| [[file:bugs-open/identification-mark.txt][identification-mark]] | Sans objet : =*AUTOLISP_VERSION*= défini d'office par le bootstrap LISP du nouveau runtime.               |
+| [[file:bugs-open/final-comment.txt][final-comment]]           | Couvert par =autolisp-reader= dans le sous-projet CL ; correctif léger encore envisageable sur le bash.    |
