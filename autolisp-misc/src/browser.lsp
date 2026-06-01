@@ -47,7 +47,8 @@
   (if (vl-catch-all-error-p
        (vl-catch-all-apply
         (function (lambda ()
-          (setq result (vl-catch-all-apply 'autolisp-emit-user-line (list line)))))))
+          (setq result (vl-catch-all-apply 'autolisp-emit-user-line (list line)))))
+        '()))
       (progn (princ line) (terpri)))
   nil)
 
