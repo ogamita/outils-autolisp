@@ -31,11 +31,11 @@
     v))
 
 (defun t:emit-out (s)
-  (print s)
+  (princ s) (terpri)
   (t:write-line-to (t:path "OUTFILE") (vl-princ-to-string s)))
 
 (defun t:emit-err (s)
-  (print s)
+  (princ s) (terpri)
   (t:write-line-to (t:path "ERRFILE") (vl-princ-to-string s)))
 
 (defun t:ensure-suite (name / cell)
