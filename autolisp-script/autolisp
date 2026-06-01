@@ -3115,18 +3115,26 @@ else
     (T
      form)))
 
-(defun autolisp-eval-load-form (form)
+(defun autolisp-eval-load-form (form / arg1 arg2)
+  ;; L'argument de (load ...) peut etre n'importe quelle expression
+  ;; (variable, appel, ...), pas seulement un litteral chaine. Il faut
+  ;; l'evaluer avant de le passer a autolisp-source-load, sinon par ex.
+  ;; `(load VAR)` echoue avec "bad argument type <SYM> ; expected STRING"
+  ;; quand autolisp-source-resolve-load-path appelle findfile.
   (cond
     ((and (= (length form) 2)
           (autolisp-internal-protocol-load-p (cadr form)))
      (eval form))
     ((= (length form) 2)
-     (autolisp-source-load (cadr form)))
+     (setq arg1 (eval (cadr form)))
+     (autolisp-source-load arg1))
     ((and (= (length form) 3)
           (autolisp-internal-protocol-load-p (cadr form)))
      (eval form))
     ((= (length form) 3)
-     (autolisp-source-load-with-onfailure (cadr form) (caddr form)))
+     (setq arg1 (eval (cadr form)))
+     (setq arg2 (eval (caddr form)))
+     (autolisp-source-load-with-onfailure arg1 arg2))
     (T
      (eval form))))
 
