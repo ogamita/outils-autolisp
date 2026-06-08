@@ -1,0 +1,90 @@
+#+TITLE: dwg-identifier — identifying SNCF EPURE applications from a drawing
+#+AUTHOR: outils-autolisp
+#+OPTIONS: toc:2 num:t
+
+* But
+
+Déterminer quelle application EPURE (SCHMS, SCHME, SCHMIEUX, PV, ou
+l'ombrelle EPURE) a produit un dessin DWG/DXF, sans AutoLISP ni CAO,
+en lisant le dessin via la bibliothèque clautolisp.drawing.
+
+* Comment les applications marquent leurs données
+
+Analyse des sources ~~/works/sncf-reseau/src/{pv,schme,schmieux,schms}~
+et de la bibliothèque partagée EPURELIB, recoupée en lisant 40 dessins
+réels à travers le pipeline clautolisp.
+
+** Marqueur principal : la table APPID
+
+Chaque application enregistre une famille d'appids éponyme dans la
+table APPID du dessin (et marque ses objets par des xdata sous cet
+appid). EPURELIB/Constantes.cs : ~SchmsAppName = "SCHMSPLUS"~ ;
+EPURELIB/ControleurListeEdit.cs lit/écrit les xdata via
+~GetXDataForApplication~ / ~ExtendedDataRegAppName~.
+
+| Application | Famille d'appids                                         |
+|-------------+----------------------------------------------------------|
+| SCHMS       | ~SCHMS~, ~SCHMSPLUS~, ~SCHMS_{POSTES,VOIES,LIGNES}~       |
+| SCHME       | ~SCHME~, ~SCHME+~, ~SCHMEPLUS~                            |
+| SCHMIEUX    | ~SCHMIEUX~, ~SCHMIEUX_*~                                  |
+| PV          | ~PV~, ~PVPLUS~, ~PV2010~, ~PV-SUITE~, ~PVSX_*~            |
+| EPURE       | ~EPURE~, ~EPURELIB~, ~EPURE_*~, ~SNCF-Com_*~ (ombrelle)   |
+
+Sur 40 dessins réels, 35 portent à la fois ~SCHMS~ et ~SCHMSPLUS~,
+avec ~SNCF-Com_Echelle~ / ~SNCF-Com_Vers-Dwg-Epure~. La classification
+se lit donc directement sur la table APPID (récupérée par clautolisp
+dans ~drawing-tables :appid~).
+
+** Encodage des objets (référence, pour extraction future)
+
+src-vlx/xdata_codec.lsp encode une instance de classe en xdata :
+
+#+begin_example
+(1001 . "SCHMSPLUS")              ; appid
+(1000 . <nom de classe>)
+[ (1070 . <version de schéma>)    ; par instance
+  (1000 . <nom de champ>) <valeur> ... ]*
+#+end_example
+
+Les listes/objets imbriqués sont encadrés (1002 . "{") … (1002 . "}").
+Types de champ (typechamp) : STR(1000) INT(1070/1071) REAL(1040)
+BOOL(1070 0/1) ENUM(1000) HANDLE(1005) LIST/ALIST(via {}). Une forme
+XRECORD équivalente (codes 1/320/60/90/210/102) sert au stockage non
+graphique.
+
+** Métadonnées niveau dessin
+
+src-vlx/dictionnaires.lsp : dictionnaires nommés sous le NOD, dont
+chaque entrée est un XRECORD encodant une instance. clautolisp lit
+l'arbre du NOD et les XRECORD (~drawing-dictionary~, ~find-object~).
+
+** Versions
+
+src-vlx/version.lsp : versions ~a.b.c~ ; mise_a_jour.lsp migre les
+schémas. La version de schéma par instance voyage dans le (1070) des
+xdata ci-dessus ; des indices d'édition figurent aussi dans les
+suffixes d'appid (~PV2010~, ~EPURE_24~, ~SCHMIEUX_NN_brics~).
+
+* Règles de classification (implémentées)
+
+- application(s) = produit(s) dont un appid figure dans la table APPID
+  (~appid-product~ / ~*product-appids*~).
+- ~plus-p~ : présence d'un appid d'édition ~+~/~PLUS~.
+- ~epure-p~ : présence d'un appid ombrelle EPURE / ~SNCF-Com_*~.
+- libellé : p.ex. « SCHMS+ (EPURE) », « PV », « unknown (EPURE) ».
+
+* Hors périmètre (pour plus tard)
+
+- Décodage fin des xdata d'instance en valeurs classe/champ
+  (extract-schms-data → JSON). La grammaire est auto-descriptive
+  (chaque champ est ~(1000 . nom) valeur~) ; un décodage fidèle par
+  classe + version de schéma demanderait les schémas (classe.lsp /
+  *_ATTR.LSP). Reporté.
+- Confirmation des marqueurs exacts pour PV/SCHME/SCHMIEUX au-delà des
+  appids (sous-systèmes, éditions) si un classement plus fin est requis.
+
+* Dépendances
+
+clautolisp (systèmes ~clautolisp/drawing~ et ~clautolisp/drawing-dwg~,
+ce dernier nécessitant le shim libredwg compilé), CFFI. Voir le
+Makefile et le README.
