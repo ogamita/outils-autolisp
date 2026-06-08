@@ -1,0 +1,6 @@
+# dwg-identifier is a Common Lisp project: all sources and documents use
+# LF line termination and UTF-8 encoding. This overrides the
+# repository-wide CRLF defaults (which target the AutoLISP subprojects)
+# for everything under this subproject.
+* text=auto eol=lf
+*.pdf binary
