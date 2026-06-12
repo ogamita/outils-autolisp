@@ -16,7 +16,6 @@
    #:classification-plus-p
    #:classification-epure-p
    #:classification-entity-count
-   #:classification-schema-versions
    #:classification-label
    ;; appid -> product
    #:appid-product
