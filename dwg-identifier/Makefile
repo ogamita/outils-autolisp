@@ -1,12 +1,20 @@
 # dwg-identifier — identify the SNCF application that produced a DWG/DXF.
 #
 # A Common-Lisp subproject built on the clautolisp drawing library.
-# clautolisp is not installed yet, so its ASDF systems are made known by
-# loading clautolisp.asd explicitly. Override CLAUTOLISP if your checkout
-# lives elsewhere.
+# clautolisp ships as a git submodule of outils-autolisp under
+# third-party/clautolisp; its CL systems (clautolisp/drawing and
+# clautolisp/drawing-dwg) are made discoverable by adding the submodule's
+# Lisp directory to quicklisp's local-projects (see the ASD macro below).
+# CLAUTOLISP defaults to the in-repo submodule, derived as a path relative
+# to this Makefile; override it to point at another checkout if needed.
+#
+# After cloning outils-autolisp, populate the submodule (and its nested
+# libredwg) once with, from the repo root:
+#   git submodule update --init --recursive third-party/clautolisp
+# DWG reading additionally needs the libredwg C shim — see build-libredwg.
 
-CLAUTOLISP    ?= $(HOME)/src/public/clautolisp
-CLAUTOLISP_ASD := $(CLAUTOLISP)/clautolisp/clautolisp.asd
+CLAUTOLISP    ?= $(CURDIR)/../third-party/clautolisp
+CLAUTOLISP_CL := $(CLAUTOLISP)/clautolisp
 HERE_ASD      := $(CURDIR)/dwg-identifier.asd
 SBCL          ?= sbcl
 ARGS          ?=
@@ -18,7 +26,12 @@ BUILD_DIR     ?= $(CURDIR)/bin
 EXE           := $(BUILD_DIR)/dwg-identify
 
 QL  = (let ((q (merge-pathnames "quicklisp/setup.lisp" (user-homedir-pathname)))) (when (probe-file q) (load q)))
-ASD = (require :asdf) (asdf:load-asd "$(CLAUTOLISP_ASD)") (asdf:load-asd "$(HERE_ASD)")
+# Make clautolisp's ASDF systems (clautolisp/drawing and
+# clautolisp/drawing-dwg) discoverable from the in-repo submodule: add its
+# Lisp directory to quicklisp's local-projects (when quicklisp is present)
+# and to ASDF's central registry (fallback), then load our own system
+# definition. find-symbol keeps this readable even without quicklisp.
+ASD = (require :asdf) (let ((d (truename "$(CLAUTOLISP_CL)/"))) (let ((ql (find-package :ql))) (when ql (let ((lpd (find-symbol "*LOCAL-PROJECT-DIRECTORIES*" ql)) (reg (find-symbol "REGISTER-LOCAL-PROJECTS" ql))) (when (and lpd reg) (pushnew d (symbol-value lpd) :test (function equal)) (funcall reg))))) (pushnew d asdf:*central-registry* :test (function equal))) (asdf:load-asd "$(HERE_ASD)")
 
 .PHONY: help build install test test-ci run build-libredwg docs-pdf clean
 

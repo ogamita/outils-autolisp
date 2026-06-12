@@ -7,9 +7,11 @@
 ;;;; SCHMS, SCHME, SCHMIEUX, PV, and the EPURE umbrella.
 ;;;;
 ;;;; clautolisp is not installed yet (its drawing layer is unreleased),
-;;;; so its systems are made known by loading clautolisp.asd explicitly
-;;;; before this one (see the Makefile / README). Once clautolisp ships,
-;;;; this becomes a plain dependency.
+;;;; so it ships as a git submodule of outils-autolisp under
+;;;; third-party/clautolisp; the Makefile makes its systems discoverable
+;;;; by adding the submodule's Lisp directory to quicklisp's local-projects
+;;;; (see the Makefile / README). Once clautolisp ships, this becomes a
+;;;; plain dependency.
 
 (asdf:defsystem "dwg-identifier"
   :description "Identify the SNCF application (SCHMS / SCHME / SCHMIEUX / PV / EPURE) that produced a DWG/DXF drawing."
