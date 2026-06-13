@@ -1,0 +1,942 @@
+#+TITLE: edward — lecture, vidage et transfert des données applicatives EPURE dans les dessins DWG
+#+AUTHOR: outils-autolisp
+#+LANGUAGE: fr
+#+OPTIONS: toc:3 num:t
+#+STARTUP: showall
+
+* But et périmètre
+
+=edward= est un outil en Common Lisp, sous-projet de =outils-autolisp=
+(au même titre que [[file:../../dwg-identifier/][dwg-identifier]]), bâti sur les bibliothèques
+=clautolisp= (=clautolisp/drawing= et =clautolisp/drawing-dwg=,
+vendorisées sous =third-party/clautolisp=). Il lit et écrit des dessins
+DWG/DXF *sans AutoLISP ni CAO* (DXF nativement, DWG via libredwg).
+
+Les applications EPURE — *SCHMS* (SCHMS+), *SCHME*, *SCHMIEUX*, *PV* —
+stockent leurs données métier *dans* le dessin =.dwg=, en plus des
+entités graphiques :
+
+- en *xdata* attachées aux entités, sous un /appid/ propre à
+  l'application ;
+- en *XRECORD* rangés dans des *dictionnaires nommés* sous le
+  dictionnaire d'objets nommés (NOD), pour les données de niveau
+  dessin.
+
+=edward= sait extraire ces données, les *vider en JSON* (version 1),
+puis *sélectionner et transférer* des objets applicatifs d'un dessin
+source vers un dessin destination (version 2 : fusion, remplacement,
+suppression, avec ou sans les entités attachées).
+
+=dwg-identifier= /identifie/ l'application productrice (table APPID) ;
+=edward= /extrait et manipule/ ce que cette application a stocké. Les
+deux partagent la même pile clautolisp et les mêmes conventions de
+sous-projet.
+
+** Ce que edward N'est PAS
+
+- Ce n'est pas un moteur CAO : pas de régénération de blocs, pas de
+  rendu, pas de logique métier SCHMS/PV.
+- Ce n'est pas un validateur de schéma métier : il restitue fidèlement
+  ce qui est stocké, y compris des données obsolètes ou incohérentes.
+- Il ne migre pas les schémas (cf. =mise_a_jour.lsp= côté SCHMS) ; il
+  /signale/ la version de schéma rencontrée mais ne la convertit pas.
+
+* Modèle de données stocké par les applications EPURE
+
+Synthèse de l'analyse des sources =~/works/sncf-reseau/src/{schms,schme,schmieux,pv}=
+et de la bibliothèque partagée EPURELIB, recoupée par =dwg-identifier=
+sur des dessins réels.
+
+** Marqueur commun : la table APPID
+
+Chaque application enregistre une famille d'/appids/ éponyme (table
+APPID) et marque ses objets par des xdata sous l'un de ces appids.
+
+| Application | Famille d'appids                                    | Appid porteur de xdata |
+|-------------+-----------------------------------------------------+------------------------|
+| SCHMS       | =SCHMS=, =SCHMSPLUS=, =SCHMS_{POSTES,VOIES,LIGNES}=  | =SCHMSPLUS=            |
+| SCHME       | =SCHME=, =SCHME+=, =SCHMEPLUS=                       | (à confirmer, cf. §2.5)|
+| SCHMIEUX    | =SCHMIEUX=, =SCHMIEUX_*=                             | (à confirmer, cf. §2.5)|
+| PV          | =PV=, =PVPLUS=, =PV2010=, =PV-SUITE=, =PVSX_*=       | =PV=                   |
+| EPURE       | =EPURE=, =EPURELIB=, =EPURE_*=, =SNCF-Com_*=         | (ombrelle partagée)    |
+
+** SCHMS / SCHMS+ — modèle riche piloté par schéma (EPURELIB)
+
+C'est le modèle le plus structuré, et la /référence/ pour edward. Code
+de référence : =schms/src-vlx/xdata_codec.lsp=,
+=schms/src-vlx/dictionnaires.lsp=, =schms/src-vlx/tables.lsp=, et le
+modèle de classes (=classe.lsp=, =schema.lsp=, =champ.lsp=,
+=typechamp.lsp=, =instance.lsp=, =multimeta.lsp=).
+
+*** Grammaire xdata d'une instance (sur entité)
+
+Appid unique : =SCHMSPLUS= (=*schms_app*= dans =xdata_codec.lsp=).
+=instances->xdata= sérialise via =instances->dxf= avec les codes
+=1000 1005 1070 1071 1040 1002= :
+
+#+begin_example
+(-3
+ ("SCHMSPLUS"                      ; appid (porté par le code -3 de entget)
+  (1000 . <nom-de-classe>)         ; nom de classe
+  ;; puis, par instance :
+  (1070 . <version-de-schema>)     ; version du schéma de l'instance
+  (1000 . <nom-de-champ>) <valeur> ; champ + valeur, répété
+  ...))
+#+end_example
+
+Types de champ (=typechamp=) et codage de la valeur :
+
+| Type   | Code DXF (xdata) | Valeur                                  |
+|--------+------------------+-----------------------------------------|
+| STR    | 1000             | chaîne                                  |
+| INT    | 1070 / 1071      | entier (1070 si -32768..32767, sinon 1071) |
+| REAL   | 1040             | réel                                    |
+| BOOL   | 1070             | 0 (faux) / 1 (vrai)                      |
+| ENUM   | 1000             | valeur d'énumération (chaîne)           |
+| HANDLE | 1005             | handle d'entité (chaîne hexa)           |
+| LIST   | 1002 { … }       | liste homogène                          |
+| ALIST  | 1002 { … }       | liste d'association (schéma)            |
+| OBJECT | 1002 { … }       | instance imbriquée (classe + version)   |
+| nil    | 1002 "{" "}"     | absence de valeur (paires vides)        |
+
+Les listes/objets imbriqués sont encadrés par =(1002 . "{")= …
+=(1002 . "}")=. Seuls les champs non nuls sont sérialisés.
+
+*** Forme XRECORD (stockage de niveau dessin)
+
+=instances->xrecord= produit la *même* charge utile que ci-dessus mais
+avec les codes XRECORD =1 320 60 90 210 102= (au lieu de
+=1000 1005 1070 1071 1040 1002=), préfixée par
+=(0 . "XRECORD") (100 . "AcDbXrecord")=.
+
+Ces XRECORD sont rangés dans des *dictionnaires nommés* sous le NOD.
+Tables de niveau dessin connues (=tables.lsp=) :
+
+| Clé    | Dictionnaire NOD | Classe                |
+|--------+------------------+-----------------------|
+| LIGNES | =SCHMS_LIGNES=   | =/es/schms/bd/ligne=  |
+| VOIES  | =SCHMS_VOIES=    | =/es/schms/bd/voie=   |
+| POSTES | =SCHMS_POSTES=   | =/es/schms/bd/poste=  |
+
+Structure d'un dictionnaire : entrées =(3 . <clé>)= →
+=(350 . <handle-xrecord>)= ; le XRECORD pointé est désérialisé par
+=xrecord->instances=. Plusieurs instances peuvent cohabiter dans un même
+XRECORD (séquence version/champs répétée). L'ordre est préservé par des
+métadonnées de dictionnaire triable (=schms_dictionnaire_triable=).
+
+*** Modèle de classes et de schémas
+
+Modèle interne (=classe.lsp=, =schema.lsp=, =champ.lsp=) :
+
+- *Classe* (=creer_classe=) : =NOM= (ex. =/es/schms/sx2/gare=),
+  =NUM_SCHEMA_COURANT=, =SCHEMAS= (alist =version → schema=),
+  =NOM_DAFFICHAGE=, =CATEGORIES=.
+- *Schéma* (=creer_schema=) : =DESCRIPTION= + =CHAMPS= (alist
+  =nom → champ=, dans l'ordre).
+- *Champ* (=creer_champ=) : =(nom . typechamp)=.
+
+*Source des schémas : les fichiers =*_ATTR.LSP=* (≈ 206 classes :
+=SX1/=, =SX2/=, =BD/=, =COMMUT/=, =COMMUN/=, …). edward *reproduit* ce
+format. Une classe est une S-expression alist :
+
+#+begin_src lisp
+(
+ (NOM_DAFFICHAGE . "Voie")
+ (CATEGORIES "Non graphique")
+ (SCHEMAS
+   (3 "Ajout du type de voie"                 ; version la plus récente d'abord
+     ("UUID" chaine)
+     ("TAGVOIE" chaine)
+     ("TYPE_VOIE" enum "PRINCIPALE" "LIAISON" "SERVICE") ; nullable
+     (@inclure "/es/schms/commun/etats" 1))   ; inclusion par valeur, version figée
+   (2 "Ajout de l'UUID"  ("UUID" chaine) ("TAGVOIE" chaine) ...)
+   (1 "Version initiale" ("TAGVOIE" chaine) ...)))
+#+end_src
+
+Règles de parsing (=schms_lire_classe= / =conversion_type=) :
+
+- =SCHEMAS= liste *toutes les versions* d'une classe, en général de la
+  plus récente à la plus ancienne ; =NUM_SCHEMA_COURANT= = numéro
+  maximum. Une version est =(N "description" champ…)=.
+- Un champ est =("NOM" type args…)=. Symboles de type → typechamp :
+  =chaine→STR=, =entier→INT=, =reel→REAL=, =booleen→BOOL=,
+  =handle→HANDLE=, =enum→ENUM(alternatives)=, =liste→LIST(type)=,
+  =objet→OBJECT(classe version)=. (Symboles AutoLISP, insensibles à la
+  casse.)
+- =(@inclure "/chemin/classe" version)= : *inclusion par valeur* — les
+  champs de la classe référencée, à la *version indiquée* (pas la
+  courante), sont aplatis (=flatmap=) à la place de la directive.
+  Récursif. Ex. =gare= inclut =etats= v1 → champs =REFLECTIF=,
+  =LUMINEUX=, =NON_ECLAIRE=, =FIXE=, =BAS=.
+- *Résolution chemin → fichier* (=schms_nomfichier_schemas=) :
+  =/es/schms/…= → substitution =/schms/→/schmsplus/=, suffixe
+  =_ATTR.LSP=, puis chemin d'installation (=com_way=). Le segment de
+  répertoire est en majuscules (=sx2→SX2/=, =commun→COMMUN/=,
+  =bd→BD/=), le dernier segment donne le fichier (=gare→GARE_ATTR.LSP=).
+  edward prend une *racine de schémas* configurable (=--schema-root=,
+  par défaut l'arbre =schms/= ou une copie embarquée).
+- *Encodage des =*_ATTR.LSP== : *cp1252 / CRLF* (comme les autres sources
+  SCHMS+ ; les accents y sont en Windows-1252). Le lecteur de schémas
+  d'edward doit décoder cp1252, sinon les =DESCRIPTION=/=NOM_DAFFICHAGE=
+  accentués sont corrompus.
+
+*Pas de migration de schéma dans edward.* SCHMS migre à la lecture
+(=schms_maj_metadonnees=, =mise_a_jour.lsp=) ; edward *ne migre pas*. Il
+lit chaque instance *à la version où elle est stockée*, l'interprète avec
+le schéma de *cette* version, et préserve cette version (cf. §5,
+translation horizontale).
+
+*** Attachement et liens
+
+- Instances graphiques : portées par des entités =INSERT= sélectionnées
+  via =(ssget "X" '((0 . "INSERT") (-3 ("SCHMSPLUS"))))=. Accès xdata par
+  =(entget ename '("SCHMSPLUS"))=, code =-3=.
+- Instances de niveau dessin : XRECORD dans =SCHMS_LIGNES/VOIES/POSTES=.
+- Liens : pas de référence de handle explicite généralisée ; le couplage
+  passe par des champs =UUID= et par l'identité du bloc. Certains champs
+  sont de type =HANDLE= (1005) et référencent une entité.
+
+** PV — modèle plat, hérité (PV2010)
+
+Référence : =pv/arx/PV2010/PvXDATA.lsp=, =pv/arx/PV2010/pv2010.dcl=.
+
+- Appid unique : =PV= (=(regapp "PV")=). Les noms =PVPLUS/PV2010/PV-SUITE/PVSX=
+  sont des éditions, pas des appids porteurs de xdata.
+- *Pas de dictionnaire, pas de XRECORD* : toute la donnée est en xdata
+  sur des entités graphiques.
+- *Pas de nom de classe ni de version de schéma* : 5 champs *chaîne*
+  fixes, codés =1000=, encadrés par =(1002 . "{")= … =(1002 . "}")= :
+
+#+begin_example
+(-3 ("PV" (1002 . "{")
+          (1000 . <Désignation>)
+          (1000 . <Symbole>)
+          (1000 . <Document Référence>)
+          (1000 . <Commentaire(1)>)
+          (1000 . <Commentaire(2)>)
+          (1002 . "}")))
+#+end_example
+
+- Lecture : =(cdr (assoc -3 (entget ename '("PV"))))= ; le code descend
+  aussi dans les définitions de blocs pour trouver les entités porteuses.
+- Une couche =XDATA (ne pas modifier)= marque les entités concernées.
+
+** SCHME et SCHMIEUX — appids confirmés, codec à confirmer
+
+=dwg-identifier= confirme, sur dessins réels, que SCHME et SCHMIEUX
+*enregistrent bien leurs appids* (=SCHME/SCHME+/SCHMEPLUS=,
+=SCHMIEUX/SCHMIEUX_*=). En revanche, l'exploration des sources n'a *pas
+localisé* de codec xdata/dictionnaire équivalent à celui de SCHMS : ces
+applications semblent surtout porter leur état dans la *géométrie, les
+blocs, les attributs de blocs et les calques*, et possiblement des xdata
+de forme plus simple.
+
+*Décision.* Pour SCHME et SCHMIEUX, edward s'en tient à la *couche brute*
+(§3) pour l'instant : elle vide /toute/ xdata sous /n'importe quel/ appid
+EPURE et /tout/ XRECORD de /n'importe quel/ dictionnaire nommé,
+indépendamment du codec applicatif. Un décodeur spécifique
+SCHME/SCHMIEUX sera *affiné plus tard*, sur la base d'un relevé de
+dessins réels révélant une grammaire stable (cf. §8). L'effort de
+décodage riche porte d'abord, et pleinement, sur *SCHMS*.
+
+** Données hors xdata/XRECORD (toutes applications)
+
+Blocs et définitions de blocs, attributs de blocs, calques/linetypes,
+variables d'en-tête, dictionnaires non applicatifs : ce sont des données
+DWG standard. edward les restitue au titre du *vidage des entités*
+(§4.3), sans interprétation métier. Exports externes (DBF, JSON métier)
+sont hors dessin et hors périmètre.
+
+* Architecture
+
+Deux couches, pour être robuste y compris là où le codec applicatif est
+inconnu :
+
+1. *Couche générique (brute), agnostique de l'application.* À partir
+   d'un =drawing= clautolisp :
+   - énumère la table APPID (réutilise la logique de =dwg-identifier= /
+     factorisable) ;
+   - pour chaque entité, extrait /toutes/ les xdata, groupées par appid,
+     en *paires de codes DXF brutes* =(code . valeur)= ;
+   - parcourt le NOD et tous les dictionnaires nommés, restitue chaque
+     XRECORD en paires DXF brutes ;
+   - restitue les entités (type, handle, calque, bloc, propriétés DXF).
+   Cette couche ne /comprend/ rien : elle transcrit fidèlement.
+
+2. *Décodeurs spécifiques par application (optionnels, enrichissants).*
+   Au-dessus de la couche brute, des décodeurs reconstruisent des
+   /instances typées/ quand la grammaire est connue :
+   - =decode-schms= : grammaire EPURELIB (classe, version, champs typés,
+     imbrication =1002 {}=, XRECORD des dictionnaires =SCHMS_*=). Décodage
+     /auto-descriptif/ possible (chaque champ est =(1000 . nom) valeur=)
+     même sans charger les =*_ATTR.LSP= ; le chargement des schémas
+     n'est nécessaire que pour /nommer/ les types et valider — optionnel,
+     phase ultérieure.
+   - =decode-pv= : 5 champs chaîne fixes.
+   - =decode-schme= / =decode-schmieux= : à définir (cf. §8).
+   Un décodeur produit un objet structuré ; à défaut, la couche brute
+   reste disponible (=--raw=).
+
+Le registre de décodeurs associe =appid → décodeur= ; les appids inconnus
+retombent sur la sortie brute, /jamais/ une perte de donnée.
+
+** Principe directeur : informé par le schéma, fidèle au brut
+
+Les =*_ATTR.LSP= décrivent les objets *du point de vue de l'application*.
+Mais edward traite des =.dwg= dans un *format de plus bas niveau* qui
+*peut diverger* de cette spécification (xdata écrites par une version
+plus ancienne, objets corrompus, champs en trop ou manquants, types
+inattendus, version absente du schéma). C'est précisément pourquoi un
+outil de manipulation de ces données est nécessaire.
+
+Règle absolue : *le DWG fait foi*. Le schéma /informe/ — il sert à
+*nommer, valider, afficher et rechercher* — mais ne /filtre/ jamais. Tout
+décodage SCHMS produit donc, conjointement :
+
+1. la *forme brute* =raw= (paires DXF), toujours présente et exhaustive ;
+2. une *interprétation* selon le schéma de la classe + version lue
+   (champs nommés et typés) /quand elle s'applique/ ;
+3. des *annotations de divergence* explicites, jamais silencieuses :
+   classe inconnue, version absente des =SCHEMAS=, champ hors schéma,
+   incohérence de type, arité inattendue, structure =1002 {}= mal formée.
+
+Ainsi un objet conforme est richement décodé ; un objet divergent reste
+*dumpé intégralement* (brut + ce qui a pu être interprété + le diagnostic
+de l'écart). Aucune donnée n'est perdue ni « corrigée » à la lecture.
+
+** Dépendance clautolisp — capacités et lacunes
+
+API de *lecture* (confirmée par =dwg-identifier= et l'API clautolisp) :
+=read-drawing=, =map-entities=/=do-entities=, =find-entity=,
+=entity-dxf= (liste de paires =(code . valeur)=), =entity-kind=,
+=entity-handle-string=, =map-table-records=/=find-table-record=,
+=symbol-table-record-name=/=-data=, =drawing-dictionary=,
+=map-dictionary=/=dictionary-get=, =find-object= (XRECORD & objets non
+graphiques par handle), =drawing-entity-count=, =drawing-format=,
+variables d'en-tête, blocs (=map-blocks=, =block-entities=).
+
+API d'*écriture* (pour la v2) : =write-drawing= (DXF ; DWG via
+=drawing-dwg= + libredwg), =copy-drawing= (copie profonde),
+=allocate-handle=, =add-entity=/=modify-entity=/=set-entity-deleted-status=,
+=add-table-record=, =dictionary-put=/=dictionary-remove=, =add-object=,
+=add-block=, =set-drawing-variable=.
+
+*Lacunes connues à combler dans edward* :
+- *Pas de mutateur xdata de haut niveau* : pour écrire/copier des xdata,
+  edward construit lui-même la liste DXF =1000…1071= et appelle
+  =modify-entity=.
+- *Pas de constructeur XRECORD de haut niveau* : edward assemble
+  =((0 . "XRECORD") (5 . handle) (330 . owner) …)= et appelle
+  =add-object=, puis chaîne dans le dictionnaire via =dictionary-put=.
+- *Pas de résolution de handle générique* : edward fournit
+  =resolve-handle = find-entity ⊕ find-object=.
+
+Note : les signatures exactes seront /vérifiées contre la source
+clautolisp/ au moment de l'implémentation (la couche d'écriture est la
+plus récente et la moins stabilisée). edward isole cette dépendance
+derrière un petit module d'adaptation (=dwg-access=) pour absorber les
+écarts.
+
+* Version 1 — vidage en JSON
+
+** Objectif
+
+Lire un (ou plusieurs) dessin(s) et émettre un *document JSON* décrivant
+(a) les données applicatives stockées, étiquetées par application, et
+(b) les entités du dessin avec leur type et leurs propriétés.
+
+** Organisation du JSON : par application, puis liens vers les entités
+
+Conformément à la demande : *trier par application* plutôt que par
+entité. Une donnée applicative attachée à une entité référence l'entité
+par son handle ; la section =entities= porte le détail des entités une
+seule fois.
+
+#+begin_src json
+{
+  "edward": "1.0.0",
+  "source": "N1A_V1.dwg",
+  "format": "dwg",
+  "drawing": {
+    "version": "AC1027",
+    "codepage": "ANSI_1252",
+    "entity_count": 37329,
+    "appids": ["ACAD", "SCHMS", "SCHMSPLUS", "SNCF-Com_Echelle", "..."]
+  },
+  "applications": [
+    {
+      "application": "SCHMS",
+      "label": "SCHMS+ (EPURE)",
+      "appids": ["SCHMS", "SCHMSPLUS"],
+      "decoder": "schms",
+      "entity_data": [
+        {
+          "entity": "1A2B",                 // handle, renvoie à "entities"
+          "appid": "SCHMSPLUS",
+          "class": "/es/schms/sx2/gare",
+          "schema_version": 3,
+          "schema_status": "ok",            // ok | unknown-class | unknown-version
+                                            //  | divergent (cf. divergences)
+          "fields": { "UUID": "…", "NOM": "…", "TAGSIGNAL": "…",
+                      // champs @inclure (etats v1) aplatis :
+                      "REFLECTIF": false, "LUMINEUX": true, "...": "..." },
+          "divergences": [                  // vide si conforme
+            { "kind": "unknown-field", "field": "FOO", "value": "…" },
+            { "kind": "type-mismatch", "field": "LIMITE_VITESSE",
+              "expected": "INT", "raw": [1000, "x"] }
+          ],
+          "raw": [ [1000,"/es/schms/sx2/gare"], [1070,3], [1000,"UUID"], "…" ]
+        }
+      ],
+      "drawing_data": [
+        {
+          "dictionary": "SCHMS_VOIES",
+          "key": "VOIE100000",
+          "xrecord": "2F3",                 // handle de l'XRECORD
+          "class": "/es/schms/bd/voie",
+          "instances": [ { "schema_version": 2, "fields": { "...": "..." } } ],
+          "raw": [ ["...", "..."] ]
+        }
+      ]
+    },
+    {
+      "application": "PV",
+      "label": "PV",
+      "appids": ["PV"],
+      "decoder": "pv",
+      "entity_data": [
+        {
+          "entity": "C7",
+          "appid": "PV",
+          "fields": { "designation": "…", "symbole": "…",
+                      "document_reference": "…",
+                      "commentaire_1": "…", "commentaire_2": "…" },
+          "raw": [ [1002,"{"], [1000,"…"], [1002,"}"] ]
+        }
+      ],
+      "drawing_data": []
+    },
+    {
+      "application": "unknown",
+      "appids": ["SOME_OTHER_APPID"],
+      "decoder": null,                      // pas de décodeur : brut seulement
+      "entity_data": [
+        { "entity": "55", "appid": "SOME_OTHER_APPID",
+          "raw": [ [1000,"…"], [1070, 4] ] }
+      ],
+      "drawing_data": []
+    }
+  ],
+  "entities": [
+    {
+      "handle": "1A2B",
+      "type": "INSERT",
+      "layer": "SIGNAUX",
+      "block": "GARE",
+      "properties": { "insertion": [10.0, 20.0, 0.0], "rotation": 0.0,
+                      "name": "GARE" },
+      "applications": ["SCHMS"]             // applications ayant des xdata ici
+    }
+  ]
+}
+#+end_src
+
+Principes :
+- *Pas de perte* : chaque donnée applicative porte sa forme =raw= (paires
+  DXF) en plus, le cas échéant, de sa forme décodée =fields=. Les appids
+  sans décodeur ne portent que =raw=.
+- *Étiquetage application* : chaque bloc =applications[]= regroupe ce
+  qu'une application a stocké (xdata d'entités + données de dessin).
+- *Liens entités* : =entity_data[].entity= et =entities[].handle= se
+  correspondent ; =entities[].applications= liste réciproquement les
+  applications présentes sur l'entité (cas du dessin multi-applications).
+- *Multi-applications* : un même dessin peut produire plusieurs blocs
+  =applications[]= ; une même entité peut figurer dans plusieurs d'entre
+  eux (xdata de plusieurs appids).
+
+** Options de vidage
+
+- Filtrer par application (=--app schms,pv=) ou par appid.
+- =--raw= : n'émettre que la forme brute (pas de décodage), utile pour
+  diagnostiquer ou pour les applications sans décodeur.
+- =--no-entities= : omettre la section =entities= (données applicatives
+  seules) ; =--entities-only= pour l'inverse.
+- =--pretty= / =--compact= : indentation.
+- Sélection d'entités par type, calque, ou plage de handles (réutilisée
+  en v2 pour la sélection).
+
+** Cas de validation V1 — fidélité du round-trip
+
+Avant toute écriture sémantique (v2), il faut *de-risquer* la chaîne
+clautolisp + libredwg : garantit-elle un /round-trip/ sans perte ? C'est
+le *test d'acceptation de la v1* (et le prérequis du §5.2).
+
+Principe : lire un dessin réel, le réécrire à l'identique (passthrough,
+*sans* modification edward), le relire, et comparer les deux /vidages/ :
+
+#+begin_example
+edward roundtrip "dwg/EAMOA-23955/N1A_2TMV 1.dwg"   ; lit → écrit (temp) → relit → diff des dumps
+#+end_example
+
+Équivaut à =assert dump(lire(écrire(lire(F)))) ≡ dump(lire(F))=. La
+commande =roundtrip= n'exerce que =read-drawing= / =write-drawing= de
+clautolisp (et libredwg pour le DWG) — *pas* la logique de transfert v2 —
+ce qui isole la fidélité du format de la logique d'edward.
+
+Critères de réussite (dump avant ≡ dump après) :
+
+1. *Mêmes appids*, même =entity_count=, mêmes handles d'entités.
+2. *Toutes les xdata* préservées (par appid, octet pour octet sur la
+   forme =raw=) sur chaque entité.
+3. *Tous les dictionnaires nommés et XRECORD* préservés (clés, ordre,
+   codes DXF, valeurs) — en particulier =SCHMS_LIGNES/VOIES/POSTES=.
+4. Variables d'en-tête, blocs, calques/linetypes inchangés.
+
+Si le round-trip diverge, on /caractérise/ la perte (quels codes, quels
+objets) et on la documente comme limite de libredwg *avant* de bâtir la
+v2 : les garanties du §5.2 en dépendent directement. À exécuter dès que
+le jalon 0 sait lire ces deux DWG.
+
+* Version 2 — sélection et transfert entre dessins
+
+** Modèle d'opération
+
+Un dessin *destination* et un ou plusieurs dessins *sources*. On
+/sélectionne/ des *objets applicatifs* (instances) dans les sources,
+puis on applique une *opération* vers la destination.
+
+*Translation horizontale, sans mise à niveau (politique centrale).*
+edward *n'effectue aucune migration* d'objet entre versions de schéma
+(cela exigerait d'intégrer le code de migration de SCHMS,
+=mise_a_jour.lsp=). Il *transfère chaque objet à sa version d'origine*,
+verbatim, d'un dessin à l'autre — translation /horizontale/. C'est
+ensuite *l'application SCHMS qui mettra à niveau* les objets obsolètes,
+avec sa logique métier. Conséquences :
+
+- la =schema_version= de chaque instance est *préservée à l'identique* ;
+- =merge=/=replace= apparient les objets par *classe + clé/UUID*, et
+  *signalent* (sans réconcilier) toute différence de version entre source
+  et destination (option =--allow-version-mismatch= pour forcer) ;
+- les objets divergents (cf. §3, « Principe directeur ») sont transférés tels quels, brut
+  compris ; edward ne « répare » rien.
+
+*** Sélection
+
+Critères combinables (ET/OU) :
+- par *application* / *appid* ;
+- par *classe* (SCHMS : =/es/schms/sx2/gare= ; PV : la classe implicite) ;
+- par *niveau* : données d'entité vs données de dessin (dictionnaires) ;
+- par *valeur de champ* (ex. =UUID= = …, =NOM= contient …) ;
+- par *entité support* : type, calque, plage de handles, fenêtre
+  géométrique.
+
+*** Opérations
+
+- =merge= : ajouter les objets sélectionnés à la destination (sans
+  toucher aux existants). Gestion des collisions de clé (UUID, clé de
+  dictionnaire) : =--on-conflict skip|rename|replace=.
+- =replace= : remplacer dans la destination les objets correspondants
+  (même classe + clé/UUID) par ceux de la source. *Par défaut, les objets
+  de la destination sans correspondant dans la source sont conservés.*
+- =replace --prune= (= /miroir/ ou /synchronisation/) : faire en sorte
+  que l'ensemble sélectionné de la destination devienne *identique* à
+  celui de la source — écraser les correspondants, ajouter les manquants,
+  *et supprimer les objets de la destination absents de la source*. C'est
+  l'opération de *restauration intégrale* d'un dictionnaire/table : utile
+  quand la destination est *corrompue* (et pas seulement incomplète), car
+  les entrées corrompues à clé cassée/étrangère, qu'un =replace= par clé
+  laisserait subsister, sont éliminées. Granularité de l'élagage bornée
+  par la sélection (=--prune= n'efface jamais hors du périmètre
+  sélectionné : p.ex. =level=drawing class=…ligne,…voie,…poste= n'élague
+  que ces trois dictionnaires). Équivaut à =delete= (sur la sélection
+  destination) suivi de =merge= (depuis la source), en une opération
+  atomique et prévisualisable.
+- =delete= : supprimer de la destination les objets sélectionnés (par
+  critère), xdata et/ou XRECORD.
+- =diff= : comparer source/destination sans écrire (rapport JSON :
+  objets seulement-source / seulement-destination / communs-différents /
+  communs-identiques, par classe et clé).
+
+*** Entités attachées
+
+Option transversale =--with-entities | --data-only= :
+- *avec entités* : copier l'entité support (INSERT/bloc, sa définition de
+  bloc si absente, ses calques/linetypes) /et/ ses xdata ; ré-allouer les
+  handles dans la destination et réécrire les références internes (champs
+  =HANDLE=, liens de dictionnaire).
+- *données seules* : ne transférer que la charge applicative
+  (xdata/XRECORD), en la rattachant à une entité existante de la
+  destination (appariement par UUID/handle fourni) ou à un objet de
+  dictionnaire.
+
+*** Intégrité
+
+- *Ré-allocation de handles* via =allocate-handle= ; table de
+  correspondance =handle source → handle destination= appliquée à toutes
+  les références (=1005=, =330/350/360=, champs =HANDLE=).
+- *Dépendances de blocs/calques/linetypes* : copiées si manquantes.
+- *Versions de schéma* : edward /préserve/ la version d'origine ;
+  signalement si la destination utilise une version différente (pas de
+  migration automatique en v2 ; option =--allow-version-mismatch=).
+- *Sécurité d'écriture* : jamais d'écrasement en place sans =--in-place= ;
+  par défaut, écriture dans un fichier de sortie distinct, et =--backup=
+  pour conserver l'original. DWG réécrit via libredwg (=drawing-dwg=).
+
+** Cas de validation V2 — restauration des tables LIGNES/VOIES/POSTES
+
+Ce cas réel est le *test d'acceptation de la v2*. Une utilisatrice a
+*perdu/corrompu* les tables /lignes/, /voies/, /postes/ d'un schéma ; elle
+veut les *récupérer* depuis un schéma d'origine intact, pour que le
+document altéré « retrouve les mêmes libellés ».
+
+- Source (donnée correcte) : =dwg/EAMOA-23955/N1A 1.DWG=
+- Destination (donnée corrompue) : =dwg/EAMOA-23955/N1A_2TMV 1.dwg=
+- Résultat attendu : les dictionnaires =SCHMS_LIGNES=, =SCHMS_VOIES=,
+  =SCHMS_POSTES= de la destination redeviennent identiques à ceux de la
+  source ; les entités graphiques de la destination (variante /2TMV/) ne
+  sont *pas* modifiées.
+
+Pourquoi le cas est couvert par la spec :
+
+- Les tables sont des *données de niveau dessin* (XRECORD dans des
+  dictionnaires nommés sous le NOD, classes =/es/schms/bd/{ligne,voie,poste}=,
+  catégorie « Non graphique » — §2.2) ⇒ transfert =--data-only= : on ne
+  touche *pas* aux entités de la variante 2TMV.
+- La donnée étant *corrompue* (et pas seulement absente), un =replace= par
+  clé laisserait subsister d'éventuelles entrées à clé cassée. On veut le
+  *miroir* : =replace --prune= (restauration intégrale des trois
+  dictionnaires).
+- Transfert *horizontal* : chaque objet BD est recopié à *sa version de
+  schéma d'origine* ; SCHMS mettra à niveau ensuite si besoin (§5).
+
+Session interactive :
+
+#+begin_example
+edward> open  src  "dwg/EAMOA-23955/N1A 1.DWG"
+edward> dest        "dwg/EAMOA-23955/N1A_2TMV 1.dwg"
+edward> diff  src dest  app=schms level=drawing      ; constater l'écart (recommandé)
+edward> select src  app=schms level=drawing \
+              class=/es/schms/bd/ligne,/es/schms/bd/voie,/es/schms/bd/poste
+        -> N objets sélectionnés (lignes + voies + postes)
+edward> preview replace --data-only --prune          ; rapport : à écraser / ajouter / élaguer
+edward> apply
+edward> save                                          ; --backup conserve l'original
+#+end_example
+
+Équivalent CLI (scriptable) :
+
+#+begin_example
+edward copy --from "dwg/EAMOA-23955/N1A 1.DWG" \
+            --to   "dwg/EAMOA-23955/N1A_2TMV 1.dwg" \
+            --select 'app=schms level=drawing' \
+            --op replace --data-only --prune \
+            -o "dwg/EAMOA-23955/N1A_2TMV 1-restaure.dwg" --backup
+#+end_example
+
+Critères de réussite (vérifiables par =edward dump= / =edward diff= avant
+et après) :
+
+1. Après opération, =diff src dest app=schms level=drawing= ne signale
+   *aucune* différence sur les trois dictionnaires BD (mêmes clés, mêmes
+   champs, mêmes valeurs, mêmes versions).
+2. Le nombre et les handles des *entités graphiques* de la destination
+   sont *inchangés* (=--data-only= n'a touché qu'aux dictionnaires).
+3. Round-trip DWG fidèle : la destination réécrite se relit sans perte
+   (entités + autres données applicatives intactes).
+
+Réserves à exposer à l'utilisatrice (issues du =diff= préalable) :
+
+- *Alignement des tags* : les libellés ne réapparaissent que si les
+  entités de la destination référencent les mêmes =TAGLIGNE/TAGVOIE/…= que
+  les tables restaurées. La variante /2TMV/ étant une modification, le
+  =diff= révèle les tags orphelins (présents en source, absents/renommés
+  côté entités destination) ⇒ récupération éventuellement *partielle*,
+  signalée et non masquée.
+- *Rafraîchissement SCHMS* : edward restaure la /donnée/ ; le réaffichage
+  des libellés relève d'un /regen/ dans SCHMS (edward ne fait pas de CAO).
+
+* Interface utilisateur
+
+** Mode CLI (opérations simples, scriptables) — =edward=
+
+Sur le modèle de =dwg-identify= (analyse d'arguments maison, =uiop:quit=
+avec statut Unix : 0 ok, 1 échec fichier, 2 erreur d'usage).
+
+#+begin_example
+usage: edward [GLOBAL] <commande> [OPTIONS] [FICHIERS...]
+
+Commandes :
+  dump        vider les données applicatives + entités en JSON (v1)
+  list        lister les applications/appids/classes présentes (résumé)
+  roundtrip   lire→réécrire→relire et vérifier l'absence de perte (v1)
+  diff        comparer deux dessins (rapport JSON)            (v2)
+  copy        transférer des objets entre dessins             (v2)
+  shell       ouvrir le mode interactif                        (v2)
+
+Options globales :
+  -h, --help            aide
+  -V, --version         version
+  -v, --verbose         détailler
+      --json / --pretty / --compact   format de sortie
+  -o, --output FICHIER  rediriger la sortie
+      --schema-root DIR racine des *_ATTR.LSP SCHMS (déf. : arbre schms/
+                        ou copie embarquée) ; --no-schema pour brut seul
+
+dump :
+  edward dump [--app A,B] [--raw] [--no-entities|--entities-only]
+              [--type T] [--layer L] FICHIER.dwg ...
+
+copy (v2) :
+  edward copy --from SRC.dwg --to DST.dwg
+              --select 'app=schms class=/es/schms/sx2/gare'
+              --op merge|replace|delete
+              [--prune]                 ; replace miroir : la sélection de DST
+                                        ;   devient identique à celle de SRC
+              [--with-entities|--data-only]
+              [--on-conflict skip|rename|replace]
+              [--allow-version-mismatch]
+              [-o OUT.dwg] [--in-place] [--backup]
+#+end_example
+
+Exemples :
+#+begin_example
+edward dump N1A_V1.dwg > N1A_V1.json
+edward dump --app pv --raw plan.dwg
+edward list *.dwg
+edward copy --from a.dwg --to b.dwg \
+       --select 'app=schms class=/es/schms/bd/voie' \
+       --op merge --with-entities -o b-merged.dwg
+#+end_example
+
+** Mode interactif (opérations complexes, multi-dessins) — =edward shell=
+
+REPL minimal (boucle lire/évaluer/afficher) pour piloter plusieurs
+sources et une destination, construire des sélections, prévisualiser
+puis appliquer. État : dessins ouverts (alias), sélection courante,
+destination courante.
+
+#+begin_example
+edward> open src1 a.dwg            ; ouvre a.dwg sous l'alias src1
+edward> open src2 b.dwg
+edward> dest c.dwg                 ; fixe la destination
+edward> apps src1                  ; applications/appids présents
+edward> select src1 app=schms class=/es/schms/bd/voie
+        -> 128 objets sélectionnés
+edward> show 0..5                  ; aperçu des objets sélectionnés (JSON)
+edward> filter NOM~="V12"          ; affine la sélection courante
+edward> preview merge --with-entities   ; simulation, rapport de conflits
+edward> apply                      ; exécute vers la destination (en mémoire)
+edward> save                       ; écrit la destination (avec --backup)
+edward> quit
+#+end_example
+
+Principes : toute opération est /simulable/ (=preview=) avant =apply= ;
+=apply= modifie le dessin en mémoire ; =save= seul écrit sur disque.
+Annulation par rechargement de la destination tant que non sauvegardée.
+
+* Structure du sous-projet
+
+Calquée sur =dwg-identifier= (conventions communes) :
+
+#+begin_example
+edward/
+  edward.asd               ; systèmes "edward" et "edward/tests"
+  Makefile                 ; build/install/test/run, wiring submodule clautolisp
+  README.md
+  .gitattributes           ; LF + UTF-8 (override du défaut CRLF du dépôt)
+  docs/
+    edward-specifications.org   ; ce document
+    edward-manuel.org           ; manuel développeur (français) : inspecter & manipuler les dwg
+  src/
+    package.lisp           ; paquet edward (+ nickname dwg pour clautolisp.drawing)
+    dwg-access.lisp        ; adaptation clautolisp (lecture/écriture, helpers xdata/xrecord/handle)
+    model.lisp             ; structures : app-data, instance, field, entity-dump
+    codec-xdata.lisp       ; décodage/encodage générique des paires DXF 1000..1071 / {}
+    schema-attr.lisp       ; lecture des *_ATTR.LSP (cp1252), résolution chemin/@inclure, modèle classe/version
+    decode-schms.lisp      ; décodeur EPURELIB (classe/version/champs/dictionnaires), validation vs schéma
+    decode-pv.lisp         ; décodeur PV (5 champs)
+    decode-registry.lisp   ; appid -> décodeur ; repli brut
+    dump.lisp              ; assemblage du modèle de vidage
+    json.lisp             ; émission JSON (réutilise/étend %json-string de dwg-identifier)
+    transfer.lisp          ; v2 : sélection, merge/replace/delete, ré-allocation handles
+    cli.lisp               ; commandes dump/list/diff/copy
+    shell.lisp             ; v2 : mode interactif
+  tests/
+    package.lisp
+    test-harness.lisp      ; dessins synthétiques (DXF) porteurs de xdata/XRECORD
+    codec-tests.lisp
+    decode-schms-tests.lisp
+    decode-pv-tests.lisp
+    dump-tests.lisp
+    transfer-tests.lisp
+    run.lisp
+  bin/                     ; exécutable "edward" (image SBCL)
+#+end_example
+
+Dépendances ASDF : =clautolisp/drawing=, =clautolisp/drawing-dwg=,
+=uiop= (comme =dwg-identifier=). Émission JSON maison (pas de dépendance
+externe) ou réutilisation d'un encodeur léger ; conserver la portabilité
+de =dwg-identifier=. Tests : =fiveam=, sur dessins *synthétiques* DXF
+(pas besoin de libredwg pour la majorité des tests).
+
+* Planification du développement
+
+Jalons incrémentaux ; chaque jalon est livrable et testé indépendamment.
+
+** Jalon 0 — amorçage du sous-projet
+- [ ] Créer l'arborescence =edward/= (=edward.asd=, =Makefile=,
+  =README.md=, =.gitattributes=, =src/=, =tests/=, =docs/=) sur le patron
+  de =dwg-identifier=.
+- [ ] =package.lisp= (paquet =edward=, nickname =dwg=).
+- [ ] =dwg-access.lisp= : envelopper la lecture clautolisp ; *vérifier les
+  signatures réelles* de l'API clautolisp (lecture d'abord) ; helpers
+  =entity-xdata-by-appid=, =map-named-dictionaries=, =resolve-handle=.
+- [ ] Cible =make run= minimale qui lit un dessin et imprime le nombre
+  d'entités/appids (preuve de bout en bout, DXF puis DWG).
+- *Sortie* : on lit un vrai =.dwg= et on liste ses appids depuis edward.
+
+** Jalon 1 — couche brute générique (v1 socle)
+- [ ] =model.lisp= : structures de vidage (app-data, entity-dump).
+- [ ] Extraction de /toutes/ les xdata par appid sur chaque entité (paires
+  DXF brutes).
+- [ ] Parcours NOD + dictionnaires nommés ; restitution des XRECORD bruts.
+- [ ] Vidage des entités (type, handle, calque, bloc, propriétés DXF).
+- [ ] =json.lisp= : émission JSON (réutiliser =%json-string=).
+- [ ] =cli.lisp= : commandes =dump --raw=, =list=, =roundtrip=.
+- [ ] Tests sur dessins synthétiques DXF.
+- [ ] *Test d'acceptation v1 (cf. §4.4)* : =roundtrip= sur =N1A 1.DWG= et
+  =N1A_2TMV 1.dwg= — caractériser et documenter toute perte libredwg
+  *avant* d'attaquer la v2 (le §5.2 en dépend).
+- *Sortie* : =edward dump --raw= produit un JSON complet et sans perte
+  pour n'importe quelle application, connue ou non ; le round-trip DWG
+  est mesuré et documenté.
+
+** Jalon 2 — décodeurs SCHMS et PV (v1 enrichie)
+- [ ] =codec-xdata.lisp= : décodage générique des paires =1000..1071= et
+  de l'imbrication =1002 { }= en valeurs Lisp ; symétrique XRECORD
+  (=1/320/60/90/210/102=).
+- [ ] =decode-pv.lisp= : 5 champs chaîne nommés.
+- [ ] =schema-attr.lisp= : *lecteur des =*_ATTR.LSP== — décodage cp1252,
+  parsing de l'alist (=NOM_DAFFICHAGE=/=CATEGORIES=/=SCHEMAS=), mapping
+  des types, résolution chemin→fichier (=/schms/→/schmsplus/=,
+  majuscules, =_ATTR.LSP=) sous =--schema-root=, inclusion =@inclure=
+  par valeur (récursive, version figée), cache des classes. Modèle
+  classe/version/champ en mémoire.
+- [ ] =decode-schms.lisp= : décodage *informé par le schéma et fidèle au
+  brut* (§3.1) des xdata d'entités et des XRECORD
+  =SCHMS_LIGNES/VOIES/POSTES= : nommage/typage des champs via la classe
+  + version lue, aplatissement des champs inclus, *annotations de
+  divergence* (classe/version inconnue, champ hors schéma, type, arité),
+  forme =raw= toujours conservée.
+- [ ] =decode-registry.lisp= : =appid → décodeur=, repli brut.
+- [ ] =dump.lisp= : assemblage =applications[]= + =entities[]= + liens.
+- [ ] Tests : parsing =*_ATTR.LSP= (dont =@inclure=, enum, multi-version,
+  cp1252) ; décodage SCHMS conforme /et/ divergent ; PV ; multi-apps.
+- *Sortie* : =edward dump= produit le JSON structuré par application du
+  §4 ; SCHMS richement décodé et validé contre les schémas, divergences
+  signalées sans perte ; PV décodé ; le reste en brut.
+
+** Jalon 3 — écriture et transfert (v2 socle)
+- [ ] Étendre =dwg-access.lisp= à l'écriture ; *vérifier l'API d'écriture
+  clautolisp* ; helpers =write-xdata=, =make-xrecord=, =put-in-dictionary=.
+- [ ] =transfer.lisp= : sélection (critères §5),
+  =merge=/=replace=/=replace --prune=/=delete= niveau données ;
+  ré-allocation des handles + réécriture des références ; =diff= structuré.
+- [ ] =cli.lisp= : commandes =copy= (dont =--prune=, =--data-only=) et
+  =diff= ; garde-fous d'écriture (=--output= par défaut, =--in-place=,
+  =--backup=).
+- [ ] Tests de round-trip (lire → transférer → réécrire → relire) sur DXF.
+- *Sortie* : copie de données applicatives entre dessins, données seules.
+- *Test d'acceptation v2 (cf. §5.2)* : restaurer
+  =SCHMS_LIGNES/VOIES/POSTES= de =N1A 1.DWG= vers =N1A_2TMV 1.dwg= via
+  =copy --op replace --data-only --prune= ; vérifier par =diff= l'égalité
+  des trois dictionnaires *et* l'invariance des entités graphiques. C'est
+  le critère « la v2 fonctionne ».
+
+** Jalon 4 — transfert avec entités + mode interactif (v2 complète)
+- [ ] =--with-entities= : copie d'entités support, définitions de blocs,
+  calques/linetypes manquants ; cohérence des handles de bout en bout.
+- [ ] =shell.lisp= : REPL =open/dest/diff/select/filter/preview/apply/save=.
+- [ ] Rejouer le *cas de validation §5.2 en mode interactif* (session
+  =open/dest/diff/select/preview replace --data-only --prune/apply/save=).
+- [ ] Tests d'intégration multi-sources ; round-trip DWG via libredwg.
+- *Sortie* : flux complet multi-dessins, interactif, avec entités.
+
+** Jalon 5 — finition
+- [ ] =SCHME=/=SCHMIEUX= : relevé sur dessins réels ; décodeur si une
+  grammaire stable se dégage (sinon rester en brut, documenté).
+- [ ] *Manuel développeur* =docs/edward-manuel.org= (français, org-mode,
+  UTF-8/LF) : *finaliser* le manuel d'usage pour les développeurs qui
+  inspectent et manipulent les =.dwg= avec edward (voir contenu ci-après).
+- [ ] Documentation =README.md=, exemples, =docs= PDF.
+- [ ] =make install=, intégration au =Makefile= racine de =outils-autolisp=.
+
+*Manuel développeur — rédaction incrémentale.* Le manuel
+=docs/edward-manuel.org= n'attend pas le jalon 5 : il s'écrit /au fil des
+jalons/ (ébauche en J1 avec =dump=/=list=/=roundtrip=, enrichi en J3 avec
+=copy=/=diff=/=--prune=, complété en J4 avec le mode interactif), puis
+relu et finalisé en J5. Il est distinct des /spécifications/ (ce
+document, orienté conception) : il est orienté /usage/. Plan visé :
+
+1. *Présentation* : à quoi sert edward, ce qu'il ne fait pas, position vis
+   à vis de =dwg-identifier= et de SCHMS.
+2. *Installation / construction* : submodule clautolisp, =build-libredwg=,
+   =make build/install=, prérequis (SBCL, CFFI, cmake).
+3. *Rappel du modèle de données* EPURE (renvoi aux §2–§3 des specs) : ce
+   qu'on lit dans un dwg et comment l'interpréter.
+4. *Inspecter* : =dump= (lire le JSON, =--app=, =--raw=, =--schema-root=,
+   =--no-schema=), =list=, lecture des annotations de divergence,
+   =roundtrip= pour diagnostiquer la fidélité d'un dessin.
+5. *Manipuler* : =copy= et le mode interactif =shell= ; sélection,
+   =merge=/=replace=/=replace --prune=/=delete= ; =--data-only= vs
+   =--with-entities= ; garde-fous (=--output=, =--backup=, =--in-place=).
+6. *Procédures types* (pas-à-pas) : la restauration LIGNES/VOIES/POSTES du
+   §5.2, le contrôle de fidélité du §4.4.
+7. *Dépannage* : libredwg manquant, divergences de schéma, =*_ATTR.LSP= en
+   cp1252, écarts de version, tags orphelins.
+8. *Limites connues* et renvoi aux specs pour les détails de conception.
+
+* Risques et questions ouvertes
+
+- *SCHME/SCHMIEUX — codec inconnu.* /Décidé/ : forme brute pour
+  l'instant (sans perte) ; décodeur dédié *affiné plus tard*, sur relevé
+  de dessins réels (jalon 5).
+- *Maturité de l'API d'écriture clautolisp.* La couche d'écriture est
+  récente ; absence de mutateurs xdata/XRECORD de haut niveau. /Mitigation/ :
+  edward construit les listes DXF et isole tout derrière =dwg-access=.
+  Vérifier tôt (jalon 3) le comportement réel de =add-object=,
+  =dictionary-put=, =modify-entity= et du round-trip DWG via libredwg.
+- *Fidélité du round-trip DWG.* /CONFIRMÉ (2026-06, jalon 1)/ : l'écriture
+  DWG par libredwg est *défaillante* sur dessins SNCF réels — le /writer/
+  libredwg corrompt le texte cp1252 (=BAD_CONTINUATION_BYTE=) et produit
+  un fichier qui fait /planter le reader/ (faute mémoire SBCL). En
+  revanche, le round-trip *via DXF* (codec clautolisp pur Lisp) est *sans
+  perte* (=N1A 1.DWG= : 38277 entités, 33 appids préservés —
+  =edward roundtrip --via dxf=). /Le modèle de données et la lecture sont
+  fidèles ; seul le writer DWG de libredwg est en cause./
+  *Conséquence* : la v2 émettra du *DXF* (ouvrable et ré-enregistrable en
+  DWG par BricsCAD/AutoCAD) ; l'écriture DWG native (et donc =--in-place=
+  sur un =.dwg=) reste *bloquée* tant que le writer libredwg n'est pas
+  corrigé/remplacé. Voir [[file:../README.md][README]].
+- *Sémantique de =replace=/=delete=.* Clé d'identité d'un objet
+  applicatif (UUID ? clé de dictionnaire ? handle ?) à fixer par
+  application ; comportement par défaut prudent (=skip= sur conflit).
+- *Schémas =*_ATTR.LSP=.* /Décidé/ : edward les lit (typage, validation,
+  affichage, recherche). À fixer en implémentation : la *racine* par
+  défaut (=--schema-root= pointant l'arbre =schms/= vs copie embarquée
+  versionnée avec edward, plus stable mais à resynchroniser) ; le
+  décodage auto-descriptif reste le repli quand un schéma manque. Les
+  fichiers sont en *cp1252/CRLF* — décodage obligatoire.
+- *Divergence DWG vs spec applicative.* Attendue et centrale (§3, « Principe directeur ») : des
+  xdata réelles peuvent ne pas respecter les =*_ATTR.LSP=. edward la
+  /révèle/ (annotations) sans la corriger. À surveiller : volume des
+  divergences sur dessins réels, pour calibrer l'affichage.
+
+* Dépendances
+
+clautolisp (=clautolisp/drawing= et =clautolisp/drawing-dwg=, ce dernier
+nécessitant le shim libredwg compilé), =uiop=, =cffi= (transitif via
+drawing-dwg), =fiveam= (tests). Submodule sous =third-party/clautolisp=,
+rendu visible à ASDF par le =Makefile= (cf. =dwg-identifier=). Voir aussi
+[[file:../../dwg-identifier/docs/dwg-identifier.org][dwg-identifier.org]] pour la classification par table APPID, réutilisée
+par la commande =list= et l'étiquetage =applications[]=.
