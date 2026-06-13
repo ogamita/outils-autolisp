@@ -14,11 +14,17 @@
   (if kw (string-downcase (symbol-name kw)) "unknown"))
 
 (defun %xdata->json (xdata-groups)
-  "A JSON object {APPID: [raw entries...]} from ENTITY-XDATA groups, or
-:NULL when there is no xdata."
+  "A JSON array of per-appid xdata groups, each {appid, decoder, decoded,
+raw}; :NULL when there is no xdata. DECODED is the application-decoded form
+when a decoder applies, else :null (RAW is always present)."
   (if xdata-groups
-      (cons :object
-            (mapcar (lambda (g) (cons (car g) (dxf-data->json (cdr g))))
+      (jarr (mapcar (lambda (g)
+                      (let* ((appid (car g)) (pairs (cdr g))
+                             (decoded (decode-xdata-group appid pairs)))
+                        (jobj "appid"   appid
+                              "decoder" (or (decoder-name-for-appid appid) :null)
+                              "decoded" (or decoded :null)
+                              "raw"     (dxf-data->json pairs))))
                     xdata-groups))
       :null))
 
@@ -68,9 +74,7 @@ XRECORD) — that object's raw DXF data."
       (destructuring-bind (path key handle object) rec
         (let* ((stream (and object (xrecord-instance-pairs object)))
                (decoded (when stream
-                          (multiple-value-bind (instances divergences)
-                              (decode-instance-stream stream *xrecord-codec*)
-                            (decoded->json instances divergences)))))
+                          (schms-decoded->json stream *xrecord-codec*))))
           (cons :object
                 (list (cons "dictionary" (format nil "~{~A~^/~}" (or path '(""))))
                       (cons "path"    (jarr (mapcar (lambda (s) s) path)))

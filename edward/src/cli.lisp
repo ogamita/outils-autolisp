@@ -28,6 +28,8 @@
                   "      --no-entities        omit the entities section"
                   "      --entities-only      omit the dictionaries section"
                   "      --no-dictionaries    omit the dictionaries section"
+                  "      --schema-root DIR    SCHMS *_ATTR.LSP tree (enables validation)"
+                  "      --no-schema          structural decode only (no validation)"
                   ""
                   "export options:"
                   "      --encoding E  DXF text encoding: utf-8 (default) | cp1252 | latin-1"
@@ -49,8 +51,9 @@
         (funcall fn s))
       (funcall fn *standard-output*)))
 
-(defun %cmd-dump (paths &key pretty raw entities dictionaries output)
-  (let ((status 0))
+(defun %cmd-dump (paths &key pretty raw entities dictionaries output schema-root)
+  (let ((status 0)
+        (*schema-root* schema-root))
     (%with-output output
       (lambda (stream)
         (dolist (p paths)
@@ -116,7 +119,7 @@ that path; otherwise write each input alongside it with a .dxf type."
 round-trip diverged, 2 usage error)."
   (let ((command nil) (paths '()) (output nil)
         (verbose nil) (json nil) (pretty t) (raw nil)
-        (entities t) (dictionaries t) (via nil) (encoding nil)
+        (entities t) (dictionaries t) (via nil) (encoding nil) (schema-root nil)
         (rest args))
     ;; Leading global flags that short-circuit.
     (loop while rest
@@ -161,6 +164,12 @@ round-trip diverged, 2 usage error)."
                   (format *error-output* "~&~A: --encoding requires an argument~%" *program-name*)
                   (return-from main 2))
                 (setf encoding (pop rest)))
+               ((string= a "--schema-root")
+                (when (null rest)
+                  (format *error-output* "~&~A: --schema-root requires an argument~%" *program-name*)
+                  (return-from main 2))
+                (setf schema-root (pop rest)))
+               ((string= a "--no-schema") (setf schema-root nil))
                ((string= a "--json")    (setf json t))
                ((string= a "--pretty")  (setf pretty t))
                ((string= a "--compact") (setf pretty nil))
@@ -180,7 +189,8 @@ round-trip diverged, 2 usage error)."
     (cond
       ((string= command "dump")
        (%cmd-dump paths :pretty pretty :raw raw :entities entities
-                        :dictionaries dictionaries :output output))
+                        :dictionaries dictionaries :output output
+                        :schema-root schema-root))
       ((string= command "list")
        (%cmd-list paths :json json :verbose verbose :output output))
       ((string= command "roundtrip")

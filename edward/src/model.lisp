@@ -50,14 +50,3 @@ block) to a JSON value."
         (mapcar (lambda (kv) (cons (car kv) (decoded-value->json (cdr kv))))
                 fields)))
 
-(defun decoded->json (instances divergences)
-  "A JSON object {instances:[…], divergences:[…]} for a structurally
-decoded SCHMS instance stream."
-  (jobj "instances"
-        (jarr (mapcar (lambda (inst)
-                        (jobj "class"   (or (getf inst :class) :null)
-                              "version" (or (getf inst :version) :null)
-                              "fields"  (decoded-fields->json (getf inst :fields))))
-                      instances))
-        "divergences"
-        (jarr (mapcar (lambda (d) (format nil "~{~A~^ ~}" d)) divergences))))
