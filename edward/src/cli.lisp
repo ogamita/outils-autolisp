@@ -13,6 +13,7 @@
                   "  dump        dump application data + entities as JSON"
                   "  list        one-line classification per drawing (reuses dwg-identifier)"
                   "  roundtrip   read -> rewrite -> reread and check for loss (V1 acceptance)"
+                  "  export      write the drawing as ASCII DXF (for BricsCAD/AutoCAD -> DWG)"
                   ""
                   "Global options:"
                   "  -h, --help        show this help and exit"
@@ -27,6 +28,9 @@
                   "      --no-entities        omit the entities section"
                   "      --entities-only      omit the dictionaries section"
                   "      --no-dictionaries    omit the dictionaries section"
+                  ""
+                  "export options:"
+                  "      --encoding E  DXF text encoding: utf-8 (default) | cp1252 | latin-1"
                   ""
                   "list options:"
                   "      --json        one JSON object per file"))
@@ -71,6 +75,29 @@
               (format *error-output* "~&~A: error: ~A~%" p e))))))
     status))
 
+(defun %cmd-export (paths &key output encoding)
+  "Export drawing(s) to ASCII DXF. With one input and --output, write to
+that path; otherwise write each input alongside it with a .dxf type."
+  (let ((status 0)
+        (enc (cond ((null encoding) :utf-8)
+                   ((string-equal encoding "utf-8") :utf-8)
+                   ((or (string-equal encoding "cp1252")
+                        (string-equal encoding "ansi")
+                        (string-equal encoding "windows-1252")) :cp1252)
+                   ((or (string-equal encoding "latin-1")
+                        (string-equal encoding "iso-8859-1")) :iso-8859-1)
+                   (t :utf-8))))
+    (dolist (p paths)
+      (handler-case
+          (let ((out (or (and output (= (length paths) 1) output)
+                         (make-pathname :type "dxf" :defaults (pathname p)))))
+            (export-file p out :encoding enc)
+            (format *error-output* "~&wrote ~A~%" out))
+        (error (e)
+          (setf status 1)
+          (format *error-output* "~&~A: error: ~A~%" p e))))
+    status))
+
 (defun %cmd-roundtrip (paths &key output via)
   (let ((status 0))
     (%with-output output
@@ -89,7 +116,7 @@
 round-trip diverged, 2 usage error)."
   (let ((command nil) (paths '()) (output nil)
         (verbose nil) (json nil) (pretty t) (raw nil)
-        (entities t) (dictionaries t) (via nil)
+        (entities t) (dictionaries t) (via nil) (encoding nil)
         (rest args))
     ;; Leading global flags that short-circuit.
     (loop while rest
@@ -104,7 +131,7 @@ round-trip diverged, 2 usage error)."
       (print-usage) (return-from main 2))
     ;; Command.
     (setf command (pop rest))
-    (unless (member command '("dump" "list" "roundtrip") :test #'string=)
+    (unless (member command '("dump" "list" "roundtrip" "export") :test #'string=)
       (format *error-output* "~&~A: unknown command: ~A~%" *program-name* command)
       (print-usage) (return-from main 2))
     ;; Options + files.
@@ -129,6 +156,11 @@ round-trip diverged, 2 usage error)."
                                   ((string-equal v "dwg") :dwg)
                                   (t (format *error-output* "~&~A: unknown --via format: ~A~%" *program-name* v)
                                      (return-from main 2))))))
+               ((string= a "--encoding")
+                (when (null rest)
+                  (format *error-output* "~&~A: --encoding requires an argument~%" *program-name*)
+                  (return-from main 2))
+                (setf encoding (pop rest)))
                ((string= a "--json")    (setf json t))
                ((string= a "--pretty")  (setf pretty t))
                ((string= a "--compact") (setf pretty nil))
@@ -152,7 +184,9 @@ round-trip diverged, 2 usage error)."
       ((string= command "list")
        (%cmd-list paths :json json :verbose verbose :output output))
       ((string= command "roundtrip")
-       (%cmd-roundtrip paths :output output :via via)))))
+       (%cmd-roundtrip paths :output output :via via))
+      ((string= command "export")
+       (%cmd-export paths :output output :encoding encoding)))))
 
 (defun %toplevel ()
   "Entry point for the saved `edward' executable."

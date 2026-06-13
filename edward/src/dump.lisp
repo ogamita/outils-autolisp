@@ -108,6 +108,18 @@ respective sections."
     (when pretty (terpri stream))
     (values)))
 
+;;;; --- DXF export (hand a drawing to BricsCAD/AutoCAD) ------------------
+
+(defun export-file (path out &key (encoding :utf-8))
+  "Read the drawing at PATH and write it as ASCII DXF to OUT. ENCODING is
+the character encoding of the DXF (:utf-8 by default — lossless; try
+:iso-8859-1 if the target CAD expects a code-page DXF). Intended for the
+mean-time workflow where edward emits DXF that BricsCAD/AutoCAD re-saves
+as native (R2018) DWG, since libredwg cannot yet write R2018."
+  (let ((drawing (read-drawing path)))
+    (dwg:dxf-write-drawing drawing out :external-format encoding)
+    out))
+
 ;;;; --- Round-trip fidelity (V1 acceptance, §4.4) ------------------------
 
 (defun %canonical-dump (drawing)
