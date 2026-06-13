@@ -26,20 +26,34 @@ Working today (the generic **raw** layer — lossless, application-agnostic):
     `SCHMS_LIGNES` / `SCHMS_VOIES` / `SCHMS_POSTES` tables) with its
     XRECORD data verbatim;
   - `entities[]` — each entity's handle / type / layer / block and its
-    xdata **grouped by appid** (`--raw` adds the full DXF data).
+    xdata as an array of per-appid groups `{appid, decoder, decoded, raw}`
+    (`--raw` adds the full DXF data).
+
+**SCHMS / PV decoding (schema-informed, raw-faithful):** with
+`--schema-root <schms>`, each SCHMS instance (entity xdata *and* NOD
+`SCHMS_LIGNES/VOIES/POSTES` XRECORDs) is decoded to `{class, version,
+display_name, fields, divergences}` — typed per the `*_ATTR.LSP` schema
+(`@inclure` expanded, cp1252-read), validated against class@version, with
+divergences reported and the raw always kept. PV xdata decodes to its five
+named fields. Unknown appids stay raw. Verified on `N1A 1.DWG`: 2221 entity
+instances (~30 classes) + 77 BD records, zero divergences.
+
 - `edward list FILE…` — one-line classification per drawing (reuses
   dwg-identifier).
 - `edward roundtrip FILE…` — read → rewrite → reread and check for loss
   (the v1 acceptance test, §4.4 of the spec).
+- `edward export FILE -o OUT.dxf` — write the drawing as ASCII DXF.
 
-Not yet: SCHMS schema-aware decoding (`*_ATTR.LSP`), PV decoding, and all
-of v2 (select / copy / merge / replace / prune between drawings).
+Not yet: the by-application (`applications[]`) output reorg (§4 — decoded
+data is currently carried inline on `entities[]`/`dictionaries[]`); a
+SCHME/SCHMIEUX decoder; and all of v2 (select / copy / merge / replace /
+prune between drawings).
 
 ```
 make build                 # build the bin/edward executable
 make test                  # unit tests (synthetic DXF; no libredwg needed)
-./bin/edward dump --no-entities "N1A 1.DWG"      # drawing-level data only
-./bin/edward dump --app … --raw FILE.dwg
+./bin/edward dump --no-entities --schema-root ../../schms "N1A 1.DWG"
+./bin/edward dump --schema-root ../../schms --no-dictionaries FILE.dwg
 ./bin/edward roundtrip --via dxf FILE.dwg
 ```
 
