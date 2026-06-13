@@ -43,23 +43,29 @@ make test                  # unit tests (synthetic DXF; no libredwg needed)
 ./bin/edward roundtrip --via dxf FILE.dwg
 ```
 
-## Important finding — DWG write goes through libredwg, and its writer is unreliable
+## DWG read/write notes (v1 round-trip findings)
 
-The v1 round-trip acceptance test surfaced a real limitation, exactly as
-the spec anticipated:
+The v1 round-trip acceptance test surfaced two distinct issues:
 
-- **Reading** DWG (libredwg) and **edward's data model** are faithful:
-  read DWG → write **DXF** (clautolisp's own pure-Lisp codec) → reread is
-  **lossless** (verified on `N1A 1.DWG`: 38277 entities, 33 appids
-  preserved — `edward roundtrip --via dxf`).
-- **Writing DWG** through libredwg is **not** reliable on real SNCF
-  drawings: the libredwg writer mangles cp1252 text
-  (`BAD_CONTINUATION_BYTE`) and can produce a file that crashes the
-  reader. So native DWG write-back is **gated** for now.
+1. **Encoding — fixed in clautolisp (v1.2.7).** The DWG path goes
+   DWG↔DXF through libredwg, which transcodes strings to **UTF-8** and
+   records `$DWGCODEPAGE ANSI_1252`. clautolisp had been reading that
+   interchange as ISO-8859-1 and ignoring the code page, so accented text
+   mojibaked (`kilomètre` → `kilomÃ¨tre`). Fixed: the DWG codec now reads
+   /writes the interchange as UTF-8 and captures `$DWGCODEPAGE` into
+   `drawing-codepage`. `edward dump` now yields correct accented text and
+   `"codepage": "ANSI_1252"`.
 
-Consequence for v2: edward will emit **DXF** (which BricsCAD/AutoCAD open
-and can re-save as DWG); native DWG write-back waits on a libredwg
-writer fix/replacement.
+2. **Native DWG write-back — blocked by libredwg.** These drawings are
+   **R2018 (AC1032)**, and libredwg's `dxf2dwg` only writes up to r2004
+   (r2018 is "Planned", unimplemented). Downgrading R2018 attribute data
+   (embedded `AcDbXrecord` / multiline ATTRIB, DXF code 43) to r2000/r2004
+   fails (`Invalid DXF code 43 for ATTRIB`) — reproducible with pure
+   standalone `dwg2dxf | dxf2dwg`, no clautolisp involved.
+
+Consequence for v2: edward emits a correctly-encoded **DXF** (which
+BricsCAD/AutoCAD open and re-save as R2018 DWG); native DWG write-back
+waits on libredwg implementing R2018 write.
 
 ## Build / dependencies
 

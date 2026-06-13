@@ -906,18 +906,26 @@ document, orienté conception) : il est orienté /usage/. Plan visé :
   edward construit les listes DXF et isole tout derrière =dwg-access=.
   Vérifier tôt (jalon 3) le comportement réel de =add-object=,
   =dictionary-put=, =modify-entity= et du round-trip DWG via libredwg.
-- *Fidélité du round-trip DWG.* /CONFIRMÉ (2026-06, jalon 1)/ : l'écriture
-  DWG par libredwg est *défaillante* sur dessins SNCF réels — le /writer/
-  libredwg corrompt le texte cp1252 (=BAD_CONTINUATION_BYTE=) et produit
-  un fichier qui fait /planter le reader/ (faute mémoire SBCL). En
-  revanche, le round-trip *via DXF* (codec clautolisp pur Lisp) est *sans
-  perte* (=N1A 1.DWG= : 38277 entités, 33 appids préservés —
-  =edward roundtrip --via dxf=). /Le modèle de données et la lecture sont
-  fidèles ; seul le writer DWG de libredwg est en cause./
-  *Conséquence* : la v2 émettra du *DXF* (ouvrable et ré-enregistrable en
-  DWG par BricsCAD/AutoCAD) ; l'écriture DWG native (et donc =--in-place=
-  sur un =.dwg=) reste *bloquée* tant que le writer libredwg n'est pas
-  corrigé/remplacé. Voir [[file:../README.md][README]].
+- *Round-trip DWG — deux causes distinctes (analyse jalon 1, 2026-06).*
+  1. /Encodage — CORRIGÉ dans clautolisp (v1.2.7)./ La chaîne DWG↔DXF
+     passe par libredwg, qui transcode les chaînes en *UTF-8* et inscrit
+     =$DWGCODEPAGE ANSI_1252=. clautolisp lisait/écrivait cet échange en
+     ISO-8859-1 et ignorait le code page (=drawing-codepage= nil) ⇒ texte
+     accentué /mojibaké/ à la lecture (=kilomètre→kilomÃ¨tre=). Correctif :
+     =dxf-read-drawing=/=dxf-write-drawing= acceptent =:external-format= ; le
+     codec DWG passe =:utf-8= ; le lecteur DXF capture =$DWGCODEPAGE= dans
+     =drawing-codepage=. Vérifié : =edward dump= rend =kilomètre= et
+     =codepage: ANSI_1252=.
+  2. /Écriture DWG native — bloquée par libredwg (non corrigeable ici)./
+     =dxf2dwg= n'écrit que r12/r14/r2000/r2004 ; *R2018 (=AC1032=, le format
+     de ces dessins) est « Planned », non implémenté*. Rétrograder les
+     attributs R2018 (ATTRIB à AcDbXrecord/MTEXT imbriqué, code DXF 43)
+     vers r2000/r2004 échoue (=Invalid DXF code 43 for ATTRIB=) ou boucle.
+     Reproduit en pur libredwg (=dwg2dxf | dxf2dwg=), sans clautolisp.
+  *Conséquence* : la v2 émet du *DXF* (UTF-8, ouvrable et ré-enregistrable
+  en DWG R2018 par BricsCAD/AutoCAD) ; l'écriture DWG native (et =--in-place=
+  sur un =.dwg=) reste *bloquée* tant que libredwg n'implémente pas
+  l'écriture R2018. Voir [[file:../README.md][README]].
 - *Sémantique de =replace=/=delete=.* Clé d'identité d'un objet
   applicatif (UUID ? clé de dictionnaire ? handle ?) à fixer par
   application ; comportement par défaut prudent (=skip= sur conflit).
