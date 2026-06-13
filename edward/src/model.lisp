@@ -30,3 +30,34 @@ a JSON value."
   "The VALUE of the first DXF entry with group CODE in DATA, or NIL."
   (let ((p (assoc code data :test #'eql)))
     (and p (dxf-pair-value p))))
+
+;;;; --- Decoded SCHMS instances -> JSON ---------------------------------
+
+(defun decoded-value->json (v)
+  "Convert a decoded field value (scalar, or a (:block inner-pairs) nested
+block) to a JSON value."
+  (cond
+    ((and (consp v) (eq (car v) :block))
+     (jobj "block" (dxf-data->json (second v))))
+    ((stringp v) v)
+    ((numberp v) v)
+    ((null v) :null)
+    (t (princ-to-string v))))
+
+(defun decoded-fields->json (fields)
+  "An alist (name . value) of decoded fields -> a JSON object."
+  (cons :object
+        (mapcar (lambda (kv) (cons (car kv) (decoded-value->json (cdr kv))))
+                fields)))
+
+(defun decoded->json (instances divergences)
+  "A JSON object {instances:[…], divergences:[…]} for a structurally
+decoded SCHMS instance stream."
+  (jobj "instances"
+        (jarr (mapcar (lambda (inst)
+                        (jobj "class"   (or (getf inst :class) :null)
+                              "version" (or (getf inst :version) :null)
+                              "fields"  (decoded-fields->json (getf inst :fields))))
+                      instances))
+        "divergences"
+        (jarr (mapcar (lambda (d) (format nil "~{~A~^ ~}" d)) divergences))))

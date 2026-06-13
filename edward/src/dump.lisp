@@ -66,12 +66,18 @@ XRECORD) — that object's raw DXF data."
    (mapcar
     (lambda (rec)
       (destructuring-bind (path key handle object) rec
-        (cons :object
-              (list (cons "dictionary" (format nil "~{~A~^/~}" (or path '(""))))
-                    (cons "path"   (jarr (mapcar (lambda (s) s) path)))
-                    (cons "key"    key)
-                    (cons "handle" handle)
-                    (cons "object" (if object (dxf-data->json object) :null))))))
+        (let* ((stream (and object (xrecord-instance-pairs object)))
+               (decoded (when stream
+                          (multiple-value-bind (instances divergences)
+                              (decode-instance-stream stream *xrecord-codec*)
+                            (decoded->json instances divergences)))))
+          (cons :object
+                (list (cons "dictionary" (format nil "~{~A~^/~}" (or path '(""))))
+                      (cons "path"    (jarr (mapcar (lambda (s) s) path)))
+                      (cons "key"     key)
+                      (cons "handle"  handle)
+                      (cons "decoded" (or decoded :null))
+                      (cons "object"  (if object (dxf-data->json object) :null)))))))
     (%dictionary-records drawing))))
 
 (defun dump-drawing (drawing &key source raw (entities t) (dictionaries t))
