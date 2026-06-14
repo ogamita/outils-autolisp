@@ -161,8 +161,17 @@ crash the reader); use VIA :dxf-ascii to exercise clautolisp's own codec."
          (fmt      (or via (dwg:drawing-format original)))
          (type     (%format-type fmt)))
     (uiop:with-temporary-file (:pathname tmp :type type :keep nil)
-      (dwg:write-drawing original tmp :format fmt)
-      (let* ((reloaded (read-drawing tmp))
+      ;; For the DXF path, write+read the intermediate as UTF-8 so the
+      ;; round-trip is self-consistent and handles cp1252 characters outside
+      ;; latin-1 (e.g. U+0153 'œ' in French SNCF text), which the
+      ;; standalone-DXF default (:iso-8859-1) cannot encode. The native DWG
+      ;; path already uses a UTF-8 libredwg interchange.
+      (if (eq fmt :dxf-ascii)
+          (dwg:dxf-write-drawing original tmp :external-format :utf-8)
+          (dwg:write-drawing original tmp :format fmt))
+      (let* ((reloaded (if (eq fmt :dxf-ascii)
+                           (dwg:dxf-read-drawing tmp :external-format :utf-8)
+                           (read-drawing tmp)))
              (a (%canonical-dump original))
              (b (%canonical-dump reloaded))
              (ok (string= a b)))
