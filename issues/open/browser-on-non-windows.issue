@@ -1,4 +1,4 @@
-We may want to use the browser functions on nn-MS-Windows systems.
+We may want to use the browser functions on non-MS-Windows systems.
 
 So when WScript.Shell or even COM is not available, fallback to the
 previous implementation.
