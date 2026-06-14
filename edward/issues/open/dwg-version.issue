@@ -1,0 +1,13 @@
+
+The version of the dwg file format should be reported for all input files.
+
+When all the input files have the same dwg file format version,
+then created output fwg files should take the same dwg file format version,
+unless an option or command set a different dwg file format version for the output file.
+
+In all case, the degree of support of the dwg file format version should be reported:
+- for input files, indicate whether the dwg file format version is entirely supported of if there are gaps;
+- for output files, indicate whether the dwg file format version is entirely supported, partially supported (indicate main gaps), or falls back to another dwg file format version.
+
+In case of gaps or fall back, print single sentence to ask for contributions and link the github repository of libredwg.
+
