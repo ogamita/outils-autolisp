@@ -101,6 +101,28 @@ that path; otherwise write each input alongside it with a .dxf type."
           (format *error-output* "~&~A: error: ~A~%" p e))))
     status))
 
+(defun %cmd-transfer (paths &key output)
+  "edward transfer SOURCE DEST -o OUT: copy the SCHMS BD dictionaries
+(LIGNES/VOIES/POSTES) from SOURCE into DEST and write the result to OUT
+(DXF when OUT ends in .dxf, else native DWG)."
+  (cond
+    ((/= (length paths) 2)
+     (format *error-output* "~&~A: transfer needs SOURCE and DEST drawings~%" *program-name*) 2)
+    ((null output)
+     (format *error-output* "~&~A: transfer needs -o OUTPUT~%" *program-name*) 2)
+    (t
+     (handler-case
+         (let ((report (transfer-bd-file (first paths) (second paths) output)))
+           (format *error-output* "~&transferred ~A + ~A -> ~A~%"
+                   (first paths) (second paths) output)
+           (if report
+               (dolist (e report)
+                 (format *error-output* "  ~A: ~A entries~%" (car e) (cdr e)))
+               (format *error-output* "  (no BD dictionaries found in source)~%"))
+           0)
+       (error (e)
+         (format *error-output* "~&~A: error: ~A~%" *program-name* e) 1)))))
+
 (defun %cmd-roundtrip (paths &key output via)
   (let ((status 0))
     (%with-output output
@@ -134,7 +156,7 @@ round-trip diverged, 2 usage error)."
       (print-usage) (return-from main 2))
     ;; Command.
     (setf command (pop rest))
-    (unless (member command '("dump" "list" "roundtrip" "export") :test #'string=)
+    (unless (member command '("dump" "list" "roundtrip" "export" "transfer") :test #'string=)
       (format *error-output* "~&~A: unknown command: ~A~%" *program-name* command)
       (print-usage) (return-from main 2))
     ;; Options + files.
@@ -195,6 +217,8 @@ round-trip diverged, 2 usage error)."
        (%cmd-list paths :json json :verbose verbose :output output))
       ((string= command "roundtrip")
        (%cmd-roundtrip paths :output output :via via))
+      ((string= command "transfer")
+       (%cmd-transfer paths :output output))
       ((string= command "export")
        (%cmd-export paths :output output :encoding encoding)))))
 

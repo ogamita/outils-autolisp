@@ -32,6 +32,7 @@
    (:file "decode-pv")
    (:file "decode-registry")
    (:file "dump")
+   (:file "transfer")
    (:file "cli"))
   :in-order-to ((asdf:test-op (asdf:test-op "edward/tests")))
   :perform (asdf:test-op (op system)
