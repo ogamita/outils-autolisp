@@ -734,6 +734,98 @@ Principes : toute opération est /simulable/ (=preview=) avant =apply= ;
 =apply= modifie le dessin en mémoire ; =save= seul écrit sur disque.
 Annulation par rechargement de la destination tant que non sauvegardée.
 
+* Version 3 — explorateur interactif, requêtes et validation
+
+Réalise (et précise) le « Mode interactif » ci-dessus sous la forme d'un
+/REPL Lisp/ : plutôt qu'un mini-langage de commandes =open/select/apply=, on
+expose le dessin en mémoire et une bibliothèque de combinateurs, et la
+« langue de requête » /est/ le langage des S-expressions. But premier :
+inspecter les dessins produits par libredwg pour /débusquer les problèmes de
+compatibilité R2018 restants/, et offrir un contrôle de normes façon
+application standard de BricsCAD.
+
+** Modèle de nœud — adressage uniforme à tous les niveaux
+
+Un =node= étiquette un /niveau/, la valeur sous-jacente (/payload/), le nœud
+parent, le dessin propriétaire et l'index/clé dans le parent. Niveaux :
+=:drawing :entity :object :table-record :dict :dict-entry :header-var :pair
+:block :xdata-group :instance :field=. Chaque niveau est produit par une
+fonction existante (=entity-xdata=, =walk-dictionaries=, =decode-instance-stream=,
+le lecteur d'accolades =%read-value=…) : l'explorateur /navigue et présente/,
+il ne reparse rien. =mutation-target= remonte au plus proche =:entity= /
+=:object= (seules unités modifiables : =modify-entity= remplace la liste DXF
+entière).
+
+** Langage de requête (=query.lisp=)
+
+Style combinateur, =sélection -> sélection= (une sélection est une simple
+liste de nœuds, donc toute la bibliothèque de séquences CL compose) :
+- racines : =(entities d)= =(objects d)= =(table-records d)= =(dictionaries d)=
+  =(header-vars d)= ;
+- navigateurs : =children= =descendants= =parent-of= =ascend-to= ;
+- filtres (tous via =where=) : =by-layer= =by-kind= =by-appid= =by-class=
+  =by-code= =by-version= =by-handle= =by-level= =pick= =first-of= ;
+- terminaux : =count-of= =to-list= =show= =export-sel= ;
+- fil : =(chain d (entities) (by-layer "SIGNAUX") (by-appid "SCHMSPLUS")
+  descendants)=.
+
+** REPL et exécution non interactive
+
+Trois sous-commandes ajoutées au CLI :
+#+begin_example
+edward repl [FICHIER]        ; REPL Lisp interactif (*drawing* / *sel* liés)
+edward eval 'FORME' [FICHIER]; évalue une forme et affiche le résultat
+edward script [FICHIER]      ; évalue les formes lues sur stdin
+#+end_example
+La boucle s'exécute dans le paquet =edward= (vocabulaire sans préfixe) ; les
+nœuds et sélections s'affichent en /arbre/ (=show=, =examine=), les autres
+valeurs avec l'imprimeur Lisp normal. =(help-repl)= rappelle le vocabulaire.
+=rlwrap edward repl f.dwg= pour l'édition de ligne (aucune dépendance ajoutée).
+
+** Inspection, visualisation, export (=inspect.lisp=)
+
+=show= / =print-tree= rendent un nœud (ou une sélection) en arbre ASCII avec
+en-têtes par niveau ; =examine= déplie en profondeur et indique la cible de
+mutation. =export-sel= sérialise toute sélection en =:json= (réutilise les
+émetteurs de =dump.lisp=), =:sexp= (Lisp relisible) ou =:dxf-fragment=.
+
+** Éditeur structuré de S-expressions (=sedit.lisp=)
+
+Les données d'edward /sont/ des arbres de conses, donc l'édition passe par un
+éditeur structuré à curseur, adapté de =small-cl-pgms/sedit= (AGPL-3.0, même
+auteur). Commandes : navigation =d/u/f/b= (descendre/monter/avant/arrière),
+édition =i/a/r/x/c/y= (insérer/ajouter/remplacer/couper/copier/coller). =(edit
+node)= édite l'arbre de la cible de mutation puis réécrit via le point de
+passage unique =edit-entity-pairs= → =modify-entity= / =add-object=.
+
+** Opérations (=ops.lisp=) — écriture en DXF uniquement
+
+=del= (effacer entités/objets/entrées de dico), =dup= (dupliquer avec
+handles frais), =ins= (insérer une entité), =edit= (édition structurée),
+=save= (=.dxf= UTF-8). L'écriture DWG native est refusée tant que l'encodeur
+R2018 de libredwg est indisponible ; le flux reste : produire un DXF, le
+rouvrir dans le CAD, /Enregistrer sous/ DWG.
+
+** Moteur de validation (=validate.lisp=) — détecteur de bugs / normes CAO
+
+Une /règle/ est une donnée : =id=, =level=, =severity=, =description=,
+=predicate= (nœud → =nil= ou message). =defrule= les enregistre dans =*rules*=
+(l'utilisateur ajoute ses règles métier SNCF sans toucher au moteur — analogue
+des normes CAO). =run-rules= produit un rapport (texte ou JSON :
+=edward validate FICHIER [--json] [--schema-root DIR]=). Jeu de départ, qui
+double comme détecteur de régressions libredwg :
+- =:garbage-double= (=error=) — double NaN/Inf/dénormal/proche de l'overflow
+  (corruption de décompression ; ±1d20 = sentinelle AutoCAD, toléré) ;
+- =:xdata-grammar= / =:xrecord-grammar= — flux d'instance SCHMS non conforme ;
+- =:schema-divergence= — instance violant son =*_ATTR.LSP= (si =--schema-root=) ;
+- =:value-range= — code booléen (290–299) hors {0,1} ;
+- =:layer-color= — couleur de calque hors ACI 1–255 (signe = on/off) ;
+- =:entity-count-drift= (=error=) — perte d'entités sur un aller-retour DXF ;
+- =:dangling-handle= (=info=) — référence vers un handle non modélisé
+  (clautolisp ne retient pas tous les objets de contrôle : sur un fichier sain
+  c'est surtout du bruit structurel ; le /signal/ est l'écart par rapport à un
+  dessin de référence sain).
+
 * Structure du sous-projet
 
 Calquée sur =dwg-identifier= (conventions communes) :

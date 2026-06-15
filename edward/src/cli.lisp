@@ -14,6 +14,10 @@
                   "  list        one-line classification per drawing (reuses dwg-identifier)"
                   "  roundtrip   read -> rewrite -> reread and check for loss (V1 acceptance)"
                   "  export      write the drawing as ASCII DXF (for BricsCAD/AutoCAD -> DWG)"
+                  "  validate    run the validation rules (libredwg-bug / CAD-standards checks)"
+                  "  repl        interactive explorer REPL (Lisp): edward repl [FILE]"
+                  "  eval        evaluate one explorer form: edward eval 'FORM' [FILE]"
+                  "  script      evaluate explorer forms read from stdin: edward script [FILE]"
                   ""
                   "Global options:"
                   "  -h, --help        show this help and exit"
@@ -33,6 +37,10 @@
                   ""
                   "export options:"
                   "      --encoding E  DXF text encoding: utf-8 (default) | cp1252 | latin-1"
+                  ""
+                  "validate options:"
+                  "      --json        emit the findings as JSON"
+                  "      --schema-root DIR    enable schema-divergence checks"
                   ""
                   "list options:"
                   "      --json        one JSON object per file"))
@@ -123,6 +131,35 @@ that path; otherwise write each input alongside it with a .dxf type."
        (error (e)
          (format *error-output* "~&~A: error: ~A~%" *program-name* e) 1)))))
 
+(defun %cmd-validate (paths &key json schema-root output)
+  "edward validate FILE...: run the validation rules and report findings.
+Returns 1 if any file has an error-severity finding (or fails to read)."
+  (let ((status 0))
+    (%with-output output
+      (lambda (stream)
+        (dolist (p paths)
+          (handler-case
+              (unless (validate-file p :json json :schema-root schema-root :stream stream)
+                (setf status 1))
+            (error (e)
+              (setf status 1)
+              (format *error-output* "~&~A: error: ~A~%" p e))))))
+    status))
+
+(defun %cmd-repl (paths &key schema-root)
+  "edward repl [FILE]: interactive explorer REPL."
+  (run-repl (first paths) :schema-root schema-root))
+
+(defun %cmd-eval (paths &key schema-root)
+  "edward eval FORM [FILE]: evaluate one explorer form."
+  (if (null paths)
+      (progn (format *error-output* "~&~A: eval needs a FORM argument~%" *program-name*) 2)
+      (run-eval (first paths) (second paths) :schema-root schema-root)))
+
+(defun %cmd-script (paths &key schema-root)
+  "edward script [FILE]: evaluate explorer forms read from stdin."
+  (run-script (first paths) :schema-root schema-root))
+
 (defun %cmd-roundtrip (paths &key output via)
   (let ((status 0))
     (%with-output output
@@ -156,7 +193,9 @@ round-trip diverged, 2 usage error)."
       (print-usage) (return-from main 2))
     ;; Command.
     (setf command (pop rest))
-    (unless (member command '("dump" "list" "roundtrip" "export" "transfer") :test #'string=)
+    (unless (member command '("dump" "list" "roundtrip" "export" "transfer"
+                              "validate" "repl" "eval" "script")
+                    :test #'string=)
       (format *error-output* "~&~A: unknown command: ~A~%" *program-name* command)
       (print-usage) (return-from main 2))
     ;; Options + files.
@@ -205,7 +244,8 @@ round-trip diverged, 2 usage error)."
                 (print-usage) (return-from main 2))
                (t (push a paths))))
     (setf paths (nreverse paths))
-    (when (null paths)
+    (when (and (null paths)
+               (not (member command '("repl" "script") :test #'string=)))
       (format *error-output* "~&~A: ~A: no input files~%" *program-name* command)
       (return-from main 2))
     (cond
@@ -220,7 +260,15 @@ round-trip diverged, 2 usage error)."
       ((string= command "transfer")
        (%cmd-transfer paths :output output))
       ((string= command "export")
-       (%cmd-export paths :output output :encoding encoding)))))
+       (%cmd-export paths :output output :encoding encoding))
+      ((string= command "validate")
+       (%cmd-validate paths :json json :schema-root schema-root :output output))
+      ((string= command "repl")
+       (%cmd-repl paths :schema-root schema-root))
+      ((string= command "eval")
+       (%cmd-eval paths :schema-root schema-root))
+      ((string= command "script")
+       (%cmd-script paths :schema-root schema-root)))))
 
 (defun %toplevel ()
   "Entry point for the saved `edward' executable."
