@@ -1,0 +1,483 @@
+#+TITLE: Spécification du sous-projet autolisp-introspection
+#+AUTHOR: Pascal Bourguignon
+#+LANGUAGE: fr
+#+OPTIONS: toc:3 num:t
+
+* Objet
+
+Le sous-projet =autolisp-introspection= fournit les outils permettant
+d'écrire facilement des *tests de fonctions qui manipulent les entités*
+d'un dessin AutoCAD / BricsCAD.
+
+Le principe est celui d'une *photo avant / photo après* :
+
+#+begin_src lisp
+(setq avant (ei-snapshot))
+(fonction-a-tester)
+(setq apres (ei-snapshot))
+(setq diff  (ei-diff avant apres))
+#+end_src
+
+À partir de la différence =diff=, on obtient :
+
+- les *entités créées* par la fonction ;
+- les *entités supprimées* ;
+- les *entités modifiées*, et pour chacune :
+  - les *attributs DXF changés* (code de groupe, ancienne valeur, nouvelle
+    valeur) ;
+  - les *xdata changées* (ajouts, suppressions, modifications), par
+    application, avec les valeurs avant / après.
+
+Le sous-projet est composé de *deux couches* :
+
+1. une *bibliothèque d'introspection* (=ei-=*) qui prend les photos et
+   calcule les différences — réutilisable hors tests ;
+2. une *extension du framework =autolisp-test=* (DSL =attendu-…=) qui exprime
+   de façon concise les changements attendus et lève un échec de test
+   (=t:fail=) quand la réalité diffère de l'attendu.
+
+*Périmètre v1* : uniquement des *mutateurs de l'état des entités* du dessin.
+Aucune entrée/sortie utilisateur n'est considérée (pas de =command=, de
+=getpoint=, de boîtes de dialogue…). Les fonctions testées lisent et
+écrivent la base de données d'entités, point.
+
+* Place dans le dépôt
+
+| Élément                | Emplacement                                                       |
+|------------------------+------------------------------------------------------------------|
+| Bibliothèque           | =autolisp-introspection/src/autolisp-introspection.lsp=          |
+| Spécification          | =autolisp-introspection/docs/autolisp-introspection--specifications.org= |
+| Plan                   | =autolisp-introspection/docs/plan.org=                           |
+| Tests de la biblio     | =autolisp-introspection/tests/=                                  |
+| =Makefile= sous-projet | =autolisp-introspection/Makefile=                               |
+| DSL de test            | =autolisp-test/test-entites.lsp=                                |
+| Doc du DSL             | =autolisp-test/docs/autolisp-test--entites.org=                |
+
+La couche d'assertions =attendu-…= vit dans =autolisp-test= parce qu'elle
+*dépend du framework* (=t:fail=, intégration au runner) ; elle dépend aussi
+de =autolisp-introspection=. Le graphe de dépendances de chargement est :
+
+#+begin_example
+autolisp-test/test-framework.lsp
+        │
+        ├──< autolisp-introspection/src/autolisp-introspection.lsp
+        │
+        └──< autolisp-test/test-entites.lsp   (requiert les deux ci-dessus)
+#+end_example
+
+* Conventions
+
+Conformément à =AGENTS.md= / =CLAUDE.md= du dépôt :
+
+- encodage *UTF-8*, fins de ligne *CRLF* pour =*.lsp= et =*.org= ;
+- commentaires et textes français *accentués* ; les identificateurs restent
+  sans accent ;
+- AutoLISP n'a pas d'espaces de noms : tous les symboles publics de la
+  bibliothèque sont préfixés =ei-=, les symboles internes =ei--=, les
+  variables dynamiques =ei-*…*= ;
+- les assertions du DSL suivent le style *sans préfixe* du framework existant
+  (=is=, =is-equal=, =deftest=) ; leurs helpers internes sont préfixés =t:= ;
+- pas de pathname absolu dans les sources.
+
+** Décision de nommage (à valider)
+
+Le pseudo-code initial utilisait des noms français (=photo-d-entites=,
+=nouvelles-entites=, =difference-entite=, =attributs-changes=, …). La
+convention du dépôt impose un préfixe court pour éviter les collisions dans
+l'espace de noms global d'AutoLISP. La spécification retient donc le préfixe
+=ei-= avec des noms courts pour la *bibliothèque*, et conserve les noms
+*français* pour le *DSL de test* (=attendu-…=), seul endroit directement
+écrit par l'auteur d'un test.
+
+Table de correspondance concept → API :
+
+| Concept (pseudo-code)        | API bibliothèque              |
+|------------------------------+-------------------------------|
+| =photo-d-entites=            | =ei-snapshot=                 |
+| =differences-photo-d-entites=| =ei-diff=                     |
+| =nouvelles-entites=          | =ei-added=                    |
+| =entites-supprimees=         | =ei-deleted=                  |
+| =entites-modifiees=          | =ei-modified=                 |
+| =difference-entite=          | =ei-entity-diff= (implicite)  |
+| =attributs-changes=          | =ei-attr-changes=             |
+| =nouvelles-xdata=            | =ei-xdata-added=              |
+| =xdata-supprimees=           | =ei-xdata-deleted=            |
+| =xdata-modifiees=            | =ei-xdata-modified=           |
+
+Si l'auteur préfère les noms français pour la bibliothèque, ils peuvent être
+ajoutés en alias minces ; ce point reste *ouvert* et n'engage pas
+l'implantation.
+
+* Modèle de données
+
+** Identité d'une entité : le /handle/
+
+L'identité stable d'une entité à travers deux photos est son *handle* (code
+de groupe DXF =5=, une chaîne hexadécimale persistante), et *non* son /entity
+name/ (=ename=, code =-1=) qui n'est qu'un pointeur de session.
+
+Conséquences :
+
+- *créée* :: handle présent dans /après/ mais absent d'/avant/ ;
+- *supprimée* :: handle présent dans /avant/ mais absent d'/après/ ;
+- *modifiée* :: handle présent dans les deux, dont les données diffèrent.
+
+Une entité réellement supprimée puis recréée par la fonction testée apparaît
+correctement comme « supprimée + créée » (handles différents), ce qui est le
+comportement voulu.
+
+** Capture des données d'une entité
+
+Les données sont obtenues par =(entget ename '("*"))=. *Le filtre
+='("*")= est obligatoire* : sans lui, =entget= n'inclut pas les xdata.
+
+Le résultat (liste d'association de paires pointées) est scindé en deux :
+
+- *données DXF* :: toutes les paires sauf le groupe =-3= (xdata) ;
+- *xdata* :: le contenu du groupe =-3=.
+
+** Enregistrement d'entité (/entity record/)
+
+Structure opaque produite par la photo, accessible uniquement via les
+accesseurs =ei-rec-…= :
+
+| Champ            | Accesseur        | Contenu                                          |
+|------------------+------------------+--------------------------------------------------|
+| handle           | =ei-rec-handle=  | chaîne DXF 5                                      |
+| ename            | =ei-rec-ename=   | /entity name/ au moment de la photo (volatile)   |
+| type             | =ei-rec-type=    | chaîne DXF 0 (ex. ="TEXT"=, ="LWPOLYLINE"=)      |
+| données DXF      | =ei-rec-dxf=     | liste d'association DXF, xdata et identité exclues|
+| xdata            | =ei-rec-xdata=   | contenu normalisé du groupe -3 (voir plus bas)   |
+
+** Snapshot (photo)
+
+=ei-snapshot= renvoie un objet *opaque* (les tests ne doivent jamais en
+inspecter la représentation interne). La représentation v1 est une liste
+d'association =handle → enregistrement= ; elle pourra basculer vers une
+=autolisp-hash-table= si la performance l'exige, sans impact sur l'API.
+
+** Groupes exclus de la comparaison d'attributs
+
+Sont *ignorés* lors de la comparaison (volatils ou relevant de l'identité,
+non de l'« attribut ») :
+
+- =-1= :: ename (pointeur de session) ;
+- =-2= :: ename de définition de bloc (volatile) ;
+- =5=  :: handle (sert d'identité, comparé à part — sa modification est
+  anormale et signalée séparément, cf. =ei-rec-handle=).
+
+Le groupe =330= (handle/ename du propriétaire) *est* comparé : un changement
+de propriétaire est une modification réelle. Lorsqu'il est exprimé sous forme
+d'ename volatile, l'implantation le normalise en handle via =(handent)= avant
+comparaison (cf. §Normalisation).
+
+* API de la bibliothèque (=ei-=)
+
+** Photographie
+
+- =(ei-snapshot [scope])= → snapshot
+
+  Sans argument, photographie *toutes les entités du dessin* en parcourant la
+  base via =(entnext)= / =(entnext e)= (entités de premier niveau de tous les
+  espaces).
+
+  =scope= optionnel restreint la photo :
+  - un /selection set/ (=ssget=) ;
+  - une liste d'enames ;
+  - le symbole ='all= (défaut explicite).
+
+  *Limite v1* : entités de premier niveau seulement. Les sous-entités
+  (sommets de polyligne « anciennes », attributs de bloc) ne sont pas
+  photographiées séparément (voir §Limites & extensions).
+
+** Différence globale
+
+- =(ei-diff avant apres)= → diff
+
+  Calcule la différence entre deux snapshots. Objet opaque.
+
+- =(ei-added diff)=    → liste d'enregistrements d'entités *créées*
+- =(ei-deleted diff)=  → liste d'enregistrements d'entités *supprimées*
+- =(ei-modified diff)= → liste de couples =(avant . apres)= d'enregistrements,
+  pour les entités *modifiées* (uniquement celles dont les données diffèrent
+  réellement)
+
+** Différence d'une entité
+
+- =(ei-entity-diff rec-avant rec-apres)= → entity-diff
+
+  Différence détaillée entre deux enregistrements de la *même* entité (même
+  handle). Calculée à la demande ; =ei-modified= fournit les couples, l'auteur
+  appelle =ei-entity-diff= dessus (ou les helpers =attendu-…= le font pour
+  lui).
+
+*** Attributs DXF
+
+- =(ei-attr-changes ediff)= → liste d'/attribute-change/
+
+  Une /attribute-change/ décrit un code de groupe dont la valeur a changé.
+  Accesseurs :
+
+  | Accesseur        | Valeur                                                        |
+  |------------------+--------------------------------------------------------------|
+  | =ei-ac-code=     | code de groupe DXF (entier)                                  |
+  | =ei-ac-old=      | ancienne valeur (scalaire si code mono-valué, liste sinon)   |
+  | =ei-ac-new=      | nouvelle valeur (idem)                                       |
+  | =ei-ac-kind=     | =:changed=, =:added= ou =:deleted= (apparition / disparition |
+  |                  | d'un code), =:multi= si code multi-valué                    |
+
+  *Codes multi-valués* : un même code peut apparaître plusieurs fois (ex.
+  =10= pour les sommets d'une LWPOLYLINE). La comparaison se fait sur la
+  *liste ordonnée* des valeurs sous ce code ; en cas de différence,
+  =ei-ac-old= / =ei-ac-new= renvoient les listes complètes et =ei-ac-kind=
+  vaut =:multi=.
+
+*** XData
+
+L'ordre des xdata est significatif et conservé. Le contenu du groupe =-3=
+est une liste =("APPID" v1 v2 …)= par application ; les =vN= sont des paires
+typées (=1000= chaîne, =1040= réel, =1071= entier long, =1002= « { » / « } »,
+etc.). La comparaison par application porte sur la *liste ordonnée* des
+paires typées.
+
+- =(ei-xdata-added ediff)=    → liste d'/xdata-change/ pour les applications
+  *présentes seulement dans /après/*
+- =(ei-xdata-deleted ediff)=  → liste d'/xdata-change/ pour les applications
+  *présentes seulement dans /avant/*
+- =(ei-xdata-modified ediff)= → liste d'/xdata-change/ pour les applications
+  présentes dans les deux mais dont les valeurs diffèrent
+
+  Accesseurs d'une /xdata-change/ :
+
+  | Accesseur     | Valeur                                                   |
+  |---------------+----------------------------------------------------------|
+  | =ei-xd-app=   | nom d'application (chaîne)                               |
+  | =ei-xd-old=   | liste de paires typées avant (=nil= si ajout)           |
+  | =ei-xd-new=   | liste de paires typées après (=nil= si suppression)     |
+
+** Variables dynamiques
+
+- =ei-*fuzz*= :: tolérance de comparaison des réels et des points
+  (défaut =0.0=, comparaison exacte). Mise à une valeur > 0, les réels sont
+  comparés avec =(equal a b ei-*fuzz*)= et les points élément par élément.
+
+* Normalisation des valeurs
+
+Pour des comparaisons fiables :
+
+- les *réels* sont comparés avec =equal= et la tolérance =ei-*fuzz*= ;
+- les *points* (listes de 2 ou 3 réels) sont comparés élément par élément
+  avec la même tolérance ;
+- les *enames* apparaissant en valeur (ex. groupe 330, 340…) sont normalisés
+  en *handle* via =(handent)= / =(cdr (assoc 5 (entget e)))= avant
+  comparaison, afin de ne pas faire échouer un test sur un simple changement
+  de pointeur de session ;
+- les autres valeurs (chaînes, entiers, symboles) sont comparées avec =equal=.
+
+* Extension du framework =autolisp-test= : DSL =attendu-…=
+
+Les assertions vivent dans =autolisp-test/test-entites.lsp=. Comme =is= /
+=is-equal=, elles lèvent =t:fail= avec un message explicite (préfixe
+=TEST-FAIL:=) en cas d'échec, renvoient =t= sinon, et s'intègrent donc
+automatiquement au runner (=run-suite=, =run-all=) et à la redirection
+=OUTFILE= / =ERRFILE=.
+
+** Primitives générales
+
+- =(attendu condition [msg])= :: alias français d'=is= ; échoue si =condition=
+  est =nil=.
+- =(attendu-non condition [msg])= :: alias d'=is-not=.
+- =(attendu-egal attendu obtenu [msg])= :: alias d'=is-equal=.
+
+** Assertions sur le diff global
+
+- =(attendu-aucune-creation diff [msg])= :: échoue si =ei-added= non vide ;
+  le message d'échec liste les handles créés inattendus.
+- =(attendu-aucune-suppression diff [msg])= :: idem pour =ei-deleted=.
+- =(attendu-creees diff n [msg])= :: échoue si le nombre d'entités créées
+  n'est pas =n=.
+- =(attendu-supprimees diff n [msg])= :: idem pour les suppressions.
+- =(attendu-modifiees diff n [msg])= :: échoue si le nombre d'entités
+  modifiées n'est pas =n=.
+
+** Sélection d'une entité modifiée
+
+Pour écrire des assertions ciblées sans dépendre de l'ordre :
+
+- =(modif-entite diff handle)= → =ediff= :: renvoie l'/entity-diff/ de
+  l'entité de handle donné parmi les modifiées, ou lève =t:fail= si absente.
+- =(modif-unique diff)= → =ediff= :: renvoie l'/entity-diff/ de l'unique
+  entité modifiée, ou lève =t:fail= s'il y en a 0 ou plusieurs. Pratique pour
+  les tests qui ne touchent qu'une entité.
+
+** Assertions sur les attributs DXF
+
+- =(attendu-attribut-modifie ediff code ancien nouveau [msg])= :: échoue si le
+  code n'a pas changé, ou si (ancien, nouveau) ne correspond pas (comparaison
+  normalisée avec =ei-*fuzz*=).
+- =(attendu-attribut-inchange ediff code [msg])= :: échoue si le code figure
+  parmi les attributs changés.
+- =(attendu-attribut-valeur ediff code nouveau [msg])= :: ne vérifie que la
+  *nouvelle* valeur du code modifié (quand l'ancienne importe peu).
+
+** Assertions sur les xdata
+
+- =(attendu-xdata-ajoutee ediff app [valeurs] [msg])= :: échoue si
+  l'application =app= ne figure pas dans =ei-xdata-added= ; si =valeurs= est
+  fourni, compare la liste de paires typées ajoutées.
+- =(attendu-xdata-supprimee ediff app [msg])= :: échoue si =app= ne figure pas
+  dans =ei-xdata-deleted=.
+- =(attendu-xdata-modifiee ediff app ancien nouveau [msg])= :: échoue si =app=
+  n'a pas changé, ou si (ancien, nouveau) ne correspondent pas aux listes de
+  paires typées.
+- =(attendu-xdata-valeur ediff app nouveau [msg])= :: ne vérifie que la
+  *nouvelle* valeur xdata de =app=.
+- =(attendu-aucune-xdata-changee ediff [msg])= :: échoue si l'une des trois
+  listes (added / deleted / modified) est non vide.
+
+Toutes ces assertions produisent, en cas d'échec, un message du même format
+que =t:format-compare= (=… expected=… actual=…=), incluant le handle et le
+code / l'application concernés, afin que le rapport de test soit
+directement exploitable.
+
+* Exemple complet : test d'une fonction SCHMS hypothétique
+
+On suppose une fonction *mutatrice* (pas de I/O utilisateur) :
+
+#+begin_src lisp
+;; (schms-affecte-pk ename pk) — affecte un point kilométrique à une entité TEXT :
+;;   - place l'entité sur le calque "PK" (DXF 8) ;
+;;   - écrit le PK formaté dans le texte (DXF 1) ;
+;;   - enregistre le PK brut en xdata sous l'application "SCHMS_PK".
+;; Renvoie l'ename. Ne crée ni ne supprime aucune entité.
+#+end_src
+
+Test complet (s'exécute dans un dessin neuf fourni par le harness) :
+
+#+begin_src lisp
+(defsuite "schms-pk")
+(in-suite "schms-pk")
+
+(deftest
+  "schms-affecte-pk modifie calque, texte et xdata sans rien creer ni supprimer"
+  (function
+    (lambda (/ ename handle avant apres diff ediff)
+
+      ;; --- Mise en place : une entite TEXT sur le calque "0", sans xdata PK.
+      (entmakex
+        (list '(0 . "TEXT")
+              '(8 . "0")
+              '(10 0.0 0.0 0.0)
+              '(40 . 2.5)
+              '(1 . "ancien")))
+      (setq ename  (entlast))
+      (setq handle (cdr (assoc 5 (entget ename))))
+
+      ;; --- Photo avant.
+      (setq avant (ei-snapshot))
+
+      ;; --- Fonction testee.
+      (schms-affecte-pk ename "12+345")
+
+      ;; --- Photo apres + difference.
+      (setq apres (ei-snapshot))
+      (setq diff  (ei-diff avant apres))
+
+      ;; --- Aucune creation, aucune suppression, exactement une modification.
+      (attendu-aucune-creation    diff)
+      (attendu-aucune-suppression diff)
+      (attendu-modifiees          diff 1)
+
+      ;; --- Detail de l'entite modifiee (la seule).
+      (setq ediff (modif-unique diff))
+
+      ;; Calque "0" -> "PK".
+      (attendu-attribut-modifie ediff 8 "0" "PK")
+
+      ;; Texte "ancien" -> "12+345".
+      (attendu-attribut-modifie ediff 1 "ancien" "12+345")
+
+      ;; La position (DXF 10) ne doit PAS avoir bouge.
+      (attendu-attribut-inchange ediff 10)
+
+      ;; XData : application "SCHMS_PK" ajoutee, contenant le PK brut.
+      (attendu-xdata-ajoutee
+        ediff "SCHMS_PK"
+        (list '(1001 . "SCHMS_PK") '(1000 . "12+345")))
+
+      ;; Aucune autre application xdata ne doit avoir ete supprimee.
+      (attendu-non (ei-xdata-deleted ediff)
+                   "aucune xdata ne doit etre supprimee"))))
+
+(run-suite "schms-pk")
+#+end_src
+
+Le même test exprimé « à la main » via la seule bibliothèque (montre ce que
+le DSL encapsule) :
+
+#+begin_src lisp
+(foreach couple (ei-modified diff)
+  (setq ediff (ei-entity-diff (car couple) (cdr couple)))
+  (foreach ac (ei-attr-changes ediff)
+    (cond ((= 8 (ei-ac-code ac))
+           (is-equal "0"  (ei-ac-old ac) "calque avant")
+           (is-equal "PK" (ei-ac-new ac) "calque apres"))
+          ((= 1 (ei-ac-code ac))
+           (is-equal "12+345" (ei-ac-new ac) "texte apres"))))
+  (foreach xc (ei-xdata-added ediff)
+    (is-equal "SCHMS_PK" (ei-xd-app xc) "application xdata ajoutee")))
+#+end_src
+
+* Tests de la bibliothèque elle-même
+
+La bibliothèque doit être testée comme les autres sous-projets, via le
+wrapper =autolisp-script/autolisp --bricscad= et le harness =run-tests.lsp=,
+sur un *vrai dessin* (BricsCAD), parce que la sémantique de =entmake= /
+=entget= / =entnext= / xdata doit être fidèle.
+
+Cas à couvrir au minimum :
+
+1. dessin vide → snapshot vide → diff vide ;
+2. création d'une entité entre deux photos → =ei-added= de longueur 1, types
+   et données correctes ;
+3. suppression (=entdel=) → =ei-deleted= de longueur 1 ;
+4. modification d'un attribut mono-valué (calque, texte) → =ei-attr-changes=
+   correct, ancien/nouveau corrects ;
+5. modification d'un code multi-valué (sommets LWPOLYLINE) → =:multi=, listes
+   correctes ;
+6. ajout / suppression / modification de xdata par application ;
+7. tolérance =ei-*fuzz*= : un déplacement infime sous la tolérance n'est pas
+   signalé comme changement, au-dessus il l'est ;
+8. normalisation des enames en handles (groupe 330) ;
+9. portée =scope= : photo restreinte à un /selection set/.
+
+Un /smoke test/ sous le backend =fake CAD= (=make -C autolisp-script
+test-fakecad=) sera ajouté *si et seulement si* ce backend supporte
+=entmakex= / =entget '("*")= / xdata ; sinon les tests bibliothèque restent
+sous BricsCAD uniquement, et le =Makefile= n'expose que les cibles
+=test-bricscad*= comme les autres modules.
+
+* Limites & extensions (hors v1)
+
+- sous-entités (sommets « anciennes » polylignes, =ATTRIB= de blocs) non
+  photographiées individuellement ;
+- objets non graphiques (tables de symboles : calques, styles ; dictionnaires
+  étendus =NOD=) non couverts ;
+- pas de diff « sémantique » (ex. polyligne identique mais réordonnée) :
+  la comparaison est structurelle, code par code, dans l'ordre ;
+- pas de sérialisation/persistance des photos (tout est en mémoire pendant un
+  run de test).
+
+Ces points sont notés comme évolutions possibles et, le cas échéant,
+consignés en =issues/open/=.
+
+* Intégration au dépôt
+
+- ajouter =autolisp-introspection= aux cibles =test-ci= / =test-bricscad*= /
+  =docs-pdf= / =clean= du =Makefile= racine ;
+- ajouter le chargement de la bibliothèque dans =loader.lsp=
+  (=outils-load-library=) ;
+- référencer le sous-projet dans =README.md= (section « Sous-projets ») ;
+- la couche DSL est chargée explicitement par les =Makefile= de test des
+  applications (comme =autolisp-test/test-framework.lsp= l'est déjà), pas par
+  le =loader.lsp= de production.

@@ -1,0 +1,90 @@
+#+TITLE: Plan d'implantation — autolisp-introspection
+#+AUTHOR: Pascal Bourguignon
+#+LANGUAGE: fr
+#+OPTIONS: toc:2 num:t
+
+* But
+
+Implanter, à partir de
+[[file:autolisp-introspection--specifications.org]] :
+
+1. la bibliothèque d'introspection =ei-= ;
+2. l'extension DSL =attendu-…= du framework =autolisp-test= ;
+3. les tests, la doc et l'intégration au dépôt.
+
+* Découpage en lots
+
+** Lot 1 — Squelette du sous-projet
+- arborescence =src/=, =docs/=, =tests/= ;
+- =Makefile= du sous-projet calqué sur =autolisp-hash-table/Makefile=
+  (cibles =test-ci=, =test=, =test-bricscad*=, =docs-pdf=, =clean=) ;
+- =docs/Makefile= pour l'export PDF org → identique aux autres modules ;
+- en-tête de =src/autolisp-introspection.lsp= listant l'API publique.
+- *Sortie* : =make -C autolisp-introspection test-ci= s'exécute (suite vide OK).
+
+** Lot 2 — Photographie (=ei-snapshot=)
+- parcours =entnext= de la base ; portée =scope= (all / ss / liste d'enames) ;
+- =(entget ename '("*"))=, scission DXF / xdata (groupe -3) ;
+- construction de l'enregistrement d'entité + accesseurs =ei-rec-…= ;
+- objet snapshot opaque (alist =handle → record=).
+- *Sortie* : tests « dessin vide » et « capture d'une entité » verts.
+
+** Lot 3 — Différence globale (=ei-diff=, =ei-added/deleted/modified=)
+- partition par handle : créées / supprimées / candidates modifiées ;
+- une candidate n'est « modifiée » que si DXF ou xdata diffèrent réellement
+  (après normalisation).
+- *Sortie* : tests création / suppression / modification verts.
+
+** Lot 4 — Différence d'entité : attributs (=ei-entity-diff=, =ei-attr-changes=)
+- regroupement des paires DXF par code, en listes ordonnées ;
+- exclusion des groupes -1, -2, 5 ; comparaison normalisée (fuzz, points,
+  enames→handles) ;
+- /attribute-change/ + accesseurs =ei-ac-…= ; gestion mono / multi / added /
+  deleted.
+- *Sortie* : tests attribut mono-valué, multi-valué, tolérance verts.
+
+** Lot 5 — Différence d'entité : xdata
+- normalisation du groupe -3 par application ;
+- added / deleted / modified ; /xdata-change/ + accesseurs =ei-xd-…=.
+- *Sortie* : tests xdata ajout / suppression / modification verts.
+
+** Lot 6 — DSL =attendu-…= dans =autolisp-test=
+- =autolisp-test/test-entites.lsp= : primitives (=attendu=, =attendu-non=,
+  =attendu-egal=), assertions diff global, sélection (=modif-entite=,
+  =modif-unique=), assertions attributs et xdata ;
+- messages d'échec au format =t:format-compare= incluant handle / code / app ;
+- doc =autolisp-test/docs/autolisp-test--entites.org=.
+- *Sortie* : le =deftest= exemple de la spec tourne et passe contre une
+  =schms-affecte-pk= factice de test.
+
+** Lot 7 — Intégration dépôt
+- =Makefile= racine (=test-ci=, =test-bricscad*=, =docs-pdf=, =clean=) ;
+- =loader.lsp= (=outils-load-library=) ;
+- =README.md= (section Sous-projets) ;
+- vérifier encodage/fins de ligne (=*.lsp=/=*.org= en CRLF, UTF-8).
+
+* Ordre et dépendances
+
+#+begin_example
+Lot1 → Lot2 → Lot3 → Lot4 → Lot5 → Lot6 → Lot7
+                     └────────┴── Lot6 dépend de 2..5 (API stable)
+#+end_example
+
+* Définition de « terminé »
+
+- toutes les cibles =make -C autolisp-introspection test-bricscad*= vertes ;
+- le =deftest= exemple de la spec passe ;
+- =make test-ci= racine inclut le nouveau module ;
+- doc PDF générable (=make -C autolisp-introspection docs-pdf=) ;
+- aucun pathname absolu ; encodage/fins de ligne conformes.
+
+* Risques / points d'attention
+
+- *Filtre xdata* : oublier ='("*")= dans =entget= → xdata silencieusement
+  absentes. À tester explicitement.
+- *Handles* vs *enames* : ne jamais identifier une entité par son ename.
+- *Codes multi-valués* : ne pas réduire en =assoc= (perte des doublons).
+- *fake CAD* : capacités limitées possibles ; ne pas bloquer la CI dessus.
+- *Performance* : sur gros dessins, l'alist =handle→record= est O(n) en
+  recherche ; prévoir le basculement éventuel vers =autolisp-hash-table= sans
+  changer l'API.
