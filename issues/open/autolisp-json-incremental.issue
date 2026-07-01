@@ -1,0 +1,83 @@
+autolisp-json : version incrémentale (analyse et génération par flux)
+=====================================================================
+
+Contexte
+--------
+
+La version 1 d'autolisp-json (sous-projet autolisp-json/) traite les
+documents JSON *en bloc* :
+
+- un fichier contient un seul document JSON ;
+- une sexp représente un seul document JSON ;
+- aj-decode analyse toute la chaîne d'un coup, aj-read-file lit tout le
+  fichier en mémoire avant de décoder.
+
+Ceci convient aux fichiers de configuration et aux petits documents,
+mais devient inadapté pour :
+
+- les gros fichiers (chargement complet en mémoire, concaténation
+  quadratique via strcat lors de la lecture ligne à ligne) ;
+- les flux multi-valeurs (JSON Lines, documents concaténés) ;
+- une consommation « au fil de l'eau » où l'appelant traite chaque
+  élément sans matérialiser toute la structure.
+
+Objectif
+--------
+
+Ajouter un mode *incrémental* à autolisp-json, sans casser l'API en
+bloc existante (aj-decode / aj-encode / aj-read-file / aj-write-file).
+
+Pistes d'API (à préciser)
+-------------------------
+
+Décodage par flux :
+
+- un lecteur d'entrée abstrait (source de caractères) : chaîne,
+  fichier ouvert, éventuellement rappel (callback) fournissant les
+  morceaux ;
+- aj-decode-stream : décode la *prochaine* valeur JSON d'une source et
+  laisse la position juste après, pour permettre plusieurs valeurs
+  successives (JSON Lines / flux concaténés) ;
+- variante « pull/SAX » émettant des événements
+  (début-objet, clé, valeur, fin-objet, début-tableau, fin-tableau…)
+  pour traiter sans construire la sexp complète.
+
+Encodage incrémental :
+
+- un générateur écrivant directement dans un flux de sortie (fichier
+  ouvert) au lieu de bâtir une grande chaîne ;
+- une API d'émission par événements symétrique de l'analyse SAX
+  (aj-emit-object-begin, aj-emit-key, aj-emit-value, …) pour produire
+  du JSON volumineux à coût mémoire borné.
+
+Contraintes de conception
+--------------------------
+
+- Réutiliser la représentation balisée existante
+  ( (aj-object …) / (aj-array …) / aj-true / aj-false / aj-null ) ;
+  garantir la compatibilité et l'aller-retour avec la v1.
+- Éviter la concaténation quadratique (accumuler en liste puis
+  assembler, ou écrire directement dans le flux).
+- Rester dans le sous-ensemble AutoLISP portable BricsCAD ∩ AutoCAD
+  (indices substr 1-based, ascii/chr, open/read-line/read-char/
+  write-line/write-char), et rester exécutable en headless via
+  clautolisp.
+- Conserver la gestion Unicode (\uXXXX, paires de substitution, UTF-8
+  brut) déjà présente en v1.
+
+Livrables attendus
+------------------
+
+- mise à jour de docs/autolisp-json--specifications.org (section
+  « version incrémentale » à détailler) et du manuel ;
+- code du mode flux dans src/ (module séparé ou extension de
+  autolisp-json.lsp) ;
+- exemples et tests dédiés (gros document, multi-valeurs, aller-retour
+  flux) ;
+- entrées Makefile correspondantes.
+
+Voir aussi
+----------
+
+- Spécification v1 : autolisp-json/docs/autolisp-json--specifications.org,
+  section « Évolutions prévues ».

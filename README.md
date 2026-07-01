@@ -120,6 +120,12 @@ Implémentation d'une table de hashage AutoLISP construite au-dessus de `autolis
 
 Documentation: [autolisp-hash-table/docs/autolisp-hash-table--manual.org](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-hash-table/docs/autolisp-hash-table--manual.org)
 
+### `autolisp-json`
+
+Lecture et écriture de fichiers JSON en AutoLISP: sérialisation et désérialisation d'une `sexp` Lisp vers/depuis du JSON. La version 1 traite le document en bloc (un fichier, une `sexp`); une version incrémentale est prévue. La représentation est balisée (`(aj-object ...)`, `(aj-array ...)`, `aj-true`/`aj-false`/`aj-null`) et garantit un aller-retour exact.
+
+Documentation: [autolisp-json/docs/autolisp-json--manual.org](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-json/docs/autolisp-json--manual.org), spécifications: [autolisp-json/docs/autolisp-json--specifications.org](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-json/docs/autolisp-json--specifications.org)
+
 ### `autolisp-formatter`
 
 Projet de formateur / pretty-printer AutoLISP. Le dépôt contient surtout les spécifications et le plan de travail.

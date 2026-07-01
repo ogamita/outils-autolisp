@@ -4,3 +4,8 @@
 .autolisp-runs
 tmp
 .claude
+
+# Les PDF générés à partir des sources org ne sont plus versionnés :
+# ils se régénèrent via `make docs-pdf`. (Les PDF déjà suivis restent
+# suivis ; on ne les retire pas rétroactivement.)
+*.pdf

@@ -1,0 +1,262 @@
+#+TITLE: Spécification du sous-projet autolisp-json
+#+AUTHOR: SNCF Réseau
+#+LANGUAGE: fr
+#+OPTIONS: toc:3 num:t
+
+* Objet
+
+Le sous-projet =autolisp-json= fournit la lecture et l'écriture de
+documents *JSON* en AutoLISP.
+
+Il *sérialise* une expression symbolique (=sexp=) Lisp vers du texte
+JSON, et *désérialise* du texte JSON vers une =sexp=.
+
+La *version 1* (celle décrite ici) travaille *en bloc* :
+
+- un fichier contient *un seul* document JSON ;
+- une =sexp= représente *un seul* document JSON ;
+- l'analyse et la génération portent sur *toute* la chaîne d'un coup.
+
+Une future *version incrémentale* (analyse/génération par flux, plusieurs
+valeurs successives, lecture au fil de l'eau) est prévue mais *hors
+périmètre* de cette version. La conception de la v1 ne doit pas
+l'empêcher.
+
+* Périmètre
+
+** Inclus (v1)
+
+- décodage d'une chaîne JSON complète vers une =sexp= ;
+- encodage d'une =sexp= vers une chaîne JSON, en mode compact et en
+  mode indenté ;
+- lecture et écriture d'un fichier entier (un fichier, une =sexp=) ;
+- prise en charge complète de la grammaire JSON (RFC 8259) :
+  objets, tableaux, chaînes, nombres, =true=, =false=, =null= ;
+- échappements de chaînes, y compris =\uXXXX= et les paires de
+  substitution (=surrogate pairs=) du plan astral ;
+- constructeurs, prédicats et accesseurs pour manipuler la =sexp=
+  balisée depuis AutoLISP.
+
+** Exclu (v1)
+
+- analyse incrémentale ou par flux ;
+- documents multi-valeurs (JSON Lines, flux concaténés) ;
+- conservation des commentaires (JSON n'en a pas) ;
+- schémas / validation structurelle ;
+- gestion fine de la précision des grands entiers (limitée aux entiers
+  AutoLISP 32 bits) et des réels au-delà de la précision de =rtos=.
+
+* Mapping JSON <-> sexp
+
+Le choix retenu est une *représentation balisée*, garantissant un
+*aller-retour exact* : =aj-decode= suivi de =aj-encode= puis
+=aj-decode= redonne une =sexp= =equal= à la première.
+
+| Valeur JSON       | Représentation sexp AutoLISP            |
+|-------------------+-----------------------------------------|
+| objet ={ ... }=   | =(aj-object ("clé" . valeur) ...)=      |
+| tableau =[ ... ]= | =(aj-array valeur ...)=                 |
+| chaîne            | chaîne AutoLISP (=STR=)                 |
+| nombre entier     | =INT=                                   |
+| nombre réel       | =REAL=                                  |
+| =true=            | symbole =aj-true=                       |
+| =false=           | symbole =aj-false=                      |
+| =null=            | symbole =aj-null=                       |
+
+Exemple :
+
+#+begin_src json
+{"a":1,"b":[true,null]}
+#+end_src
+
+devient
+
+#+begin_src lisp
+(aj-object
+  ("a" . 1)
+  ("b" . (aj-array aj-true aj-null)))
+#+end_src
+
+** Justification
+
+Cette représentation distingue sans ambiguïté quatre cas qu'une
+représentation « naturelle » (alist / liste plate, =nil= pour
+=false=/=null=) confondrait :
+
+- l'objet vide =(aj-object)= <-> ={}= ;
+- le tableau vide =(aj-array)= <-> =[]= ;
+- =aj-false= <-> =false= ;
+- =aj-null= <-> =null=.
+
+L'en-tête symbolique (=aj-object=, =aj-array=) rend le type de chaque
+n\oe{}ud auto-descriptif et permet une reconnaissance en =O(1)= via
+=car=.
+
+** Singletons auto-évaluants
+
+Les trois symboles =aj-true=, =aj-false= et =aj-null= sont *liés à
+eux-mêmes* au chargement du module :
+
+#+begin_src lisp
+(setq aj-null  'aj-null)
+(setq aj-true  'aj-true)
+(setq aj-false 'aj-false)
+#+end_src
+
+Ainsi ils peuvent être écrits *sans =quote=* dans du code AutoLISP
+(=(aj-encode aj-null)= comme =(aj-encode 'aj-null)=).
+
+** Tolérances à l'encodage
+
+Pour le confort, l'encodeur accepte aussi des valeurs AutoLISP
+« ordinaires » :
+
+- =T= est encodé comme =true= ;
+- =nil= est encodé comme =null=.
+
+Ces conversions sont *unidirectionnelles* : le décodeur produit
+toujours =aj-true= / =aj-null=, de sorte que l'aller-retour depuis la
+représentation canonique reste exact.
+
+* Conventions de nommage
+
+Tous les symboles introduits par le module sont préfixés :
+
+- =aj-= pour l'API publique (fonctions, symboles de balise, variables
+  de configuration) ;
+- =aj--= pour les fonctions internes (double tiret).
+
+Ce préfixe évite toute collision avec AutoLISP et avec les autres
+sous-projets du dépôt (=av-= pour =autolisp-vector=, =ah-= pour
+=autolisp-hash-table=, etc.).
+
+* API publique
+
+** Décodage / encodage
+
+- =(aj-decode chaîne)= -> =sexp=. Analyse une chaîne JSON *complète*.
+  Signale une erreur si la chaîne est malformée ou comporte des
+  caractères superflus après la valeur.
+- =(aj-encode valeur)= -> chaîne JSON *compacte* (sans espaces
+  superflus).
+- =(aj-encode-pretty valeur)= -> chaîne JSON *indentée*.
+
+** Fichiers (en bloc)
+
+- =(aj-read-file chemin)= -> =sexp=. Lit tout le fichier et le décode.
+- =(aj-write-file chemin valeur)= -> =chemin=. Encode en compact et écrit.
+- =(aj-write-file-pretty chemin valeur)= -> =chemin=. Encode en indenté
+  et écrit.
+
+** Constructeurs, prédicats, accesseurs
+
+- =(aj-make-object alist)= -> =(aj-object . alist)=.
+- =(aj-make-array items)= -> =(aj-array . items)=.
+- =(aj-object-p v)=, =(aj-array-p v)= -> prédicats de type.
+- =(aj-null-p v)=, =(aj-true-p v)=, =(aj-false-p v)= -> prédicats de
+  singleton.
+- =(aj-boolean x)= -> =aj-true= si =x= est vrai, =aj-false= sinon.
+- =(aj-object-alist obj)= -> l'alist =( ("clé" . valeur) ... )=.
+- =(aj-array-items arr)= -> la liste des éléments.
+- =(aj-object-keys obj)= -> la liste des clés, dans l'ordre.
+- =(aj-object-get obj clé)= -> la valeur associée, ou =nil= si absente.
+- =(aj-object-has-p obj clé)= -> =T= / =nil=.
+- =(aj-object-put obj clé valeur)= -> *nouvel* objet (non destructif).
+
+** Variables de configuration
+
+| Variable                | Défaut | Effet                                          |
+|-------------------------+--------+------------------------------------------------|
+| =*aj-escape-non-ascii*= | =nil=  | =T= => échappe tout code > 126 en =\uXXXX=      |
+| =*aj-real-precision*=   | =12=   | décimales conservées pour les =REAL=           |
+| =*aj-indent*=           | =2=    | espaces par niveau en mode indenté             |
+
+* Principes de conception
+
+** État d'analyse
+
+Le décodeur est une descente récursive. L'état d'analyse
+(=aj--src=, =aj--pos=, =aj--len=) est déclaré *local* à =aj-decode=.
+Grâce à la portée dynamique d'AutoLISP, toutes les fonctions
+=aj--parse-*= y accèdent sans variable globale ni pollution de
+l'espace de noms.
+
+- =aj--pos= est un indice *1-based* (compatible =substr=) ;
+- la fin d'entrée correspond à =aj--pos > aj--len=.
+
+** Nombres
+
+Le lexème numérique est reconnu selon la grammaire JSON, puis converti :
+
+- présence d'un point, d'un =e= ou d'un =E= => =REAL= (via =atof=) ;
+- sinon => =INT= (via =atoi=).
+
+** Chaînes et Unicode
+
+- L'analyse et la génération itèrent *caractère par caractère*
+  (=substr= / =strlen=), ce qui suppose un environnement où ces
+  primitives comptent des *caractères* et non des octets (cas de
+  BricsCAD et AutoCAD en Unicode).
+- Les caractères non-ASCII sont *transmis tels quels* par défaut
+  (sortie UTF-8 fidèle) ; =*aj-escape-non-ascii*= force la forme
+  =\uXXXX=.
+- =\uXXXX= est décodé via =(chr code)= ; les paires de substitution
+  =\uD800..\uDBFF= + =\uDC00..\uDFFF= sont recombinées en un point de
+  code du plan astral.
+
+** Réels
+
+=aj--encode-real= s'appuie sur =(rtos r 2 *aj-real-precision*)=,
+neutralise un éventuel séparateur décimal localisé (virgule -> point) et
+retire les zéros de fin en gardant au moins un chiffre après le point
+(un =REAL= entier est rendu =2.0=, ce qui préserve son type au
+décodage).
+
+* Encodage des fichiers
+
+Les fichiers texte du dépôt sont en *UTF-8*. Les sources =*.lsp= et la
+documentation utilisent des fins de ligne *CRLF* ; les =Makefile= et les
+scripts Unix utilisent *LF*. Voir =.gitattributes= à la racine du dépôt
+=outils-autolisp=.
+
+La lecture (=aj-read-file=) reconstitue le contenu ligne à ligne en
+réinsérant =\n= ; ceci est sans effet sur la valeur décodée, une chaîne
+JSON ne pouvant contenir de saut de ligne littéral.
+
+* Gestion des erreurs
+
+En cas d'entrée malformée, le décodeur appelle =(error ...)= avec un
+message préfixé =aj-json:= et la *position* fautive. Les appelants
+peuvent capturer via =vl-catch-all-apply=.
+
+Cas signalés : fin d'entrée inattendue, caractère inattendu, littéral
+invalide, chaîne ou structure non terminée, =':'= / =','= manquant,
+échappement inconnu ou =\u= incomplet, caractères superflus après la
+valeur, clé d'objet non chaîne à l'encodage, valeur non encodable.
+
+* Tests
+
+Le sous-projet fournit une suite =autolisp-json= (voir
+=tests/json-tests.lsp=) exécutée par le cadre =autolisp-test=. Elle
+couvre : scalaires, structures, imbrication, espaces, échappements,
+Unicode, aller-retour compact et indenté, constructeurs/accesseurs,
+erreurs, et aller-retour fichier.
+
+Lancement :
+
+#+begin_src sh
+make -C autolisp-json test
+#+end_src
+
+* Évolutions prévues
+
+- *Version incrémentale* : analyse par flux (=aj-decode-stream=),
+  génération incrémentale (émission d'événements ou de morceaux),
+  documents multi-valeurs.
+- Options d'encodage supplémentaires (tri des clés, largeur de ligne).
+- Réglage fin de la précision numérique.
+
+* Références
+
+- RFC 8259 — /The JavaScript Object Notation (JSON) Data Interchange
+  Format/.

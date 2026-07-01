@@ -1,0 +1,12 @@
+{
+  "nom": "Ligne 42",
+  "electrifiee": true,
+  "longueur_km": 128.5,
+  "voies": 2,
+  "gares": ["Nord", "Centre", "Sud"],
+  "exploitant": null,
+  "coordonnees": {
+    "debut": [2.35, 48.85],
+    "fin": [4.83, 45.76]
+  }
+}

@@ -1,0 +1,228 @@
+#+TITLE: Manuel utilisateur de autolisp-json
+#+AUTHOR: SNCF Réseau
+#+LANGUAGE: fr
+#+OPTIONS: toc:2 num:t
+
+* Objet
+
+=autolisp-json= lit et écrit des documents *JSON* en AutoLISP.
+
+Le module *sérialise* une expression symbolique (=sexp=) vers du texte
+JSON, et *désérialise* du texte JSON vers une =sexp=. Dans cette
+version, le traitement se fait *en bloc* : un fichier contient un seul
+document JSON, et une =sexp= représente un seul document.
+
+* Chargement
+
+Depuis le dépôt =outils-autolisp=, plusieurs possibilités :
+
+- charger uniquement la source :
+
+  #+begin_src lisp
+  (load "autolisp-json/src/autolisp-json.lsp")
+  #+end_src
+
+- utiliser le =loader.lsp= du sous-projet (résout son chemin tout
+  seul, charge =cl-loader.lsp= puis la source) :
+
+  #+begin_src lisp
+  (load "autolisp-json/loader.lsp")
+  #+end_src
+
+- via le =loader.lsp= racine, qui charge l'ensemble des modules du
+  dépôt (dont =autolisp-json=).
+
+* Représentation des valeurs
+
+Une valeur JSON est représentée par une =sexp= *balisée* :
+
+| Valeur JSON     | Représentation sexp                     |
+|-----------------+-----------------------------------------|
+| ={ ... }=       | =(aj-object ("clé" . valeur) ...)=      |
+| =[ ... ]=       | =(aj-array valeur ...)=                 |
+| chaîne          | chaîne AutoLISP                         |
+| entier          | =INT=                                   |
+| réel            | =REAL=                                  |
+| =true=          | =aj-true=                               |
+| =false=         | =aj-false=                              |
+| =null=          | =aj-null=                               |
+
+Les symboles =aj-true=, =aj-false= et =aj-null= s'écrivent *sans
+=quote=* : ils sont liés à eux-mêmes par le module.
+
+Cette représentation est *sûre en aller-retour* : décoder puis
+réencoder puis redécoder redonne exactement la même =sexp=. En
+particulier, ={}=, =[]=, =false= et =null= restent distincts.
+
+* Décoder
+
+#+begin_src lisp
+(aj-decode "{\"a\":1,\"b\":[true,null]}")
+;; => (aj-object ("a" . 1) ("b" aj-array aj-true aj-null))
+
+(aj-decode "42")      ;; => 42
+(aj-decode "1.5")     ;; => 1.5
+(aj-decode "\"texte\"") ;; => "texte"
+(aj-decode "true")    ;; => aj-true
+#+end_src
+
+Une entrée malformée déclenche une erreur :
+
+#+begin_src lisp
+(aj-decode "{")   ;; erreur : aj-json: ',' ou '}' attendu ... (à la position ...)
+#+end_src
+
+Pour la capturer :
+
+#+begin_src lisp
+(setq r (vl-catch-all-apply 'aj-decode (list mauvaise-chaine)))
+(if (vl-catch-all-error-p r)
+  (princ (vl-catch-all-error-message r)))
+#+end_src
+
+* Encoder
+
+Deux modes : *compact* et *indenté*.
+
+#+begin_src lisp
+(aj-encode '(aj-object ("a" . 1) ("b" . 2)))
+;; => "{\"a\":1,\"b\":2}"
+
+(aj-encode-pretty '(aj-object ("a" . 1) ("b" . (aj-array 2 3))))
+;; => "{
+;;      \"a\": 1,
+;;      \"b\": [
+;;        2,
+;;        3
+;;      ]
+;;    }"
+#+end_src
+
+Par tolérance, =T= est encodé =true= et =nil= est encodé =null= :
+
+#+begin_src lisp
+(aj-encode T)   ;; => "true"
+(aj-encode nil) ;; => "null"
+#+end_src
+
+* Lire et écrire un fichier
+
+#+begin_src lisp
+;; Lire tout un fichier JSON et le décoder.
+(setq data (aj-read-file "examples/sample.json"))
+
+;; Écrire une sexp dans un fichier.
+(aj-write-file        "sortie.json" data)   ;; compact
+(aj-write-file-pretty "sortie.json" data)   ;; indenté
+#+end_src
+
+* Construire et manipuler des valeurs
+
+** Construction directe
+
+#+begin_src lisp
+(setq doc
+  (list 'aj-object
+        (cons "nom"     "Ligne 42")
+        (cons "voies"   2)
+        (cons "gares"   (list 'aj-array "Nord" "Sud"))
+        (cons "actif"   aj-true)
+        (cons "exploit" aj-null)))
+#+end_src
+
+** Constructeurs
+
+#+begin_src lisp
+(aj-make-object (list (cons "a" 1) (cons "b" 2)))
+;; => (aj-object ("a" . 1) ("b" . 2))
+
+(aj-make-array (list 1 2 3))
+;; => (aj-array 1 2 3)
+
+(aj-boolean (> 3 2))  ;; => aj-true
+#+end_src
+
+** Accès aux objets
+
+#+begin_src lisp
+(aj-object-get   doc "nom")     ;; => "Ligne 42"
+(aj-object-has-p doc "voies")   ;; => T
+(aj-object-keys  doc)           ;; => ("nom" "voies" "gares" "actif" "exploit")
+
+;; Mise à jour non destructive : renvoie un nouvel objet.
+(setq doc2 (aj-object-put doc "voies" 4))
+(aj-object-get doc2 "voies")    ;; => 4
+(aj-object-get doc  "voies")    ;; => 2  (l'original est inchangé)
+#+end_src
+
+** Accès aux tableaux
+
+#+begin_src lisp
+(setq arr (aj-object-get doc "gares"))
+(aj-array-p     arr)         ;; => T
+(aj-array-items arr)         ;; => ("Nord" "Sud")
+(nth 0 (aj-array-items arr)) ;; => "Nord"
+#+end_src
+
+** Prédicats
+
+#+begin_src lisp
+(aj-object-p (aj-decode "{}")) ;; => T
+(aj-array-p  (aj-decode "[]")) ;; => T
+(aj-null-p   (aj-decode "null"))  ;; => T
+(aj-true-p   (aj-decode "true"))  ;; => T
+(aj-false-p  (aj-decode "false")) ;; => T
+#+end_src
+
+* Options
+
+#+begin_src lisp
+;; Forcer l'échappement \uXXXX des caractères non-ASCII.
+(setq *aj-escape-non-ascii* T)
+(aj-encode "é")   ;; => "\"\\u00e9\""
+(setq *aj-escape-non-ascii* nil)
+(aj-encode "é")   ;; => "\"é\""  (UTF-8 brut)
+
+;; Décimales conservées pour les réels.
+(setq *aj-real-precision* 6)
+
+;; Largeur d'indentation (mode indenté).
+(setq *aj-indent* 4)
+#+end_src
+
+* Exemple complet
+
+Voir =examples/demo.lsp= et =examples/sample.json=. Depuis le
+répertoire =autolisp-json/= :
+
+#+begin_src sh
+../autolisp-script/autolisp --bricscad \
+    src/autolisp-json.lsp \
+    examples/demo.lsp \
+    -x '(C:AJ-DEMO)'
+#+end_src
+
+* Unicode et encodage
+
+- Les caractères accentués sont pris en charge : par défaut ils sont
+  émis en *UTF-8 brut*.
+- =\uXXXX= est décodé, y compris les paires de substitution du plan
+  astral.
+- L'itération sur les chaînes suppose que =substr= / =strlen= comptent
+  des *caractères* (cas de BricsCAD et AutoCAD en Unicode).
+
+* Limites de la version 1
+
+- Traitement *en bloc* uniquement (pas d'analyse incrémentale).
+- Un fichier = un document JSON.
+- Entiers limités à la plage des =INT= AutoLISP (32 bits).
+- Précision des réels bornée par =rtos= et =*aj-real-precision*=.
+
+Ces points seront levés (partiellement) par une future version
+incrémentale.
+
+* Tests
+
+#+begin_src sh
+make -C autolisp-json test
+#+end_src

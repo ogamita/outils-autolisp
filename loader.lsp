@@ -5,6 +5,7 @@
     outils-root
     '("autolisp-vector/src/autolisp-vector.lsp"
       "autolisp-hash-table/src/autolisp-hash-table.lsp"
+      "autolisp-json/src/autolisp-json.lsp"
       "autolisp-doc/src/autolisp-ref.lsp"
       "autolisp-doc/src/autolisp-doc.lsp")
     nil)
