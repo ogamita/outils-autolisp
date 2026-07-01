@@ -21,6 +21,14 @@ test-bricscad:
 	$(MAKE) test-bricscad-macos-batch
 	$(MAKE) test-bricscad-macos-osascript-attach
 
+test-bricscad-macos-batch-alfe:
+	alfe -norc --bricscad $(BRICSCAD_MACOS_BATCH_ARGS) \
+		-l ../autolisp-test/test-framework.lsp \
+		-l src/autolisp-json.lsp \
+		-l tests/json-tests.lsp \
+		-l tests/run-tests.lsp \
+		-x '(C:MAIN)' -q
+
 test-bricscad-macos-batch:
 	../autolisp-script/autolisp --bricscad $(BRICSCAD_MACOS_BATCH_ARGS) \
 		../autolisp-test/test-framework.lsp \
