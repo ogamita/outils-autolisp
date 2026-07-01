@@ -84,6 +84,39 @@
       (is-equal "x" (caddr (aj-array-items inner)) "troisième élément"))))
 
 (deftest
+  "decode tolère les commentaires JSONC (// et /* */)"
+  (function
+    (lambda (/ v)
+      ;; commentaire de ligne en tête, entre paires, et en fin
+      (setq v (aj-decode "// entête\n{\n  \"a\": 1, // après une valeur\n  \"b\": 2\n} // fin\n"))
+      (is-equal 1 (aj-object-get v "a") "valeur avant commentaire de ligne")
+      (is-equal 2 (aj-object-get v "b") "valeur après commentaire de ligne")
+      ;; commentaire de bloc, y compris à une frontière de jeton
+      (setq v (aj-decode "{ /* bloc */ \"a\": /* inline */ 3, \"b\": [ 1, /* x */ 2 ] }"))
+      (is-equal 3 (aj-object-get v "a") "valeur autour d'un commentaire de bloc")
+      (is-equal 2 (cadr (aj-array-items (aj-object-get v "b"))) "commentaire dans un tableau")
+      ;; une séquence ressemblant à un commentaire DANS une chaîne reste littérale
+      (is-equal "http://x//y" (aj-object-get (aj-decode "{\"u\": \"http://x//y\"}") "u")
+                "les // dans une chaîne ne sont pas des commentaires"))))
+
+(deftest
+  "decode strict rejette les commentaires quand *aj-allow-comments* est nil"
+  (function
+    (lambda (/ *aj-allow-comments*)
+      (setq *aj-allow-comments* nil)
+      (is (vl-catch-all-error-p
+            (vl-catch-all-apply 'aj-decode (list "{ // x\n\"a\":1}")))
+          "commentaire rejeté en mode strict")
+      ;; un '/' isolé reste une erreur, quel que soit le mode
+      (is (vl-catch-all-error-p
+            (vl-catch-all-apply 'aj-decode (list "{\"a\": / }")))
+          "slash isolé rejeté")
+      ;; commentaire de bloc non terminé
+      (is (vl-catch-all-error-p
+            (vl-catch-all-apply 'aj-decode (list "[1 /* sans fin")))
+          "commentaire de bloc non terminé rejeté"))))
+
+(deftest
   "decode tolère les espaces significatifs"
   (function
     (lambda (/ v)

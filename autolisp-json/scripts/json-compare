@@ -1,0 +1,47 @@
+#!/bin/bash
+pname=$(basename "$0")
+only_files=false
+files=()
+
+function strip(){ npx -y strip-json-comments-cli < "$1"; }   # 1er appel = petit fetch npm
+
+
+function usage(){
+    printf '\n%s usage:\n\n' "$pname"
+    printf '    %s [-h|--help] [--] left.json right.json:\n\n' "$pname"
+}
+
+for arg ; do
+    case "$arg" in
+    (-h|--help)
+        usage
+        exit 0
+        ;;
+    (--)
+        only_files=true
+        ;;
+    (-)
+        if $only_files ; then
+            files+=($arg)
+        else
+            printf '%s error: invalid option: %s\n' "$pname" "$arg"
+            usage
+            exit 1
+        fi
+        ;;
+    (*)
+        files+=($arg)
+        ;;
+    esac
+done
+
+
+if [ ${#files[@]} -eq 2 ] ; then
+    left="${files[0]}"
+    right="${files[1]}"
+    diff <(strip "$left" | jq -S .) <(strip "$right" | jq -S .)
+else
+    printf '%s error: expected two json files, got %s\n' "$pname" ${#files[@]}
+    usage
+    exit 1
+fi

@@ -71,8 +71,14 @@ exactement la même `sexp` (`{}`, `[]`, `false`, `null` restent distincts).
 | `*aj-escape-non-ascii*` | `nil` | `T` → échappe tout code > 126 en `\uXXXX` |
 | `*aj-real-precision*` | `12` | décimales conservées pour les `REAL` |
 | `*aj-indent*` | `2` | espaces par niveau (mode indenté) |
+| `*aj-allow-comments*` | `T` | `T` → tolère les commentaires `//` et `/* */` au décodage (JSONC) ; `nil` → JSON strict |
 
 Par tolérance à l'encodage, `T` donne `true` et `nil` donne `null`.
+
+Les commentaires JSONC (`//` jusqu'à la fin de ligne, `/* … */`) sont acceptés
+partout où un blanc est permis — utile pour les fichiers de configuration type
+`.vscode/launch.json`. Ils sont ignorés au décodage (non restitués à l'encodage).
+Une séquence `//` à l'intérieur d'une chaîne reste littérale.
 
 ## Exemples
 

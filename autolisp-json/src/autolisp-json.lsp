@@ -40,6 +40,10 @@
 ;;;     *aj-escape-non-ascii*  (nil)  ; T => échappe tout > 126 en \uXXXX
 ;;;     *aj-real-precision*    (12)   ; décimales conservées pour les REAL
 ;;;     *aj-indent*            (2)    ; espaces par niveau (mode indenté)
+;;;     *aj-allow-comments*    (T)    ; T => tolère les commentaires // et
+;;;                                   ;   /* */ au décodage (JSONC) ; nil => strict.
+;;;                                   ;   Les commentaires sont ignorés (non
+;;;                                   ;   restitués à l'encodage).
 
 ;;; ------------------------------------------------------------------
 ;;; Singletons et configuration
@@ -52,6 +56,7 @@
 (if (not (boundp '*aj-escape-non-ascii*)) (setq *aj-escape-non-ascii* nil))
 (if (not (boundp '*aj-real-precision*))   (setq *aj-real-precision* 12))
 (if (not (boundp '*aj-indent*))           (setq *aj-indent* 2))
+(if (not (boundp '*aj-allow-comments*))   (setq *aj-allow-comments* T))
 
 ;;; ------------------------------------------------------------------
 ;;; Prédicats, constructeurs et accesseurs
@@ -169,13 +174,46 @@
 (defun aj--advance ()
   (setq aj--pos (1+ aj--pos)))
 
-(defun aj--skip-ws (/ c)
-  (while (and (<= aj--pos aj--len)
-              (or (= (setq c (substr aj--src aj--pos 1)) " ")
-                  (= c "\t")
-                  (= c "\n")
-                  (= c "\r")))
-    (setq aj--pos (1+ aj--pos))))
+;;; Saute les blancs et, si *aj-allow-comments* est non nil, les
+;;; commentaires de ligne (//...) et de bloc (/* ... */). Appelée
+;;; partout où un blanc est permis, elle rend donc les commentaires
+;;; acceptables à toute frontière de jeton (JSONC).
+(defun aj--skip-ws (/ c c2 more)
+  (setq more T)
+  (while more
+    ;; blancs
+    (while (and (<= aj--pos aj--len)
+                (or (= (setq c (substr aj--src aj--pos 1)) " ")
+                    (= c "\t")
+                    (= c "\n")
+                    (= c "\r")))
+      (setq aj--pos (1+ aj--pos)))
+    ;; commentaires (si tolérés)
+    (if (and *aj-allow-comments*
+             (<= aj--pos aj--len)
+             (= (substr aj--src aj--pos 1) "/"))
+      (progn
+        (setq c2 (substr aj--src (1+ aj--pos) 1))
+        (cond
+          ;; commentaire de ligne : jusqu'au saut de ligne (exclu)
+          ((= c2 "/")
+           (setq aj--pos (+ aj--pos 2))
+           (while (and (<= aj--pos aj--len)
+                       (/= (substr aj--src aj--pos 1) "\n"))
+             (setq aj--pos (1+ aj--pos))))
+          ;; commentaire de bloc : jusqu'à */
+          ((= c2 "*")
+           (setq aj--pos (+ aj--pos 2))
+           (while (and (<= aj--pos aj--len)
+                       (not (and (= (substr aj--src aj--pos 1) "*")
+                                 (= (substr aj--src (1+ aj--pos) 1) "/"))))
+             (setq aj--pos (1+ aj--pos)))
+           (if (> aj--pos aj--len)
+             (aj--error "commentaire de bloc non terminé")
+             (setq aj--pos (+ aj--pos 2))))     ; consomme le */
+          ;; '/' isolé : ce n'est pas un commentaire, on laisse le parseur signaler
+          (t (setq more nil))))
+      (setq more nil))))
 
 (defun aj--parse-value (/ c)
   (aj--skip-ws)
