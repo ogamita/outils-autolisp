@@ -11,14 +11,19 @@ variables:
   CLAUTOLISP_GIT_URL: "https://gitlab.com/ogamita/clautolisp.git"
 
 # Tags runner : <os> + <type d'exécuteur> (shell | docker).
-#   - [linux, docker]  : exécuteur docker → peut apt-get et construire clautolisp
-#                        (release-1.3) ; y lance aussi les suites headless.
-#   - [macos, shell]   : Mac du dev (shell) — clautolisp/alfe INSTALLÉS.
-#   - [windows, shell] : PC du dev (shell) — alfe/clautolisp INSTALLÉS.
-# macOS/Windows sont des portables intermittents : jobs `when: manual`.
+#   - [linux, docker]  : peut apt-get → construit clautolisp (release-1.3) et
+#                        lance les suites headless. Reproductible, indépendant de
+#                        ce qui est installé sur poseidon.
+#   - [macos, shell]   : Mac du dev — clautolisp/alfe INSTALLÉS. clautolisp + BricsCAD.
+#   - [windows, shell] : PC du dev — INSTALLÉS. clautolisp + BricsCAD + AutoCAD.
+#
+# macOS/Windows sont redondants avec Linux pour le headless, mais révèlent des
+# différences de plateforme. Ils sont AUTO sur les branches release-*, MANUELS
+# sinon. Chaque job est unique (pas de matrice) et lance toute la série de
+# sous-projets via une cible agrégée du Makefile racine : un seul clic.
 
 # ===========================================================================
-# LINUX (docker) : build de clautolisp stable puis suites headless. Auto.
+# LINUX (docker) : build clautolisp stable puis suites headless. Auto (toujours).
 # ===========================================================================
 
 build:clautolisp:
@@ -66,58 +71,43 @@ linux:autolisp-script:
     - make -C autolisp-script test-fakecad TEST_TIMEOUT=10
 
 # ===========================================================================
-# macOS (shell) : headless clautolisp + BricsCAD réel. Sur demande.
-# clautolisp/alfe installés (release-1.3).
+# macOS / Windows (shell) : moteurs installés localement (release-1.3).
+# Jobs uniques (un clic = toute la série), auto sur release-*, manuel sinon.
 # ===========================================================================
+
+.on-release-or-manual:
+  stage: test
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^release-/'   # auto sur les branches release
+    - when: manual                             # manuel ailleurs
+  allow_failure: true
 
 macos:clautolisp:
-  stage: test
+  extends: .on-release-or-manual
   tags: [macos, shell]
-  rules:
-    - when: manual
-  allow_failure: true
-  parallel:
-    matrix:
-      - SUBPROJECT: [autolisp-vector, autolisp-hash-table, autolisp-json, autolisp-doc, autolisp-misc]
   script:
-    - 'make -C "$SUBPROJECT" test-clautolisp'
+    - make test-clautolisp
 
 macos:bricscad:
-  stage: test
+  extends: .on-release-or-manual
   tags: [macos, shell]
-  rules:
-    - when: manual
-  allow_failure: true
-  parallel:
-    matrix:
-      - SUBPROJECT: [autolisp-vector, autolisp-hash-table, autolisp-json, autolisp-doc]
   script:
-    - 'make -C "$SUBPROJECT" test-bricscad'
+    - make test-bricscad
 
-# ===========================================================================
-# Windows (shell) : BricsCAD + AutoCAD réels. Sur demande.
-# ===========================================================================
+windows:clautolisp:
+  extends: .on-release-or-manual
+  tags: [windows, shell]
+  script:
+    - make test-clautolisp
 
 windows:bricscad:
-  stage: test
+  extends: .on-release-or-manual
   tags: [windows, shell]
-  rules:
-    - when: manual
-  allow_failure: true
-  parallel:
-    matrix:
-      - SUBPROJECT: [autolisp-vector, autolisp-hash-table, autolisp-json, autolisp-doc]
   script:
-    - 'make -C "$SUBPROJECT" test-bricscad'
+    - make test-bricscad
 
 windows:autocad:
-  stage: test
+  extends: .on-release-or-manual
   tags: [windows, shell]
-  rules:
-    - when: manual
-  allow_failure: true
-  parallel:
-    matrix:
-      - SUBPROJECT: [autolisp-vector, autolisp-hash-table, autolisp-json, autolisp-doc]
   script:
-    - 'make -C "$SUBPROJECT" test-autocad'
+    - make test-autocad

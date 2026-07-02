@@ -12,6 +12,14 @@ TEST_SUBPROJECTS = \
 	autolisp-doc \
 	autolisp-misc
 
+# Sous-projets qui exposent des cibles CAO (common.mk : test-bricscad /
+# test-autocad). misc en est exclu (harnais shell, clautolisp seulement).
+CAD_SUBPROJECTS = \
+	autolisp-vector \
+	autolisp-hash-table \
+	autolisp-json \
+	autolisp-doc
+
 DOCS_SUBPROJECTS = \
 	autolisp-script \
 	autolisp-vector \
@@ -21,16 +29,30 @@ DOCS_SUBPROJECTS = \
 	autolisp-misc \
 	autolisp-doc
 
-.PHONY: test-ci test test-clautolisp docs-pdf clean
+.PHONY: test-ci test test-clautolisp test-bricscad test-autocad docs-pdf clean
 
 # CI / headless : clautolisp pour les libs, backend fake-CAD pour autolisp-script.
 test-ci: test-clautolisp
 	$(MAKE) -C autolisp-script test-fakecad TEST_TIMEOUT=10
 
+# Cibles agrégées par moteur (un seul appel lance toute la matrice de
+# sous-projets) — utilisées par les jobs CI « un clic » macOS/Windows.
 test-clautolisp:
 	@for d in $(TEST_SUBPROJECTS); do \
 		echo "== $$d (clautolisp) =="; \
 		$(MAKE) -C $$d test-clautolisp || exit 1; \
+	done
+
+test-bricscad:
+	@for d in $(CAD_SUBPROJECTS); do \
+		echo "== $$d (bricscad) =="; \
+		$(MAKE) -C $$d test-bricscad || exit 1; \
+	done
+
+test-autocad:
+	@for d in $(CAD_SUBPROJECTS); do \
+		echo "== $$d (autocad) =="; \
+		$(MAKE) -C $$d test-autocad || exit 1; \
 	done
 
 # Local : chaque sous-projet choisit ses moteurs selon uname (clautolisp + CAO).
