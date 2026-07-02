@@ -38,8 +38,21 @@ linux:autolisp-script:
     - make -C autolisp-script test-fakecad TEST_TIMEOUT=10
 
 # ===========================================================================
-# macOS : BricsCAD réel. Sur demande (runner intermittent).
+# macOS (Mac du dev) : headless clautolisp + BricsCAD réel. Sur demande
+# (runner intermittent). clautolisp/alfe installés (release-1.3).
 # ===========================================================================
+
+macos:clautolisp:
+  stage: test
+  tags: [macos]
+  rules:
+    - when: manual
+  allow_failure: true
+  parallel:
+    matrix:
+      - SUBPROJECT: [autolisp-vector, autolisp-hash-table, autolisp-json, autolisp-doc, autolisp-misc]
+  script:
+    - 'make -C "$SUBPROJECT" test-clautolisp'
 
 macos:bricscad:
   stage: test
