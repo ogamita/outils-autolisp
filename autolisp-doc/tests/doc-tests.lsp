@@ -131,4 +131,3 @@
                 (categorize '(alert "hi")) nil)
       (is-equal (ad-free-variables '(+ x y))
                 (free-variables '(+ x y)) nil))))
-()

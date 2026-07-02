@@ -34,4 +34,3 @@
                 (vl-catch-all-error-message av-bench-result)
                 "unknown error"))))
   (princ ""))
-()

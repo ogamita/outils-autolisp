@@ -37,4 +37,3 @@
       (setq ah-bench-results ah-bench-results-state)
       (ah-bench--print-table)))
   (princ ""))
-()

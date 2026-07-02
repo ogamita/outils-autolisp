@@ -257,4 +257,3 @@
   (foreach s *t:suites*
     (setq summaries (cons (run-suite (car s)) summaries)))
   (reverse summaries))
-()

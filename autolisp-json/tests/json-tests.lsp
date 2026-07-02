@@ -264,4 +264,3 @@
       (aj-write-file-pretty path sexp)
       (is-equal sexp (aj-read-file path) "aller-retour fichier (indenté)")
       (vl-file-delete path))))
-()

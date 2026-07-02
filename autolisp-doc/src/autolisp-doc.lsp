@@ -606,4 +606,5 @@
   (help ad-arg))
 
 (princ)
-()
+
+;;; autolisp-doc.lsp ends here
