@@ -1,228 +1,127 @@
-;;; hash-table-benchmarks.lsp --- Optional benchmarks for autolisp-hash-table
+;;; hash-table-benchmarks.lsp --- Benchmark de vitesse : table de hachage vs a-list.
+;;;
+;;; Compare ah-hash-table (accès O(1) moyen) à une a-list AutoLISP (assoc en
+;;; O(n)), en lecture seule et en lecture-écriture, pour des tailles
+;;; croissantes. Objectif : valider l'intérêt de la table en vitesse ET en
+;;; mutabilité (puthash mute en place ; l'a-list doit être reconstruite).
+;;;
+;;; Portable clautolisp / BricsCAD / AutoCAD (timer : (getvar "MILLISECS")).
+;;; Dépend de autolisp-vector. Sortie : stdout + fichier artefact si
+;;; $BENCH_OUTFILE est défini. Point d'entrée : (ah-run-benchmarks) / (C:BENCH)
 
-(defsuite "autolisp-hash-table-bench")
-(in-suite "autolisp-hash-table-bench")
+(setq *ah-bench-min-ms* 50)
+(setq *ah-bench-out-handle* nil)
 
-(setq ah-bench-results nil)
-(setq ah-bench-table-cache nil)
-(setq ah-bench-last-stage nil)
+(defun ah-bench-sizes () '(5 10 50 100 500 1000))
 
-(defun ah-bench--set-cache (ah-cache)
-  (setq ah-bench-table-cache ah-cache)
-  (ah--putprop 'ah-bench-state ah-cache 'ah-cache)
-  ah-cache)
+(defun ah-bench-ms () (getvar "MILLISECS"))
 
-(defun ah-bench--set-stage (ah-stage)
-  (setq ah-bench-last-stage ah-stage)
-  (ah--putprop 'ah-bench-state ah-stage 'ah-stage)
-  ah-stage)
+(defun ah-bench-line (s)
+  (princ s) (princ "\n")
+  (if *ah-bench-out-handle* (write-line s *ah-bench-out-handle*)))
 
-(defun ah-bench--set-results (ah-results)
-  (setq ah-bench-results ah-results)
-  (ah--putprop 'ah-bench-state ah-results 'ah-results)
-  ah-results)
+(defun ah-bench-alist (n / i l)
+  (setq i n l nil) (while (> i 0) (setq i (1- i) l (cons (cons i i) l))) l)
 
-(defun ah-bench--atoi-default (ah-text ah-default / ah-value)
-  (if (or (null ah-text) (= ah-text ""))
-    ah-default
-    (progn
-      (setq ah-value (atoi ah-text))
-      (if (> ah-value 0) ah-value ah-default))))
+(defun ah-bench-keys (count size / l st)
+  (setq l nil st 1)
+  (repeat count
+    (setq st (rem (+ (* st 30637) 17389) 32749))
+    (setq l (cons (rem st size) l)))
+  l)
 
-(defun ah-bench--samples ()
-  (ah-bench--atoi-default (getenv "AH_BENCH_SAMPLES") 1000))
+;; met à jour la paire (key . val) d'une a-list : reconstruction O(n)
+(defun ah-bench-alist-put (alist key val / out cell done)
+  (setq out nil done nil)
+  (foreach cell alist
+    (if (and (not done) (equal (car cell) key))
+      (progn (setq out (cons (cons key val) out)) (setq done T))
+      (setq out (cons cell out))))
+  (if (not done) (setq out (cons (cons key val) out)))
+  (reverse out))
 
-(defun ah-bench--sizes ()
-  '(11 23 47 97))
+(defun ah-bench-us (ms ops / s)
+  (setq s (rtos (/ (* ms 1000.0) ops) 2 3))
+  (if (vl-string-search "," s) (setq s (vl-string-subst "." "," s)))
+  s)
 
-(defun ah-bench--now-ms ()
-  (getvar "MILLISECS"))
+(defun ah-bench-ratio (msb opsb ms ops / s)
+  (setq s (rtos (/ (/ (* msb 1.0) opsb) (/ (* ms 1.0) ops)) 2 2))
+  (if (vl-string-search "," s) (setq s (vl-string-subst "." "," s)))
+  s)
 
-(defun ah-bench--elapsed-ms (ah-start)
-  (- (ah-bench--now-ms) ah-start))
+(defun ah-bench-pad (s w / o) (setq o s) (while (< (strlen o) w) (setq o (strcat " " o))) o)
 
-(defun ah-bench--pad-right (ah-text ah-width / ah-out)
-  (setq ah-out ah-text)
-  (while (< (strlen ah-out) ah-width)
-    (setq ah-out (strcat ah-out " ")))
-  ah-out)
+;; --- mesures : renvoient (list ms-total ops-total) ---
+(defun ah-bench-read-ht (ht keys / reps t0 el s done)
+  (setq reps 1 done nil)
+  (while (not done)
+    (setq s 0 t0 (ah-bench-ms))
+    (repeat reps (foreach k keys (setq s (+ s (ah-gethash ht k 0)))))
+    (setq el (- (ah-bench-ms) t0))
+    (if (or (>= el *ah-bench-min-ms*) (> reps 1048576)) (setq done T) (setq reps (* reps 2))))
+  (list el (* (* reps 1.0) (length keys))))
 
-(defun ah-bench--row-string (ah-kind ah-size ah-iterations ah-ms ah-note)
-  (strcat
-    (ah-bench--pad-right ah-kind 22)
-    " | "
-    (ah-bench--pad-right (vl-princ-to-string ah-size) 6)
-    " | "
-    (ah-bench--pad-right (vl-princ-to-string ah-iterations) 10)
-    " | "
-    (ah-bench--pad-right (vl-princ-to-string ah-ms) 8)
-    (if ah-note
-      (strcat " | " ah-note)
-      "")))
+(defun ah-bench-read-alist (al keys / reps t0 el s done)
+  (setq reps 1 done nil)
+  (while (not done)
+    (setq s 0 t0 (ah-bench-ms))
+    (repeat reps (foreach k keys (setq s (+ s (cdr (assoc k al))))))
+    (setq el (- (ah-bench-ms) t0))
+    (if (or (>= el *ah-bench-min-ms*) (> reps 1048576)) (setq done T) (setq reps (* reps 2))))
+  (list el (* (* reps 1.0) (length keys))))
 
-(defun ah-bench--emit (ah-label ah-size ah-iterations ah-ms ah-note)
-  (ah-bench--set-results
-    (cons (list ah-label ah-size ah-iterations ah-ms ah-note)
-          ah-bench-results))
-  (autolisp-log-out
-    (strcat "BENCH "
-            ah-label
-            " size=" (vl-princ-to-string ah-size)
-            " iterations=" (vl-princ-to-string ah-iterations)
-            " ms=" (vl-princ-to-string ah-ms)
-            (if ah-note (strcat " " ah-note) ""))))
+(defun ah-bench-rw-ht (ht keys / reps t0 el done k)
+  (setq reps 1 done nil)
+  (while (not done)
+    (setq t0 (ah-bench-ms))
+    (repeat reps (foreach k keys (ah-puthash ht k (+ 1 (ah-gethash ht k 0)))))
+    (setq el (- (ah-bench-ms) t0))
+    (if (or (>= el *ah-bench-min-ms*) (> reps 1048576)) (setq done T) (setq reps (* reps 2))))
+  (list el (* (* reps 1.0) (length keys))))
 
-(defun ah-bench--print-table ()
-  (t:emit-out "BENCHMARKS")
-  (t:emit-out "kind                   | size   | iterations | ms       | note")
-  (t:emit-out "----------------------+--------+------------+----------+----------------")
-  (foreach ah-row (reverse ah-bench-results)
-    (t:emit-out
-      (ah-bench--row-string
-        (nth 0 ah-row)
-        (nth 1 ah-row)
-        (nth 2 ah-row)
-        (nth 3 ah-row)
-        (nth 4 ah-row)))))
+(defun ah-bench-rw-alist (al keys / reps t0 el done work k)
+  (setq reps 1 done nil)
+  (while (not done)
+    (setq work al t0 (ah-bench-ms))
+    (repeat reps (foreach k keys (setq work (ah-bench-alist-put work k (+ 1 (cdr (assoc k work)))))))
+    (setq el (- (ah-bench-ms) t0))
+    (if (or (>= el *ah-bench-min-ms*) (> reps 1048576)) (setq done T) (setq reps (* reps 2))))
+  (list el (* (* reps 1.0) (length keys))))
 
-(defun ah-bench--range-list (ah-count / ah-items)
-  (setq ah-items nil)
-  (while (> ah-count 0)
-    (setq ah-count (1- ah-count))
-    (setq ah-items (cons ah-count ah-items)))
-  ah-items)
+(defun ah-bench-size (n / al ht keys i rh ra wh wa)
+  (setq al (ah-bench-alist n))
+  (setq ht (ah-make-hash-table 'equal n 2.0 0.5))
+  (setq i 0) (while (< i n) (ah-puthash ht i i) (setq i (1+ i)))
+  (setq keys (ah-bench-keys n n))
+  (setq rh (ah-bench-read-ht    ht  keys))
+  (setq ra (ah-bench-read-alist al  keys))
+  (setq wh (ah-bench-rw-ht      ht  keys))
+  (setq wa (ah-bench-rw-alist   al  keys))
+  (ah-bench-line
+    (strcat (ah-bench-pad (itoa n) 6) " | "
+            (ah-bench-pad (ah-bench-us (car rh) (cadr rh)) 8) " | "
+            (ah-bench-pad (ah-bench-us (car ra) (cadr ra)) 8) " | "
+            (ah-bench-pad (ah-bench-ratio (car ra) (cadr ra) (car rh) (cadr rh)) 6) " | "
+            (ah-bench-pad (ah-bench-us (car wh) (cadr wh)) 8) " | "
+            (ah-bench-pad (ah-bench-us (car wa) (cadr wa)) 8) " | "
+            (ah-bench-pad (ah-bench-ratio (car wa) (cadr wa) (car wh) (cadr wh)) 6))))
 
-(defun ah-bench--data (ah-size / ah-items ah-index)
-  (setq ah-items nil)
-  (setq ah-index 0)
-  (while (< ah-index ah-size)
-    (setq ah-items
-          (cons (list (strcat "k" (itoa ah-index))
-                      ah-index)
-                ah-items))
-    (setq ah-index (1+ ah-index)))
-  (reverse ah-items))
+(defun ah-run-benchmarks (/ path)
+  (setq path (getenv "BENCH_OUTFILE"))
+  (if (and path (/= path "")) (setq *ah-bench-out-handle* (open path "w")))
+  (ah-bench-line "=== autolisp-hash-table : acces par cle -- table de hachage O(1) vs a-list (assoc O(n)) ===")
+  (ah-bench-line "us/op = microsecondes par operation. ratio = a-list/table (>1 : table plus rapide).")
+  (ah-bench-line "read-write table : puthash en place ; a-list : reconstruction O(n).")
+  (ah-bench-line "")
+  (ah-bench-line "taille |         read-only         |        read-write")
+  (ah-bench-line "       |    table |   a-list | ratio |    table |   a-list | ratio")
+  (ah-bench-line "-------+----------+----------+-------+----------+----------+-------")
+  (foreach n (ah-bench-sizes) (ah-bench-size n))
+  (ah-bench-line "")
+  (if *ah-bench-out-handle* (progn (close *ah-bench-out-handle*) (setq *ah-bench-out-handle* nil)))
+  T)
 
-(defun ah-bench--prepare-cache (/ bh-size bh-table)
-  (ah-bench--set-cache nil)
-  (foreach bh-size (ah-bench--sizes)
-    (setq bh-table (ah-bench--make-table bh-size))
-    (ah-bench--set-cache
-      (cons (cons bh-size bh-table) ah-bench-table-cache)))
-  ah-bench-table-cache)
+(defun C:BENCH () (ah-run-benchmarks) (princ))
 
-(defun ah-bench--make-table (bh-size / bh-table bh-empty bh-deleted bh-capacity bh-slots)
-  (ah-bench--set-stage "make-table:start")
-  (setq bh-table (ah--make-table-symbol))
-  (ah-bench--set-stage "make-table:table-symbol")
-  (setq bh-empty (ah--make-symbol "ah-empty-"))
-  (ah-bench--set-stage "make-table:empty-symbol")
-  (setq bh-deleted (ah--make-symbol "ah-deleted-"))
-  (ah-bench--set-stage "make-table:deleted-symbol")
-  (setq bh-capacity (ah--next-prime bh-size))
-  (ah-bench--set-stage "make-table:capacity")
-  (setq bh-slots (ah--make-slot-vector bh-capacity bh-empty))
-  (ah-bench--set-stage "make-table:slots")
-  (ah--putprop bh-table 'equal 'ah-test)
-  (ah--putprop bh-table 0 'ah-count)
-  (ah--putprop bh-table 0 'ah-deleted-count)
-  (ah--putprop bh-table bh-capacity 'ah-size)
-  (ah--putprop bh-table 2.0 'ah-rehash-size)
-  (ah--putprop bh-table 0.5 'ah-rehash-threshold)
-  (ah--putprop bh-table bh-slots 'ah-slots)
-  (ah--putprop bh-table bh-empty 'ah-empty-marker)
-  (ah--putprop bh-table bh-deleted 'ah-deleted-marker)
-  (ah-bench--set-stage "make-table:done")
-  bh-table)
-
-(defun ah-bench--table-for-size (bh-size / bh-cell bh-table)
-  (if (null ah-bench-table-cache)
-    (ah-bench--set-cache (ah--getprop 'ah-bench-state 'ah-cache)))
-  (ah-bench--set-stage "table-for-size:assoc")
-  (setq bh-cell (assoc bh-size ah-bench-table-cache))
-  (if bh-cell
-    (progn
-      (ah-bench--set-stage "table-for-size:hit")
-      (cdr bh-cell))
-    (progn
-      (ah-bench--set-stage "table-for-size:make")
-      (setq bh-table (ah-bench--make-table bh-size))
-      (ah-bench--set-stage "table-for-size:made")
-      (ah-bench--set-cache
-        (cons (cons bh-size bh-table) ah-bench-table-cache))
-      (ah-bench--set-stage "table-for-size:cached")
-      bh-table)))
-
-(defun ah-bench--bench-put (bh-size bh-items / bh-table bh-start bh-item bh-ms bh-count)
-  (ah-bench--set-stage "put:start")
-  (setq bh-table (ah-bench--table-for-size bh-size))
-  (ah-bench--set-stage "put:table")
-  (ah-clrhash bh-table)
-  (ah-bench--set-stage "put:clear")
-  (setq bh-start (ah-bench--now-ms))
-  (ah-bench--set-stage "put:clock")
-  (foreach bh-item bh-items
-    (ah-puthash bh-table (car bh-item) (cadr bh-item)))
-  (ah-bench--set-stage "put:loop")
-  (ah-bench--emit "ah-puthash" bh-size (length bh-items)
-                  (ah-bench--elapsed-ms bh-start)
-                  (strcat "count=" (vl-princ-to-string
-                                    (ah-hash-table-count bh-table)))))
-
-(defun ah-bench--bench-get (bh-size bh-items / bh-table bh-start bh-sum bh-item)
-  (setq bh-table (ah-bench--table-for-size bh-size))
-  (ah-clrhash bh-table)
-  (foreach bh-item bh-items
-    (ah-puthash bh-table (car bh-item) (cadr bh-item)))
-  (setq bh-sum 0)
-  (setq bh-start (ah-bench--now-ms))
-  (foreach bh-item bh-items
-    (setq bh-sum (+ bh-sum (ah-gethash bh-table (car bh-item) 0))))
-  (ah-bench--emit "ah-gethash" bh-size (length bh-items)
-                  (ah-bench--elapsed-ms bh-start)
-                  (strcat "sum=" (vl-princ-to-string bh-sum))))
-
-(defun ah-bench--bench-rem (bh-size bh-items / bh-table bh-start bh-item)
-  (setq bh-table (ah-bench--table-for-size bh-size))
-  (ah-clrhash bh-table)
-  (foreach bh-item bh-items
-    (ah-puthash bh-table (car bh-item) (cadr bh-item)))
-  (setq bh-start (ah-bench--now-ms))
-  (foreach bh-item bh-items
-    (ah-remhash bh-table (car bh-item)))
-  (ah-bench--emit "ah-remhash" bh-size (length bh-items)
-                  (ah-bench--elapsed-ms bh-start)
-                  (strcat "count=" (vl-princ-to-string
-                                    (ah-hash-table-count bh-table)))))
-
-(defun ah-bench--run-size (bh-size / bh-items)
-  (ah-bench--set-stage "run-size:start")
-  (setq bh-items (ah-bench--data bh-size))
-  (ah-bench--set-stage "run-size:data")
-  (ah-bench--bench-put bh-size bh-items)
-  (ah-bench--set-stage "run-size:after-put")
-  (ah-bench--bench-get bh-size bh-items)
-  (ah-bench--set-stage "run-size:after-get")
-  (ah-bench--bench-rem bh-size bh-items)
-  (ah-bench--set-stage "run-size:after-rem"))
-
-(defun ah-run-benchmarks (/ bh-samples bh-size)
-  (ah-bench--set-results nil)
-  (ah-bench--set-stage "run:start")
-  (setq bh-samples (ah-bench--samples))
-  (repeat bh-samples
-    nil)
-  (ah-bench--set-stage "run:samples")
-  (foreach bh-size (ah-bench--sizes)
-    (ah-bench--run-size bh-size))
-  (ah-bench--set-stage "run:done")
-  nil)
-
-(deftest
-  "benchmarks collect rows"
-  (function
-    (lambda ()
-      (ah-bench--prepare-cache)
-      (ah-run-benchmarks)
-      (is (> (length ah-bench-results) 0)
-          "benchmark produced no rows"))))
+(princ "")

@@ -1,6 +1,7 @@
 stages:
   - build
   - test
+  - benchmark
 
 variables:
   GIT_SUBMODULE_STRATEGY: none
@@ -82,6 +83,37 @@ linux:clautolisp:fabrik:
     - if: '$CI_SERVER_HOST == "fabrik.sncf.fr"'
 
 # (autolisp-script est déprécié — remplacé par alfe ; ses tests sont retirés.)
+
+# ===========================================================================
+# BENCHMARK (Linux/docker, à la fin des tests) : vitesse des structures vs
+# liste/a-list. Résultats sur le log ET dans l'artefact benchmark-results.txt.
+# ===========================================================================
+
+.benchmark:
+  stage: benchmark
+  image: debian:bookworm
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends make bash perl
+    - 'export PATH="$CLAUTOLISP_PREFIX/bin:$PATH"'
+  script:
+    - make benchmark BACKEND=clautolisp
+  artifacts:
+    paths:
+      - benchmark-results.txt
+    when: always
+    expire_in: 30 days
+
+benchmark:
+  extends: .benchmark
+  tags: [linux, docker]
+  rules:
+    - if: '$CI_SERVER_HOST != "fabrik.sncf.fr"'
+
+benchmark:fabrik:
+  extends: .benchmark
+  rules:
+    - if: '$CI_SERVER_HOST == "fabrik.sncf.fr"'
 
 # ===========================================================================
 # macOS / Windows (shell, gitlab.com uniquement) : moteurs installés localement.

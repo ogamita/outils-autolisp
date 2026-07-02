@@ -42,7 +42,14 @@ TEST_TARGETS ?= test-clautolisp test-bricscad test-autocad
 endif
 endif
 
-.PHONY: test-ci test test-clautolisp test-bricscad test-autocad
+# Benchmark : un sous-projet définit BENCH_SOURCES (les -l à charger, le fichier
+# de bench définit (C:BENCH)). Lancé via :  make benchmark BACKEND=clautolisp|bricscad|autocad
+# (autolisp = alias d'autocad). Sortie sur stdout + fichier $BENCH_OUTFILE.
+BACKEND       ?= clautolisp
+BENCH_DIALECT ?= lax
+BENCH_OUTFILE ?= $(CURDIR)/benchmark.txt
+
+.PHONY: test-ci test test-clautolisp test-bricscad test-autocad benchmark
 
 test-ci: test
 
@@ -56,3 +63,16 @@ test-bricscad:
 
 test-autocad:
 	$(ALFE) -norc --autocad --mode batch $(TEST_SOURCES) $(TEST_MAIN) -q
+
+ifeq ($(BACKEND),clautolisp)
+BENCH_CMD = $(CLAUTOLISP) --dialect $(BENCH_DIALECT) -q $(BENCH_SOURCES) -x '(C:BENCH)' -x '(quit)'
+else ifeq ($(BACKEND),bricscad)
+BENCH_CMD = $(ALFE) -norc --bricscad --mode batch $(BENCH_SOURCES) -x '(C:BENCH)' -q
+else ifeq ($(filter $(BACKEND),autocad autolisp),$(BACKEND))
+BENCH_CMD = $(ALFE) -norc --autocad --mode batch $(BENCH_SOURCES) -x '(C:BENCH)' -q
+else
+BENCH_CMD = @echo "BACKEND inconnu: $(BACKEND) (clautolisp|bricscad|autocad|autolisp)"; false
+endif
+
+benchmark:
+	BENCH_OUTFILE="$(BENCH_OUTFILE)" $(BENCH_CMD)

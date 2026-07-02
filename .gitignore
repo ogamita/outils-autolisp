@@ -9,3 +9,8 @@ tmp
 # ils se régénèrent via `make docs-pdf`. (Les PDF déjà suivis restent
 # suivis ; on ne les retire pas rétroactivement.)
 *.pdf
+
+# Résultats de benchmark générés
+benchmark-results.txt
+*-benchmark.txt
+benchmark.txt

@@ -20,6 +20,13 @@ CAD_SUBPROJECTS = \
 	autolisp-json \
 	autolisp-doc
 
+# Sous-projets avec un benchmark de vitesse (structure vs liste/a-list).
+BENCH_SUBPROJECTS = \
+	autolisp-vector \
+	autolisp-hash-table
+
+BACKEND ?= clautolisp
+
 DOCS_SUBPROJECTS = \
 	autolisp-script \
 	autolisp-vector \
@@ -29,7 +36,7 @@ DOCS_SUBPROJECTS = \
 	autolisp-misc \
 	autolisp-doc
 
-.PHONY: test-ci test test-clautolisp test-bricscad test-autocad docs-pdf clean
+.PHONY: test-ci test test-clautolisp test-bricscad test-autocad benchmark docs-pdf clean
 
 # CI / headless : clautolisp pour les libs. (autolisp-script est déprécié.)
 test-ci: test-clautolisp
@@ -60,6 +67,18 @@ test:
 		echo "== $$d =="; \
 		$(MAKE) -C $$d test || exit 1; \
 	done
+
+# Benchmark de vitesse agrégé (structure vs liste/a-list). Résultats sur stdout
+# ET dans le fichier artefact benchmark-results.txt.
+#   make benchmark BACKEND=clautolisp|bricscad|autocad
+benchmark:
+	@rm -f benchmark-results.txt
+	@for d in $(BENCH_SUBPROJECTS); do \
+		echo "== $$d (benchmark, BACKEND=$(BACKEND)) =="; \
+		$(MAKE) -C $$d benchmark BACKEND=$(BACKEND) BENCH_OUTFILE=$(CURDIR)/$$d-benchmark.txt || exit 1; \
+		cat $(CURDIR)/$$d-benchmark.txt >> benchmark-results.txt; \
+	done
+	@echo "=== benchmark-results.txt ==="; cat benchmark-results.txt
 
 docs-pdf:
 	@for d in $(DOCS_SUBPROJECTS); do $(MAKE) -C $$d docs-pdf || exit 1; done
