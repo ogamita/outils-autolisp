@@ -2,7 +2,8 @@
 
 Ce sous-projet est **déprécié**. Le wrapper `autolisp` (pilotage
 d'AutoCAD/BricsCAD en batch) est remplacé par **`alfe`** (AutoLISP front-end,
-projet `clautolisp`), et les tests headless par **`clautolisp`**.
+projet [clautolisp](https://github.com/ogamita/clautolisp)), et les tests
+headless par **`clautolisp`**.
 
 - Le binaire `autolisp` est désormais un simple stub qui renvoie une erreur et
   invite à utiliser `alfe`.
