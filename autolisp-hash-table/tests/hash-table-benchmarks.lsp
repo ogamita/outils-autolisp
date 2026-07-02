@@ -226,3 +226,4 @@
       (ah-run-benchmarks)
       (is (> (length ah-bench-results) 0)
           "benchmark produced no rows"))))
+()

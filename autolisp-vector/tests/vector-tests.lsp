@@ -147,3 +147,4 @@
       (setq av-vector (av-make-array 2 nil '(1 2) nil))
       (signals-error (function (lambda () (av-aref av-vector 2))) nil)
       (signals-error (function (lambda () (av-set-aref av-vector -1 0))) nil))))
+()

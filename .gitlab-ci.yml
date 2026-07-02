@@ -3,37 +3,31 @@ stages:
   - test
 
 variables:
-  # third-party/clautolisp est une dépendance bibliothèque (edward/dwg-identifier),
-  # pas l'outil de test.
   GIT_SUBMODULE_STRATEGY: none
   CLAUTOLISP_REF: "release-1.3"
   CLAUTOLISP_PREFIX: "$CI_PROJECT_DIR/.clautolisp"
   CLAUTOLISP_GIT_URL: "https://gitlab.com/ogamita/clautolisp.git"
 
-# Tags runner : <os> + <type d'exécuteur> (shell | docker).
-#   - [linux, docker]  : peut apt-get → construit clautolisp (release-1.3) et
-#                        lance les suites headless. Reproductible, indépendant de
-#                        ce qui est installé sur poseidon.
-#   - [macos, shell]   : Mac du dev — clautolisp/alfe INSTALLÉS. clautolisp + BricsCAD.
-#   - [windows, shell] : PC du dev — INSTALLÉS. clautolisp + BricsCAD + AutoCAD.
-#
-# macOS/Windows sont redondants avec Linux pour le headless, mais révèlent des
-# différences de plateforme. Ils sont AUTO sur les branches release-*, MANUELS
-# sinon. Chaque job est unique (pas de matrice) et lance toute la série de
-# sous-projets via une cible agrégée du Makefile racine : un seul clic.
+# Deux instances GitLab avec des runners différents :
+#   - gitlab.com (pjb-cimon) : runners taggés <os>+<exécuteur> (linux/docker,
+#     macos/shell, windows/shell).
+#   - fabrik.sncf.fr : runners d'instance (partagés) SANS tags → il faut des
+#     jobs SANS tags. On duplique donc les jobs Linux (docker) : variante taggée
+#     pour gitlab.com, variante non taggée pour fabrik, sélectionnées par
+#     $CI_SERVER_HOST. (Un tag vide via variable ne marche pas : GitLab ne
+#     ferait matcher aucun runner.)
+# Les runners CAO (macOS/Windows) n'existent que sur gitlab.com.
 
 # ===========================================================================
-# LINUX (docker) : build clautolisp stable puis suites headless. Auto (toujours).
+# LINUX (docker) : build de clautolisp stable puis suites headless.
 # ===========================================================================
 
-build:clautolisp:
+.build-clautolisp:
   stage: build
-  tags: [linux, docker]
   image: debian:bookworm
   before_script:
     - apt-get update
     - apt-get install -y --no-install-recommends make bash perl sbcl git curl ca-certificates
-    # quicklisp (requis par build-programs)
     - curl -fsSL https://beta.quicklisp.org/quicklisp.lisp -o /tmp/quicklisp.lisp
     - 'sbcl --non-interactive --load /tmp/quicklisp.lisp --eval "(quicklisp-quickstart:install)" --eval "(ql-util:without-prompting (ql:add-to-init-file))"'
   script:
@@ -47,17 +41,26 @@ build:clautolisp:
       - .clautolisp/
     expire_in: 1 day
 
+build:clautolisp:
+  extends: .build-clautolisp
+  tags: [linux, docker]
+  rules:
+    - if: '$CI_SERVER_HOST != "fabrik.sncf.fr"'
+
+build:clautolisp:fabrik:
+  extends: .build-clautolisp
+  rules:
+    - if: '$CI_SERVER_HOST == "fabrik.sncf.fr"'
+
 .linux-test:
   stage: test
-  tags: [linux, docker]
   image: debian:bookworm
-  needs: ["build:clautolisp"]
   before_script:
     - apt-get update
     - apt-get install -y --no-install-recommends make bash perl
     - 'export PATH="$CLAUTOLISP_PREFIX/bin:$PATH"'
 
-linux:clautolisp:
+.linux-clautolisp:
   extends: .linux-test
   parallel:
     matrix:
@@ -65,21 +68,50 @@ linux:clautolisp:
   script:
     - 'make -C "$SUBPROJECT" test-clautolisp'
 
-linux:autolisp-script:
+linux:clautolisp:
+  extends: .linux-clautolisp
+  tags: [linux, docker]
+  needs: ["build:clautolisp"]
+  rules:
+    - if: '$CI_SERVER_HOST != "fabrik.sncf.fr"'
+
+linux:clautolisp:fabrik:
+  extends: .linux-clautolisp
+  needs: ["build:clautolisp:fabrik"]
+  rules:
+    - if: '$CI_SERVER_HOST == "fabrik.sncf.fr"'
+
+.linux-autolisp-script:
   extends: .linux-test
   script:
     - make -C autolisp-script test-fakecad TEST_TIMEOUT=10
 
+linux:autolisp-script:
+  extends: .linux-autolisp-script
+  tags: [linux, docker]
+  needs: ["build:clautolisp"]
+  rules:
+    - if: '$CI_SERVER_HOST != "fabrik.sncf.fr"'
+
+linux:autolisp-script:fabrik:
+  extends: .linux-autolisp-script
+  needs: ["build:clautolisp:fabrik"]
+  rules:
+    - if: '$CI_SERVER_HOST == "fabrik.sncf.fr"'
+
 # ===========================================================================
-# macOS / Windows (shell) : moteurs installés localement (release-1.3).
-# Jobs uniques (un clic = toute la série), auto sur release-*, manuel sinon.
+# macOS / Windows (shell, gitlab.com uniquement) : moteurs installés localement.
+# Un seul job par moteur (un clic = toute la série). Auto sur release-*, manuel
+# sinon. Jamais sur fabrik (pas de runner macOS/Windows).
 # ===========================================================================
 
 .on-release-or-manual:
   stage: test
   rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^release-/'   # auto sur les branches release
-    - when: manual                             # manuel ailleurs
+    - if: '$CI_SERVER_HOST == "fabrik.sncf.fr"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH =~ /^release-/'
+    - when: manual
   allow_failure: true
 
 macos:clautolisp:
@@ -94,8 +126,6 @@ macos:bricscad:
   script:
     - make test-bricscad
 
-# Windows : runner en PowerShell (config.toml : shell = "powershell", pas pwsh).
-# On boucle en PowerShell (pas via une boucle sh du Makefile racine).
 windows:clautolisp:
   extends: .on-release-or-manual
   tags: [windows, shell]

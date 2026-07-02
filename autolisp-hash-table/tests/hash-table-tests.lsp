@@ -226,3 +226,4 @@
       (is ah-*gethash-found-p* nil)
       (is-equal nil (ah-gethash ah-table (list 'x 'y) nil) nil)
       (is-not ah-*gethash-found-p* nil))))
+()
