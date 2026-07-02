@@ -4,28 +4,32 @@ stages:
 
 variables:
   # Le clautolisp/alfe des TESTS n'est PAS celui de third-party/clautolisp
-  # (celui-ci est une dépendance bibliothèque d'edward/dwg-identifier et peut
-  # être sur une tout autre branche). On construit une version STABLE clonée
-  # depuis la branche release-1.3 de clautolisp.
+  # (dépendance bibliothèque d'edward/dwg-identifier, éventuellement sur une
+  # autre branche). On utilise une version STABLE : release-1.3.
   GIT_SUBMODULE_STRATEGY: none
   CLAUTOLISP_REF: "release-1.3"
   CLAUTOLISP_PREFIX: "$CI_PROJECT_DIR/.clautolisp"
-  # URL de clone de clautolisp. Dépôt public : aucun token nécessaire.
   CLAUTOLISP_GIT_URL: "https://gitlab.com/ogamita/clautolisp.git"
-  # Tag utilisateur des runners CAO (Windows). NON stocké ici : fourni
-  # dynamiquement au push, p.ex. :
-  #   git push -o ci.variable="WINDOWS_USER_TAG=pjb"
-  WINDOWS_USER_TAG: ""
 
-# ---------------------------------------------------------------------------
-# Build : clautolisp/alfe stables depuis release-1.3 (sbcl + quicklisp, rapide).
-# Une image récente avec sbcl convient (CLAUTOLISP_BUILD_IMAGE).
-# ---------------------------------------------------------------------------
+# Un job s'exécute sur un runner qui possède TOUS ses tags. On a un groupe de
+# jobs par OS :
+#   - [linux]   : runner docker (toujours en ligne) — tests headless clautolisp.
+#                 clautolisp/alfe sont construits ici depuis release-1.3.
+#   - [macos]   : runner shell (machine du dev) — BricsCAD réel.
+#   - [windows] : runner shell (machine du dev) — BricsCAD + AutoCAD réels.
+# Sur macOS/Windows, clautolisp/alfe + make sont supposés installés (le dev
+# dispose de la release-1.3). Les jobs CAO sont `when: manual` : les runners
+# sont intermittents (portables), on les déclenche pour valider quand la
+# machine est en ligne.
+
+# ===========================================================================
+# LINUX (docker) : build de clautolisp stable puis suites headless.
+# ===========================================================================
 
 build:clautolisp:
   stage: build
+  tags: [linux]
   image: debian:bookworm
-  tags: [linux, amd64, docker]
   before_script:
     - apt-get update
     - apt-get install -y --no-install-recommends make bash perl sbcl git curl ca-certificates
@@ -43,14 +47,10 @@ build:clautolisp:
       - .clautolisp/
     expire_in: 1 day
 
-# ---------------------------------------------------------------------------
-# Linux (headless) : tests de chaque sous-projet via le clautolisp stable.
-# ---------------------------------------------------------------------------
-
 .linux-test:
   stage: test
+  tags: [linux]
   image: debian:bookworm
-  tags: [linux, amd64, docker]
   needs: ["build:clautolisp"]
   before_script:
     - apt-get update
@@ -61,55 +61,55 @@ linux:clautolisp:
   extends: .linux-test
   parallel:
     matrix:
-      - SUBPROJECT:
-          - autolisp-vector
-          - autolisp-hash-table
-          - autolisp-json
-          - autolisp-doc
-          - autolisp-misc
+      - SUBPROJECT: [autolisp-vector, autolisp-hash-table, autolisp-json, autolisp-doc, autolisp-misc]
   script:
     - make -C "$SUBPROJECT" test-clautolisp
 
-# autolisp-script : pas de moteur CAO requis (backend fake-CAD).
 linux:autolisp-script:
   extends: .linux-test
   script:
     - make -C autolisp-script test-fakecad TEST_TIMEOUT=10
 
-# ---------------------------------------------------------------------------
-# Windows : BricsCAD / AutoCAD disponibles. Jobs exécutés uniquement lorsque le
-# tag utilisateur est fourni au push (WINDOWS_USER_TAG). Ils tournent sur le
-# runner portant les tags [windows, <user>] et restent en file jusqu'à ce que
-# ce PC soit en ligne. clautolisp/alfe et make doivent y être installés (le dev
-# est censé disposer de la release-1.3 stable installée localement).
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# macOS : BricsCAD réel (clautolisp/alfe installés localement). Sur demande.
+# ===========================================================================
 
-.windows-test:
+macos:bricscad:
   stage: test
-  tags: [windows, "$WINDOWS_USER_TAG"]
+  tags: [macos]
   rules:
-    - if: '$WINDOWS_USER_TAG != ""'
-
-windows:bricscad:
-  extends: .windows-test
+    - when: manual
+  allow_failure: true
   parallel:
     matrix:
-      - SUBPROJECT:
-          - autolisp-vector
-          - autolisp-hash-table
-          - autolisp-json
-          - autolisp-doc
+      - SUBPROJECT: [autolisp-vector, autolisp-hash-table, autolisp-json, autolisp-doc]
+  script:
+    - make -C "$SUBPROJECT" test-bricscad
+
+# ===========================================================================
+# Windows : BricsCAD + AutoCAD réels (alfe installé localement). Sur demande.
+# ===========================================================================
+
+windows:bricscad:
+  stage: test
+  tags: [windows]
+  rules:
+    - when: manual
+  allow_failure: true
+  parallel:
+    matrix:
+      - SUBPROJECT: [autolisp-vector, autolisp-hash-table, autolisp-json, autolisp-doc]
   script:
     - make -C "$SUBPROJECT" test-bricscad
 
 windows:autocad:
-  extends: .windows-test
+  stage: test
+  tags: [windows]
+  rules:
+    - when: manual
+  allow_failure: true
   parallel:
     matrix:
-      - SUBPROJECT:
-          - autolisp-vector
-          - autolisp-hash-table
-          - autolisp-json
-          - autolisp-doc
+      - SUBPROJECT: [autolisp-vector, autolisp-hash-table, autolisp-json, autolisp-doc]
   script:
     - make -C "$SUBPROJECT" test-autocad
