@@ -35,13 +35,13 @@ build:clautolisp:
     - apt-get install -y --no-install-recommends make bash perl sbcl git curl ca-certificates
     # quicklisp (requis par build-programs)
     - curl -fsSL https://beta.quicklisp.org/quicklisp.lisp -o /tmp/quicklisp.lisp
-    - sbcl --non-interactive --load /tmp/quicklisp.lisp --eval "(quicklisp-quickstart:install)" --eval "(ql-util:without-prompting (ql:add-to-init-file))"
+    - 'sbcl --non-interactive --load /tmp/quicklisp.lisp --eval "(quicklisp-quickstart:install)" --eval "(ql-util:without-prompting (ql:add-to-init-file))"'
   script:
-    - git clone --depth 1 --branch "$CLAUTOLISP_REF" "$CLAUTOLISP_GIT_URL" clautolisp-stable
+    - 'git clone --depth 1 --branch "$CLAUTOLISP_REF" "$CLAUTOLISP_GIT_URL" clautolisp-stable'
     - make -C clautolisp-stable build-programs
-    - make -C clautolisp-stable install-programs PREFIX="$CLAUTOLISP_PREFIX"
-    - "$CLAUTOLISP_PREFIX/bin/clautolisp" --version
-    - "$CLAUTOLISP_PREFIX/bin/alfe" --version
+    - 'make -C clautolisp-stable install-programs PREFIX="$CLAUTOLISP_PREFIX"'
+    - '"$CLAUTOLISP_PREFIX/bin/clautolisp" --version'
+    - '"$CLAUTOLISP_PREFIX/bin/alfe" --version'
   artifacts:
     paths:
       - .clautolisp/
@@ -55,7 +55,7 @@ build:clautolisp:
   before_script:
     - apt-get update
     - apt-get install -y --no-install-recommends make bash perl
-    - export PATH="$CLAUTOLISP_PREFIX/bin:$PATH"
+    - 'export PATH="$CLAUTOLISP_PREFIX/bin:$PATH"'
 
 linux:clautolisp:
   extends: .linux-test
@@ -63,7 +63,7 @@ linux:clautolisp:
     matrix:
       - SUBPROJECT: [autolisp-vector, autolisp-hash-table, autolisp-json, autolisp-doc, autolisp-misc]
   script:
-    - make -C "$SUBPROJECT" test-clautolisp
+    - 'make -C "$SUBPROJECT" test-clautolisp'
 
 linux:autolisp-script:
   extends: .linux-test
@@ -84,7 +84,7 @@ macos:bricscad:
     matrix:
       - SUBPROJECT: [autolisp-vector, autolisp-hash-table, autolisp-json, autolisp-doc]
   script:
-    - make -C "$SUBPROJECT" test-bricscad
+    - 'make -C "$SUBPROJECT" test-bricscad'
 
 # ===========================================================================
 # Windows : BricsCAD + AutoCAD réels (alfe installé localement). Sur demande.
@@ -100,7 +100,7 @@ windows:bricscad:
     matrix:
       - SUBPROJECT: [autolisp-vector, autolisp-hash-table, autolisp-json, autolisp-doc]
   script:
-    - make -C "$SUBPROJECT" test-bricscad
+    - 'make -C "$SUBPROJECT" test-bricscad'
 
 windows:autocad:
   stage: test
@@ -112,4 +112,4 @@ windows:autocad:
     matrix:
       - SUBPROJECT: [autolisp-vector, autolisp-hash-table, autolisp-json, autolisp-doc]
   script:
-    - make -C "$SUBPROJECT" test-autocad
+    - 'make -C "$SUBPROJECT" test-autocad'
