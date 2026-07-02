@@ -342,7 +342,9 @@
       (setq av-initial-length (av--sequence-length av-initial-contents))
       (if (/= av-initial-length av-size)
         (av--error "initial-contents length must equal array length"))))
-  (if (listp av-initial-contents)
+  ;; NB: (listp nil) => T ; ne prendre la branche « liste » que si des
+  ;; initial-contents ont réellement été fournis (sinon branche « arbre »).
+  (if av-initial-contents
     (progn
       (setq av-vec (av--make-array-from-list av-initial-contents av-fill-ptr))
       (if (/= (av-length av-vec) av-size)

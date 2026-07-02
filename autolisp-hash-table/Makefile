@@ -1,66 +1,21 @@
-.PHONY: test-ci test test-bricscad test-bricscad-macos-batch test-bricscad-macos-osascript-attach bench-bricscad docs-pdf clean
+# autolisp-hash-table --- table de hachage AutoLISP (au-dessus de autolisp-vector)
+#
+# Benchmarks : AH_RUN_BENCHMARKS=1 make test   (voir tests/run-tests.lsp)
 
-UNAME_S := $(shell uname -s)
+TEST_SUITE = autolisp-hash-table
 
-ifeq ($(UNAME_S),Darwin)
-BRICSCAD_MACOS_BATCH_ARGS := --bricscad-macos-mode batch
-BRICSCAD_MACOS_OSASCRIPT_ATTACH_ARGS := --bricscad-macos-mode osascript --bricscad-macos-app attach
-else
-BRICSCAD_MACOS_BATCH_ARGS :=
-BRICSCAD_MACOS_OSASCRIPT_ATTACH_ARGS :=
-endif
+TEST_SOURCES = \
+	-l ../autolisp-test/test-framework.lsp \
+	-l ../autolisp-vector/src/autolisp-vector.lsp \
+	-l src/autolisp-hash-table.lsp \
+	-l tests/hash-table-tests.lsp \
+	-l tests/hash-table-benchmarks.lsp \
+	-x '(setq ah-run-benchmarks-flag nil)' \
+	-l tests/run-tests.lsp
 
-test-ci: test
+include ../makefiles/common.mk
 
-test: test-bricscad
-
-ifeq ($(UNAME_S),Darwin)
-test-bricscad:
-	$(MAKE) test-bricscad-macos-batch
-	$(MAKE) test-bricscad-macos-osascript-attach
-
-test-bricscad-macos-batch:
-	../autolisp-script/autolisp --bricscad $(BRICSCAD_MACOS_BATCH_ARGS) \
-		../autolisp-test/test-framework.lsp \
-		../autolisp-vector/src/autolisp-vector.lsp \
-		src/autolisp-hash-table.lsp \
-		tests/hash-table-tests.lsp \
-		tests/hash-table-benchmarks.lsp \
-		-x '(setq ah-run-benchmarks-flag nil)' \
-		$(if $(AH_RUN_BENCHMARKS),-x '(setq ah-run-benchmarks-flag T)',) \
-		tests/run-tests.lsp
-
-test-bricscad-macos-osascript-attach:
-	../autolisp-script/autolisp --bricscad $(BRICSCAD_MACOS_OSASCRIPT_ATTACH_ARGS) \
-		../autolisp-test/test-framework.lsp \
-		../autolisp-vector/src/autolisp-vector.lsp \
-		src/autolisp-hash-table.lsp \
-		tests/hash-table-tests.lsp \
-		tests/hash-table-benchmarks.lsp \
-		-x '(setq ah-run-benchmarks-flag nil)' \
-		$(if $(AH_RUN_BENCHMARKS),-x '(setq ah-run-benchmarks-flag T)',) \
-		tests/run-tests.lsp
-else
-test-bricscad:
-	../autolisp-script/autolisp --bricscad \
-		../autolisp-test/test-framework.lsp \
-		../autolisp-vector/src/autolisp-vector.lsp \
-		src/autolisp-hash-table.lsp \
-		tests/hash-table-tests.lsp \
-		tests/hash-table-benchmarks.lsp \
-		-x '(setq ah-run-benchmarks-flag nil)' \
-		$(if $(AH_RUN_BENCHMARKS),-x '(setq ah-run-benchmarks-flag T)',) \
-		tests/run-tests.lsp
-endif
-
-bench-bricscad:
-	../autolisp-script/autolisp --bricscad $(BRICSCAD_MACOS_BATCH_ARGS) --timeout 600 \
-		../autolisp-test/test-framework.lsp \
-		../autolisp-vector/src/autolisp-vector.lsp \
-		src/autolisp-hash-table.lsp \
-		tests/hash-table-tests.lsp \
-		tests/hash-table-benchmarks.lsp \
-		tests/run-benchmarks.lsp
+.PHONY: docs-pdf clean
 
 docs-pdf:
 	$(MAKE) -C docs pdf

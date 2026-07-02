@@ -1,69 +1,50 @@
 #!/usr/bin/env bash
 # run-tests.sh --- lance les tests du sous-projet `autolisp-misc`.
 #
-# Invoque `../autolisp-script/autolisp` sur les scripts de test du
-# sous-projet `autolisp-misc` depuis la racine du dépôt outils-autolisp
-# (afin que les chemins relatifs `autolisp-misc/src/…` présents dans les
-# scripts se résolvent) puis vérifie dans chaque sortie capturée la
-# présence du marqueur `TESTS OK`.
+# Exécute les scripts de test sous `clautolisp` (autolisp-script/autolisp est
+# déprécié) depuis la racine du dépôt outils-autolisp (afin que les chemins
+# relatifs `autolisp-misc/src/…` des scripts se résolvent), puis vérifie la
+# présence du marqueur `TESTS OK` dans chaque sortie capturée.
 #
-# Les arguments passés à ce script (par exemple `--bricscad`, `--mode
-# batch`, `--timeout 60`) sont transmis tels quels à `autolisp`.
+# Réglages : CLAUTOLISP (binaire, défaut « clautolisp »),
+#            CLAUTOLISP_DIALECT (défaut « strict »).
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MISC_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTILS_ROOT="$(cd "$MISC_ROOT/.." && pwd)"
-AUTOLISP="$OUTILS_ROOT/autolisp-script/autolisp"
 
-if [[ ! -x "$AUTOLISP" ]]; then
-  echo "autolisp-misc/tests: autolisp introuvable ou non exécutable: $AUTOLISP" >&2
+CLAUTOLISP="${CLAUTOLISP:-clautolisp}"
+DIALECT="${CLAUTOLISP_DIALECT:-strict}"
+
+if ! command -v "$CLAUTOLISP" >/dev/null 2>&1; then
+  echo "autolisp-misc/tests: clautolisp introuvable: $CLAUTOLISP" >&2
   exit 2
 fi
 
-tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/autolisp-misc-fs-tests.XXXXXX")"
+tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/autolisp-misc-tests.XXXXXX")"
 trap 'rm -rf "$tmpdir"' EXIT
-
-tests=(
-  "autolisp-misc/tests/fs-tests.lsp"
-  "autolisp-misc/tests/format-tests.lsp"
-)
 
 cd "$OUTILS_ROOT"
 
-for test_script in "${tests[@]}"; do
-  test_name="$(basename "$test_script" .lsp)"
-  echo "autolisp-misc/$test_name RUN args=$*"
-  run_script="$test_script"
-
-  if [[ "$test_script" == "autolisp-misc/tests/format-tests.lsp" ]]; then
-    run_script="$tmpdir/$test_name-wrapper.lsp"
-    cat >"$run_script" <<'EOF'
-(load "autolisp-misc/src/format.lsp")
-(load "autolisp-misc/tests/format-tests.lsp")
-EOF
-  fi
-
+run_one() { # name  extra_load_args  script
+  local name="$1" extra="$2" script="$3"
+  echo "autolisp-misc/$name RUN (dialect=$DIALECT)"
   set +e
-  "$AUTOLISP" "$@" "$run_script" \
-    >"$tmpdir/$test_name.stdout.log" 2>"$tmpdir/$test_name.stderr.log"
-  rc=$?
+  # shellcheck disable=SC2086
+  "$CLAUTOLISP" --dialect "$DIALECT" -q $extra "$script" \
+    >"$tmpdir/$name.out" 2>"$tmpdir/$name.err"
+  local rc=$?
   set -e
-
-  if [[ "$rc" -ne 0 ]]; then
-    echo "autolisp-misc/$test_name KO (autolisp rc=$rc)" >&2
-    [[ -s "$tmpdir/$test_name.stdout.log" ]] && { echo "--- stdout ---" >&2; cat "$tmpdir/$test_name.stdout.log" >&2; }
-    [[ -s "$tmpdir/$test_name.stderr.log" ]] && { echo "--- stderr ---" >&2; cat "$tmpdir/$test_name.stderr.log" >&2; }
-    exit "$rc"
-  fi
-
-  if grep -Eq '^[[:space:]]*TESTS OK[[:space:]]*$' "$tmpdir/$test_name.stdout.log"; then
-    echo "autolisp-misc/$test_name OK"
-  else
-    echo "autolisp-misc/$test_name KO (marqueur 'TESTS OK' absent)" >&2
-    [[ -s "$tmpdir/$test_name.stdout.log" ]] && { echo "--- stdout ---" >&2; cat "$tmpdir/$test_name.stdout.log" >&2; }
-    [[ -s "$tmpdir/$test_name.stderr.log" ]] && { echo "--- stderr ---" >&2; cat "$tmpdir/$test_name.stderr.log" >&2; }
+  if [[ $rc -ne 0 ]] || ! grep -Eq '^[[:space:]]*TESTS OK[[:space:]]*$' "$tmpdir/$name.out"; then
+    echo "autolisp-misc/$name KO (rc=$rc)" >&2
+    [[ -s "$tmpdir/$name.out" ]] && { echo "--- stdout ---" >&2; cat "$tmpdir/$name.out" >&2; }
+    [[ -s "$tmpdir/$name.err" ]] && { echo "--- stderr ---" >&2; cat "$tmpdir/$name.err" >&2; }
     exit 1
   fi
-done
+  echo "autolisp-misc/$name OK"
+}
+
+run_one fs-tests     ""                                   autolisp-misc/tests/fs-tests.lsp
+run_one format-tests "-l autolisp-misc/src/format.lsp"    autolisp-misc/tests/format-tests.lsp

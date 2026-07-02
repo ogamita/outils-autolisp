@@ -27,8 +27,8 @@
                (and (= (car ah-bench-summary) :suite)
                     (= (cadr (member :fail ah-bench-summary)) 0)
                     (= (cadr (member :error ah-bench-summary)) 0))))
-    (autolisp-set-status 0)
-    (autolisp-set-status 1))
+    (t:set-status 0)
+    (t:set-status 1))
   (if ah-bench-summary
     (progn
       (t:emit-out

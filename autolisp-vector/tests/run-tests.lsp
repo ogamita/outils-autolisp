@@ -24,8 +24,8 @@
            (= (cadr (member :error av-summary)) 0)
            (or (null av-bench-result)
                (not (vl-catch-all-error-p av-bench-result))))
-    (autolisp-set-status 0)
-    (autolisp-set-status 1))
+    (t:set-status 0)
+    (t:set-status 1))
   (if (and av-bench-result
            (vl-catch-all-error-p av-bench-result))
     (autolisp-log-err

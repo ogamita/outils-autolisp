@@ -1,58 +1,49 @@
-.PHONY: test-ci test-bricscad test-bricscad-macos-batch test-bricscad-macos-osascript-attach bench-bricscad docs-pdf
+# Makefile racine --- cibles agrégées des sous-projets outils-autolisp.
+#
+# Les tests utilisent désormais clautolisp / alfe (autolisp-script/autolisp est
+# déprécié). Chaque sous-projet fournit test / test-ci / test-clautolisp
+# (cf. makefiles/common.mk) ; autolisp-script garde son backend fake-CAD.
 
-UNAME_S := $(shell uname -s)
+# Sous-projets basés sur le framework autolisp-test (+ misc, harnais shell).
+TEST_SUBPROJECTS = \
+	autolisp-vector \
+	autolisp-hash-table \
+	autolisp-json \
+	autolisp-doc \
+	autolisp-misc
 
-test-ci:
-	$(MAKE) -C autolisp-script     test-ci
-	$(MAKE) -C autolisp-vector     test-ci
-	$(MAKE) -C autolisp-hash-table test-ci
-	$(MAKE) -C autolisp-json       test-ci
-	$(MAKE) -C autolisp-misc       test-ci
+DOCS_SUBPROJECTS = \
+	autolisp-script \
+	autolisp-vector \
+	autolisp-hash-table \
+	autolisp-json \
+	autolisp-formatter \
+	autolisp-misc \
+	autolisp-doc
 
-ifeq ($(UNAME_S),Darwin)
-test-bricscad:
-	$(MAKE) test-bricscad-macos-batch
-	$(MAKE) test-bricscad-macos-osascript-attach
+.PHONY: test-ci test test-clautolisp docs-pdf clean
 
-test-bricscad-macos-batch:
-	$(MAKE) -C autolisp-script     test-bricscad-macos-batch
-	$(MAKE) -C autolisp-vector     test-bricscad-macos-batch
-	$(MAKE) -C autolisp-hash-table test-bricscad-macos-batch
-	$(MAKE) -C autolisp-json       test-bricscad-macos-batch
-	$(MAKE) -C autolisp-misc       test-bricscad-macos-batch
+# CI / headless : clautolisp pour les libs, backend fake-CAD pour autolisp-script.
+test-ci: test-clautolisp
+	$(MAKE) -C autolisp-script test-fakecad TEST_TIMEOUT=10
 
-test-bricscad-macos-osascript-attach:
-	$(MAKE) -C autolisp-script     test-bricscad-macos-osascript-attach
-	$(MAKE) -C autolisp-vector     test-bricscad-macos-osascript-attach
-	$(MAKE) -C autolisp-hash-table test-bricscad-macos-osascript-attach
-	$(MAKE) -C autolisp-json       test-bricscad-macos-osascript-attach
-	$(MAKE) -C autolisp-misc       test-bricscad-macos-osascript-attach
-else
-test-bricscad:
-	$(MAKE) -C autolisp-script     test-bricscad
-	$(MAKE) -C autolisp-vector     test-bricscad
-	$(MAKE) -C autolisp-hash-table test-bricscad
-	$(MAKE) -C autolisp-json       test-bricscad
-	$(MAKE) -C autolisp-misc       test-bricscad
-endif
+test-clautolisp:
+	@for d in $(TEST_SUBPROJECTS); do \
+		echo "== $$d (clautolisp) =="; \
+		$(MAKE) -C $$d test-clautolisp || exit 1; \
+	done
 
-bench-bricscad:
-	$(MAKE) -C autolisp-vector     bench-bricscad
-	$(MAKE) -C autolisp-hash-table bench-bricscad
+# Local : chaque sous-projet choisit ses moteurs selon uname (clautolisp + CAO).
+test:
+	@for d in $(TEST_SUBPROJECTS); do \
+		echo "== $$d =="; \
+		$(MAKE) -C $$d test || exit 1; \
+	done
 
 docs-pdf:
-	$(MAKE) -C autolisp-script     docs-pdf
-	$(MAKE) -C autolisp-vector     docs-pdf
-	$(MAKE) -C autolisp-hash-table docs-pdf
-	$(MAKE) -C autolisp-json       docs-pdf
-	$(MAKE) -C autolisp-formatter  docs-pdf
-	$(MAKE) -C autolisp-misc       docs-pdf
-	$(MAKE) -C autolisp-doc        docs-pdf
+	@for d in $(DOCS_SUBPROJECTS); do $(MAKE) -C $$d docs-pdf || exit 1; done
 
 clean:
-	$(MAKE) -C autolisp-script     clean
-	$(MAKE) -C autolisp-vector     clean
-	$(MAKE) -C autolisp-hash-table clean
-	$(MAKE) -C autolisp-json       clean
-	$(MAKE) -C autolisp-formatter  clean
-	$(MAKE) -C autolisp-misc       clean
+	@for d in $(TEST_SUBPROJECTS) autolisp-formatter autolisp-script; do \
+		$(MAKE) -C $$d clean || exit 1; \
+	done

@@ -6,6 +6,6 @@
            (= (car aj-summary) :suite)
            (= (cadr (member :fail aj-summary)) 0)
            (= (cadr (member :error aj-summary)) 0))
-    (autolisp-set-status 0)
-    (autolisp-set-status 1))
+    (t:set-status 0)
+    (t:set-status 1))
   (princ ""))

@@ -99,10 +99,17 @@
   ah-table)
 
 (defun ah--modulus ()
-  2147483647)
+  ;; < 32737 pour que (* (rem h modulus) 65599) reste dans la plage 32 bits.
+  32719)
 
 (defun ah--mix (ah-hash ah-value)
-  (rem (+ (* ah-hash 65599) ah-value 17)
+  ;; Arithmétique bornée à 32 bits : on réduit les deux opérandes modulo
+  ;; (ah--modulus) AVANT la multiplication. Sinon (* ah-hash 65599) dépasse
+  ;; la plage entière 32 bits d'AutoLISP — promue en réel sur les vrais CAO,
+  ;; mais signalée en erreur sous clautolisp (dialecte strict).
+  (rem (+ (* (rem ah-hash (ah--modulus)) 65599)
+          (rem (abs ah-value) (ah--modulus))
+          17)
        (ah--modulus)))
 
 (defun ah--type-tag (ah-value)

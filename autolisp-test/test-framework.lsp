@@ -12,6 +12,18 @@
 (setq *t:last-fail* 0)
 (setq *t:last-error* 0)
 
+;; AutoLISP has no real keywords: :foo is just a symbol named ":FOO" that
+;; evaluates to NIL by default on every engine (BricsCAD, AutoCAD,
+;; clautolisp). Bind each marker used below to itself so that result
+;; records (list :ok ...) and their dispatch (eq (car res) :ok), as well
+;; as the suite summary keys, behave as distinct self-evaluating tags
+;; instead of all collapsing to NIL (which would count every test OK).
+(setq :ok    ':ok)
+(setq :fail  ':fail)
+(setq :error ':error)
+(setq :suite ':suite)
+(setq :total ':total)
+
 (defun t:write-line-to (path s / f)
   (if (and path (/= path ""))
     (progn
@@ -135,16 +147,36 @@
                       (t:str tol)))))
   t)
 
-(defun signals-error (thunk msg)
+(defun signals-error (thunk msg / r)
   ;; thunk: (function (lambda () ...))
+  ;; NB: pas de `let` ici — ce n'est pas de l'AutoLISP portable (indéfini
+  ;; sous clautolisp, tous dialectes) ; on utilise une variable locale.
   (setq thunk (cond ((= (type thunk) 'USUBR) thunk)
                     ((= (type thunk) 'SUBR)  thunk)
                     (t thunk)))
   (setq msg (if msg msg "signals-error: expected an error"))
-  (let ((r (vl-catch-all-apply thunk nil)))
-    (if (vl-catch-all-error-p r)
-      t
-      (t:fail msg))))
+  (setq r (vl-catch-all-apply thunk nil))
+  (if (vl-catch-all-error-p r)
+    t
+    (t:fail msg)))
+
+;; -----------------------------
+;; Exit status (portable)
+;; -----------------------------
+
+;; autolisp-set-status est fournie soit par le bootstrap file-IPC d'alfe sur
+;; les CAO (BricsCAD/AutoCAD), soit comme extension clautolisp (dialectes
+;; lax / clautolisp). Sous clautolisp on bascule temporairement *AUTOLISP-DIALECT*
+;; en lax autour de l'appel (sinon warning « hors dialecte » en strict) puis on
+;; restaure. Ailleurs (CAO), on appelle directement.
+(defun t:set-status (code / saved)
+  (if (boundp '*autolisp-dialect*)
+    (progn
+      (setq saved *autolisp-dialect*)
+      (setq *autolisp-dialect* 'lax)
+      (autolisp-set-status code)
+      (setq *autolisp-dialect* saved))
+    (autolisp-set-status code)))
 
 ;; -----------------------------
 ;; Runner + report
@@ -169,9 +201,11 @@
 
 (defun t:print-result (res / status suite name msg)
   (setq status (car res))
-  (setq suite  (cadr res))
-  (setq name   (caddr res))
-  (setq msg    (cadddr res))
+  ;; Coerce nil fields to "" : sous clautolisp vl-catch-all-error-message
+  ;; peut renvoyer nil, et (strcat … nil) y est une erreur (fatale).
+  (setq suite  (if (cadr res)   (cadr res)   "?"))
+  (setq name   (if (caddr res)  (caddr res)  "?"))
+  (setq msg    (if (cadddr res) (cadddr res) ""))
 
   (cond
     ((eq status :ok)

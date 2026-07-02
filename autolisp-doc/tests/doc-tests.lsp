@@ -8,72 +8,72 @@
   (function
     (lambda (/ ad-doc)
       (setq ad-doc (documentation 'open 'function))
-      (is ad-doc)
-      (is (wcmatch ad-doc "*open (AutoLISP)*"))
-      (is (wcmatch ad-doc "*Signature:*"))
-      (is (wcmatch ad-doc "*Source: https://help.autodesk.com/*")))))
+      (is ad-doc nil)
+      (is (wcmatch ad-doc "*open (AutoLISP)*") nil)
+      (is (wcmatch ad-doc "*Signature:*") nil)
+      (is (wcmatch ad-doc "*Source: https://help.autodesk.com/*") nil))))
 
 (deftest
   "documentation rejects unsupported doc types"
   (function
     (lambda ()
-      (is-equal nil (documentation 'open 'variable)))))
+      (is-equal nil (documentation 'open 'variable) nil))))
 
 (deftest
   "describe uses documentation for documented symbols"
   (function
     (lambda (/ ad-text)
       (setq ad-text (CL:doc--object-description 'open))
-      (is (wcmatch ad-text "*open (AutoLISP)*"))
-      (is (wcmatch ad-text "*Return values:*")))))
+      (is (wcmatch ad-text "*open (AutoLISP)*") nil)
+      (is (wcmatch ad-text "*Return values:*") nil))))
 
 (deftest
   "describe handles ordinary lists"
   (function
     (lambda (/ ad-text)
       (setq ad-text (CL:doc--object-description '(1 2 3)))
-      (is (wcmatch ad-text "*List object*"))
-      (is (wcmatch ad-text "*Length: 3*")))))
+      (is (wcmatch ad-text "*List object*") nil)
+      (is (wcmatch ad-text "*Length: 3*") nil))))
 
 (deftest
   "apropos-list returns matching symbols"
   (function
     (lambda (/ ad-result)
       (setq ad-result (apropos-list "open"))
-      (is ad-result)
-      (is (member 'OPEN ad-result)))))
+      (is ad-result nil)
+      (is (member 'OPEN ad-result) nil))))
 
 (deftest
   "apropos wildcard finds string functions"
   (function
     (lambda (/ ad-result)
       (setq ad-result (apropos-list "str*"))
-      (is ad-result)
-      (is (member 'STRCAT ad-result)))))
+      (is ad-result nil)
+      (is (member 'STRCAT ad-result) nil))))
 
 (deftest
   "apropos summary line includes name and summary"
   (function
     (lambda (/ ad-line)
       (setq ad-line (CL:doc--summary-line (CL:doc--entry 'open)))
-      (is (wcmatch ad-line "open --*")))))
+      (is (wcmatch ad-line "open --*") nil))))
 
 (deftest
   "help index returns public help symbols"
   (function
     (lambda (/ ad-result)
-      (setq ad-result (help))
-      (is (member 'HELP ad-result))
-      (is (member 'DOCUMENTATION ad-result))
-      (is (member 'APROPOS ad-result)))))
+      (setq ad-result (help nil))
+      (is (member 'HELP ad-result) nil)
+      (is (member 'DOCUMENTATION ad-result) nil)
+      (is (member 'APROPOS ad-result) nil))))
 
 (deftest
   "help text search returns matching symbols"
   (function
     (lambda (/ ad-result)
       (setq ad-result (help "unicode"))
-      (is ad-result)
-      (is (member 'OPEN ad-result)))))
+      (is ad-result nil)
+      (is (member 'OPEN ad-result) nil))))
 
 (deftest
   "text search scans documentation body"
@@ -82,7 +82,7 @@
       (setq ad-results (CL:doc--text-search "byte order marks"))
       (setq ad-names (mapcar '(lambda (ad-entry) (CL:doc--assoc-value 'name ad-entry))
                              ad-results))
-      (is (member "open" ad-names)))))
+      (is (member "open" ad-names) nil))))
 
 (deftest
   "categorize collects source families from called functions"
@@ -96,9 +96,9 @@
                  (vl-load-com)
                  (vla-get-ActiveDocument (vlax-get-acad-object))
                  (alert x))))
-      (is (member 'AUTOLISP ad-cats))
-      (is (member 'AUTOLISP/DCL ad-cats))
-      (is (member 'AUTOLISP/ACTIVE-X ad-cats)))))
+      (is (member 'AUTOLISP ad-cats) nil)
+      (is (member 'AUTOLISP/DCL ad-cats) nil)
+      (is (member 'AUTOLISP/ACTIVE-X ad-cats) nil))))
 
 (deftest
   "free variables excludes parameters and locals"
@@ -111,23 +111,23 @@
                  (foreach item items
                    (setq z (+ item y b)))
                  (list a b z x y items))))
-      (is (member 'X ad-vars))
-      (is (member 'Y ad-vars))
-      (is (member 'Z ad-vars))
-      (is (member 'ITEMS ad-vars))
-      (is-not (member 'A ad-vars))
-      (is-not (member 'B ad-vars))
-      (is-not (member 'ITEM ad-vars)))))
+      (is (member 'X ad-vars) nil)
+      (is (member 'Y ad-vars) nil)
+      (is (member 'Z ad-vars) nil)
+      (is (member 'ITEMS ad-vars) nil)
+      (is-not (member 'A ad-vars) nil)
+      (is-not (member 'B ad-vars) nil)
+      (is-not (member 'ITEM ad-vars) nil))))
 
 (deftest
   "ad aliases reuse public API"
   (function
     (lambda ()
       (is-equal (documentation 'open 'function)
-                (ad-documentation 'open 'function))
+                (ad-documentation 'open 'function) nil)
       (is-equal (apropos-list "open")
-                (ad-apropos-list "open"))
+                (ad-apropos-list "open") nil)
       (is-equal (ad-categorize '(alert "hi"))
-                (categorize '(alert "hi")))
+                (categorize '(alert "hi")) nil)
       (is-equal (ad-free-variables '(+ x y))
-                (free-variables '(+ x y))))))
+                (free-variables '(+ x y)) nil))))

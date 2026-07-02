@@ -10,8 +10,8 @@
             " stage=" (vl-princ-to-string ah-bench-stage-state)))
   (ah-bench--print-table)
   (if ah-bench-results-state
-    (autolisp-set-status 0)
-    (autolisp-set-status 1))
+    (t:set-status 0)
+    (t:set-status 1))
   (princ ""))
 
 (princ "")

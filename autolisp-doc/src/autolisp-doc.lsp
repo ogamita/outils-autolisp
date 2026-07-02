@@ -258,10 +258,23 @@
       (strcat " -- " (CL:doc--assoc-value 'summary cl:entry))
       "")))
 
+(defun CL:doc--string< (cl:a cl:b / cl:i cl:n)
+  ;; Comparaison lexicographique portable : ni strcmp ni < sur chaînes ne
+  ;; sont disponibles en AutoLISP portable (dialecte strict) ; on compare
+  ;; code par code via ascii ; à préfixe commun, la plus courte est « < ».
+  (setq cl:i 1
+        cl:n (min (strlen cl:a) (strlen cl:b)))
+  (while (and (<= cl:i cl:n)
+              (= (ascii (substr cl:a cl:i 1)) (ascii (substr cl:b cl:i 1))))
+    (setq cl:i (1+ cl:i)))
+  (if (> cl:i cl:n)
+    (< (strlen cl:a) (strlen cl:b))
+    (< (ascii (substr cl:a cl:i 1)) (ascii (substr cl:b cl:i 1)))))
+
 (defun CL:doc--sort-strings (cl:strings)
   (vl-sort cl:strings
            '(lambda (cl:left cl:right)
-              (< (strcmp (strcase cl:left) (strcase cl:right)) 0))))
+              (CL:doc--string< (strcase cl:left) (strcase cl:right)))))
 
 (defun CL:doc--read-symbol (cl:name)
   (read cl:name))
@@ -549,9 +562,8 @@
       (setq cl:results (cons cl:entry cl:results))))
   (vl-sort cl:results
            '(lambda (cl:left cl:right)
-              (< (strcmp (strcase (CL:doc--assoc-value 'name cl:left))
-                         (strcase (CL:doc--assoc-value 'name cl:right)))
-                 0))))
+              (CL:doc--string< (strcase (CL:doc--assoc-value 'name cl:left))
+                               (strcase (CL:doc--assoc-value 'name cl:right))))))
 
 (defun CL:doc--print-help-index ()
   (foreach cl:line

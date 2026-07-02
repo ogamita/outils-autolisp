@@ -1,16 +1,17 @@
-.PHONY: test-ci test test-bricscad docs-pdf clean
+# autolisp-doc --- API documentation / describe / apropos pour AutoLISP
 
-test-ci: test
+TEST_SUITE = autolisp-doc
 
-test: test-bricscad
+TEST_SOURCES = \
+	-l ../autolisp-test/test-framework.lsp \
+	-l src/autolisp-ref.lsp \
+	-l src/autolisp-doc.lsp \
+	-l tests/doc-tests.lsp \
+	-l tests/run-tests.lsp
 
-test-bricscad:
-	../autolisp-script/autolisp --bricscad \
-		../autolisp-test/test-framework.lsp \
-		src/autolisp-ref.lsp \
-		src/autolisp-doc.lsp \
-		tests/doc-tests.lsp \
-		tests/run-tests.lsp
+include ../makefiles/common.mk
+
+.PHONY: docs-pdf clean
 
 docs-pdf:
 	$(MAKE) -C docs pdf

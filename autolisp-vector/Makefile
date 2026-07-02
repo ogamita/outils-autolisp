@@ -1,64 +1,20 @@
-.PHONY: test-ci test test-bricscad test-bricscad-macos-batch test-bricscad-macos-osascript-attach bench-bricscad docs-pdf clean
+# autolisp-vector --- vecteur AutoLISP indexé par arbre
+#
+# Benchmarks : AV_RUN_BENCHMARKS=1 make test   (voir tests/run-tests.lsp)
 
-UNAME_S := $(shell uname -s)
+TEST_SUITE = autolisp-vector
 
-ifeq ($(UNAME_S),Darwin)
-BRICSCAD_MACOS_BATCH_ARGS := --bricscad-macos-mode batch
-BRICSCAD_MACOS_OSASCRIPT_ATTACH_ARGS := --bricscad-macos-mode osascript --bricscad-macos-app attach
-else
-BRICSCAD_MACOS_BATCH_ARGS :=
-BRICSCAD_MACOS_OSASCRIPT_ATTACH_ARGS :=
-endif
+TEST_SOURCES = \
+	-l ../autolisp-test/test-framework.lsp \
+	-l src/autolisp-vector.lsp \
+	-l tests/vector-tests.lsp \
+	-l tests/vector-benchmarks.lsp \
+	-x '(setq av-run-benchmarks-flag nil)' \
+	-l tests/run-tests.lsp
 
-test-ci: test
+include ../makefiles/common.mk
 
-test: test-bricscad
-
-ifeq ($(UNAME_S),Darwin)
-test-bricscad:
-	$(MAKE) test-bricscad-macos-batch
-	$(MAKE) test-bricscad-macos-osascript-attach
-
-test-bricscad-macos-batch:
-	../autolisp-script/autolisp --bricscad $(BRICSCAD_MACOS_BATCH_ARGS) \
-		../autolisp-test/test-framework.lsp \
-		src/autolisp-vector.lsp \
-		tests/vector-tests.lsp \
-		tests/vector-benchmarks.lsp \
-		-x '(setq av-run-benchmarks-flag nil)' \
-		$(if $(AV_RUN_BENCHMARKS),-x '(setq av-run-benchmarks-flag T)',) \
-		tests/run-tests.lsp
-
-test-bricscad-macos-osascript-attach:
-	../autolisp-script/autolisp --bricscad $(BRICSCAD_MACOS_OSASCRIPT_ATTACH_ARGS) \
-		../autolisp-test/test-framework.lsp \
-		src/autolisp-vector.lsp \
-		tests/vector-tests.lsp \
-		tests/vector-benchmarks.lsp \
-		-x '(setq av-run-benchmarks-flag nil)' \
-		$(if $(AV_RUN_BENCHMARKS),-x '(setq av-run-benchmarks-flag T)',) \
-		tests/run-tests.lsp
-else
-test-bricscad:
-	../autolisp-script/autolisp --bricscad \
-		../autolisp-test/test-framework.lsp \
-		src/autolisp-vector.lsp \
-		tests/vector-tests.lsp \
-		tests/vector-benchmarks.lsp \
-		-x '(setq av-run-benchmarks-flag nil)' \
-		$(if $(AV_RUN_BENCHMARKS),-x '(setq av-run-benchmarks-flag T)',) \
-		tests/run-tests.lsp
-endif
-
-bench-bricscad:
-	../autolisp-script/autolisp --bricscad $(BRICSCAD_MACOS_BATCH_ARGS) --timeout 600 \
-		../autolisp-test/test-framework.lsp \
-		src/autolisp-vector.lsp \
-		tests/vector-tests.lsp \
-		tests/vector-benchmarks.lsp \
-		-x '(setq av-run-benchmarks-flag nil)' \
-		-x '(setq av-run-benchmarks-flag T)' \
-		tests/run-tests.lsp
+.PHONY: docs-pdf clean
 
 docs-pdf:
 	$(MAKE) -C docs pdf
