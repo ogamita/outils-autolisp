@@ -10,10 +10,8 @@ variables:
   GIT_SUBMODULE_STRATEGY: none
   CLAUTOLISP_REF: "release-1.3"
   CLAUTOLISP_PREFIX: "$CI_PROJECT_DIR/.clautolisp"
-  # URL de clone de clautolisp. Par défaut via le CI_JOB_TOKEN : le projet
-  # ogamita/clautolisp doit autoriser ce projet dans « CI/CD job token allowlist »
-  # (ou fournir un deploy token / rendre le dépôt accessible).
-  CLAUTOLISP_GIT_URL: "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.com/ogamita/clautolisp.git"
+  # URL de clone de clautolisp. Dépôt public : aucun token nécessaire.
+  CLAUTOLISP_GIT_URL: "https://gitlab.com/ogamita/clautolisp.git"
   # Tag utilisateur des runners CAO (Windows). NON stocké ici : fourni
   # dynamiquement au push, p.ex. :
   #   git push -o ci.variable="WINDOWS_USER_TAG=pjb"
