@@ -81,23 +81,7 @@ linux:clautolisp:fabrik:
   rules:
     - if: '$CI_SERVER_HOST == "fabrik.sncf.fr"'
 
-.linux-autolisp-script:
-  extends: .linux-test
-  script:
-    - make -C autolisp-script test-fakecad TEST_TIMEOUT=10
-
-linux:autolisp-script:
-  extends: .linux-autolisp-script
-  tags: [linux, docker]
-  needs: ["build:clautolisp"]
-  rules:
-    - if: '$CI_SERVER_HOST != "fabrik.sncf.fr"'
-
-linux:autolisp-script:fabrik:
-  extends: .linux-autolisp-script
-  needs: ["build:clautolisp:fabrik"]
-  rules:
-    - if: '$CI_SERVER_HOST == "fabrik.sncf.fr"'
+# (autolisp-script est déprécié — remplacé par alfe ; ses tests sont retirés.)
 
 # ===========================================================================
 # macOS / Windows (shell, gitlab.com uniquement) : moteurs installés localement.

@@ -31,9 +31,8 @@ DOCS_SUBPROJECTS = \
 
 .PHONY: test-ci test test-clautolisp test-bricscad test-autocad docs-pdf clean
 
-# CI / headless : clautolisp pour les libs, backend fake-CAD pour autolisp-script.
+# CI / headless : clautolisp pour les libs. (autolisp-script est déprécié.)
 test-ci: test-clautolisp
-	$(MAKE) -C autolisp-script test-fakecad TEST_TIMEOUT=10
 
 # Cibles agrégées par moteur (un seul appel lance toute la matrice de
 # sous-projets) — utilisées par les jobs CI « un clic » macOS/Windows.

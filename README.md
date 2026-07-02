@@ -65,7 +65,12 @@ Exemple depuis la racine du dépôt:
 
 ## Sous-projets
 
-### `autolisp-script`
+### `autolisp-script` — **déprécié**
+
+> **Déprécié** : remplacé par **`alfe`** (AutoLISP front-end, projet `clautolisp`)
+> pour le pilotage CAO, et par **`clautolisp`** pour les tests headless. Le binaire
+> `autolisp` est désormais un stub ; l'ancien script est conservé sous
+> `autolisp-script/autolisp-deprecated`. Voir `autolisp-script/DEPRECATED.md`.
 
 Wrapper CLI pour exécuter du code AutoLISP dans BricsCAD ou AutoCAD, capturer `stdout` / `stderr`, gérer un code de retour shell et proposer un mode interactif.
 

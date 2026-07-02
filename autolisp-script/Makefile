@@ -1,43 +1,12 @@
-.PHONY: test-ci test-fakecad test-bricscad test-bricscad-macos-batch test-bricscad-macos-automation-attach test-autocad docs-pdf clean
+# autolisp-script est DÉPRÉCIÉ (remplacé par alfe, projet clautolisp).
+# Ses tests sont inhibés ; les cibles de test sont des no-op.
 
-CAD ?= --bricscad
-TEST_BACKEND ?= real
-TEST_TIMEOUT ?= 30
-TEST_RUN_ARGS ?=
+.PHONY: test-ci test test-fakecad test-bricscad test-autocad docs-pdf clean
 
-ifeq ($(TEST_BACKEND),fake)
-TEST_TARGETS := test-fakecad
-else ifeq ($(TEST_BACKEND),real)
-TEST_TARGETS := test-bricscad test-autocad
-else
-TEST_TARGETS := test-$(TEST_BACKEND)
-endif
+DEPRECATED_MSG = autolisp-script est deprecated (remplace par alfe) : tests inhibes.
 
-test-ci: $(TEST_TARGETS)
-
-test-fakecad:
-	./tests/run.sh --fake-cad $(TEST_RUN_ARGS) --timeout $(TEST_TIMEOUT) --bricscad
-	./tests/run.sh --fake-cad $(TEST_RUN_ARGS) --timeout $(TEST_TIMEOUT) --autocad
-
-UNAME_S := $(shell uname -s)
-
-ifeq ($(UNAME_S),Darwin)
-test-bricscad:
-	$(MAKE) test-bricscad-macos-batch
-	$(MAKE) test-bricscad-macos-automation-attach
-
-test-bricscad-macos-batch:
-	./tests/run.sh $(TEST_BACKEND_FLAG) $(TEST_RUN_ARGS) --timeout $(TEST_TIMEOUT) --bricscad --mode batch
-
-test-bricscad-macos-automation-attach:
-	./tests/run.sh $(TEST_BACKEND_FLAG) $(TEST_RUN_ARGS) --timeout $(TEST_TIMEOUT) --bricscad --mode automation --backend attach
-else
-test-bricscad:
-	./tests/run.sh $(TEST_BACKEND_FLAG) $(TEST_RUN_ARGS) --timeout $(TEST_TIMEOUT) --bricscad
-endif
-
-test-autocad:
-	./tests/run.sh $(TEST_BACKEND_FLAG) $(TEST_RUN_ARGS) --timeout $(TEST_TIMEOUT) --autocad
+test-ci test test-fakecad test-bricscad test-autocad:
+	@echo "$(DEPRECATED_MSG)"
 
 EMACS ?= emacs
 
@@ -47,7 +16,6 @@ docs-pdf: autolisp-examples.pdf
 autolisp-examples.pdf: autolisp-examples.org
 	$(EMACS) --batch --visit $< --funcall org-latex-export-to-pdf
 	rm -f autolisp-examples.tex
-
 
 clean:
 	- rm -rf tests/tmp .autolisp-runs
