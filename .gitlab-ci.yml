@@ -94,20 +94,22 @@ macos:bricscad:
   script:
     - make test-bricscad
 
+# Windows : runner en PowerShell (config.toml : shell = "powershell", pas pwsh).
+# On boucle en PowerShell (pas via une boucle sh du Makefile racine).
 windows:clautolisp:
   extends: .on-release-or-manual
   tags: [windows, shell]
   script:
-    - make test-clautolisp
+    - 'foreach ($d in "autolisp-vector","autolisp-hash-table","autolisp-json","autolisp-doc","autolisp-misc") { Write-Host "== $d (clautolisp) =="; make -C $d test-clautolisp; if ($LASTEXITCODE) { exit 1 } }'
 
 windows:bricscad:
   extends: .on-release-or-manual
   tags: [windows, shell]
   script:
-    - make test-bricscad
+    - 'foreach ($d in "autolisp-vector","autolisp-hash-table","autolisp-json","autolisp-doc") { Write-Host "== $d (bricscad) =="; make -C $d test-bricscad; if ($LASTEXITCODE) { exit 1 } }'
 
 windows:autocad:
   extends: .on-release-or-manual
   tags: [windows, shell]
   script:
-    - make test-autocad
+    - 'foreach ($d in "autolisp-vector","autolisp-hash-table","autolisp-json","autolisp-doc") { Write-Host "== $d (autocad) =="; make -C $d test-autocad; if ($LASTEXITCODE) { exit 1 } }'
