@@ -1,64 +1,30 @@
 stages:
-  - build
   - test
 
 variables:
-  # Le clautolisp/alfe des TESTS n'est PAS celui de third-party/clautolisp
-  # (dépendance bibliothèque d'edward/dwg-identifier, éventuellement sur une
-  # autre branche). On utilise une version STABLE : release-1.3.
+  # third-party/clautolisp est une dépendance bibliothèque (edward/dwg-identifier),
+  # pas l'outil de test : on ne le récupère pas.
   GIT_SUBMODULE_STRATEGY: none
-  CLAUTOLISP_REF: "release-1.3"
-  CLAUTOLISP_PREFIX: "$CI_PROJECT_DIR/.clautolisp"
-  CLAUTOLISP_GIT_URL: "https://gitlab.com/ogamita/clautolisp.git"
 
-# Un job s'exécute sur un runner qui possède TOUS ses tags. On a un groupe de
-# jobs par OS :
-#   - [linux]   : runner docker (toujours en ligne) — tests headless clautolisp.
-#                 clautolisp/alfe sont construits ici depuis release-1.3.
-#   - [macos]   : runner shell (machine du dev) — BricsCAD réel.
-#   - [windows] : runner shell (machine du dev) — BricsCAD + AutoCAD réels.
-# Sur macOS/Windows, clautolisp/alfe + make sont supposés installés (le dev
-# dispose de la release-1.3). Les jobs CAO sont `when: manual` : les runners
-# sont intermittents (portables), on les déclenche pour valider quand la
-# machine est en ligne.
+# Les runners sont des exécuteurs *shell* (pas docker) : clautolisp / alfe / make
+# sont supposés INSTALLÉS sur chaque machine (le dev/CI dispose de la release-1.3
+# stable). On ne fait donc ni apt-get ni build ici.
+#
+# Un job s'exécute sur le runner qui possède TOUS ses tags :
+#   - [linux]   : poseidon (toujours en ligne) — tests headless clautolisp (auto).
+#   - [macos]   : Mac du dev — BricsCAD réel (manuel).
+#   - [windows] : PC du dev — BricsCAD + AutoCAD réels (manuel).
+#
+# Surcharges possibles : CLAUTOLISP=/chemin/clautolisp, ALFE=/chemin/alfe si les
+# binaires ne sont pas dans le PATH par défaut du runner.
 
 # ===========================================================================
-# LINUX (docker) : build de clautolisp stable puis suites headless.
+# LINUX (poseidon) : suites headless clautolisp. Automatique.
 # ===========================================================================
-
-build:clautolisp:
-  stage: build
-  tags: [linux]
-  image: debian:bookworm
-  before_script:
-    - apt-get update
-    - apt-get install -y --no-install-recommends make bash perl sbcl git curl ca-certificates
-    # quicklisp (requis par build-programs)
-    - curl -fsSL https://beta.quicklisp.org/quicklisp.lisp -o /tmp/quicklisp.lisp
-    - 'sbcl --non-interactive --load /tmp/quicklisp.lisp --eval "(quicklisp-quickstart:install)" --eval "(ql-util:without-prompting (ql:add-to-init-file))"'
-  script:
-    - 'git clone --depth 1 --branch "$CLAUTOLISP_REF" "$CLAUTOLISP_GIT_URL" clautolisp-stable'
-    - make -C clautolisp-stable build-programs
-    - 'make -C clautolisp-stable install-programs PREFIX="$CLAUTOLISP_PREFIX"'
-    - '"$CLAUTOLISP_PREFIX/bin/clautolisp" --version'
-    - '"$CLAUTOLISP_PREFIX/bin/alfe" --version'
-  artifacts:
-    paths:
-      - .clautolisp/
-    expire_in: 1 day
-
-.linux-test:
-  stage: test
-  tags: [linux]
-  image: debian:bookworm
-  needs: ["build:clautolisp"]
-  before_script:
-    - apt-get update
-    - apt-get install -y --no-install-recommends make bash perl
-    - 'export PATH="$CLAUTOLISP_PREFIX/bin:$PATH"'
 
 linux:clautolisp:
-  extends: .linux-test
+  stage: test
+  tags: [linux]
   parallel:
     matrix:
       - SUBPROJECT: [autolisp-vector, autolisp-hash-table, autolisp-json, autolisp-doc, autolisp-misc]
@@ -66,12 +32,13 @@ linux:clautolisp:
     - 'make -C "$SUBPROJECT" test-clautolisp'
 
 linux:autolisp-script:
-  extends: .linux-test
+  stage: test
+  tags: [linux]
   script:
     - make -C autolisp-script test-fakecad TEST_TIMEOUT=10
 
 # ===========================================================================
-# macOS : BricsCAD réel (clautolisp/alfe installés localement). Sur demande.
+# macOS : BricsCAD réel. Sur demande (runner intermittent).
 # ===========================================================================
 
 macos:bricscad:
@@ -87,7 +54,7 @@ macos:bricscad:
     - 'make -C "$SUBPROJECT" test-bricscad'
 
 # ===========================================================================
-# Windows : BricsCAD + AutoCAD réels (alfe installé localement). Sur demande.
+# Windows : BricsCAD + AutoCAD réels. Sur demande (runner intermittent).
 # ===========================================================================
 
 windows:bricscad:
