@@ -32,16 +32,19 @@ test: test-clautolisp test-bricscad
 # tournent déjà via alfe ; EI_CAD_TESTS les complétera dès que entget accepte
 # le filtre xdata '("*").
 test-clautolisp:
+	EI_CAD_TESTS=1 \
 	$(ALFE) -norc --clautolisp --host mock --dialect $(CLAUTOLISP_DIALECT) \
 		$(TEST_SOURCES) $(TEST_MAIN) -q --quit
 
 test-bricscad:
-	EI_CAD_TESTS=1 $(ALFE) -norc --bricscad --mode batch --timeout 120 \
+	EI_CAD_TESTS=1 \
+	$(ALFE) -norc --bricscad --mode batch --timeout 120 \
 		-e UTF-8 -E $(CAD_IO_ENCODING) \
 		$(TEST_SOURCES) $(TEST_MAIN) -q
 
 test-autocad:
-	EI_CAD_TESTS=1 $(ALFE) -norc --autocad --mode batch --timeout 120 \
+	EI_CAD_TESTS=1 \
+	$(ALFE) -norc --autocad --mode batch --timeout 120 \
 		-e UTF-8 -E $(CAD_IO_ENCODING) \
 		$(TEST_SOURCES) $(TEST_MAIN) -q
 
