@@ -25,13 +25,28 @@ DESTDIR       ?=
 BUILD_DIR     ?= $(CURDIR)/bin
 EXE           := $(BUILD_DIR)/dwg-identify
 
+# GNU Make under Git Bash exposes MSYS paths (/c/Users/...), while the native
+# Windows SBCL expects Windows paths.  cygpath -m keeps forward slashes, which
+# are accepted by both Common Lisp pathnames and Unix-like shells.
+ifeq ($(OS),Windows_NT)
+lisp_path = $(shell cygpath -am "$(1)")
+ASDF_ENCODING_SETUP = (setf sb-impl::*default-external-format* (list :utf-8 :newline :crlf) asdf:*default-encoding* :default)
+else
+lisp_path = $(1)
+ASDF_ENCODING_SETUP = (values)
+endif
+
+CLAUTOLISP_CL_LISP := $(call lisp_path,$(CLAUTOLISP_CL))
+HERE_ASD_LISP      := $(call lisp_path,$(HERE_ASD))
+EXE_LISP           := $(call lisp_path,$(EXE))
+
 QL  = (let ((q (merge-pathnames "quicklisp/setup.lisp" (user-homedir-pathname)))) (when (probe-file q) (load q)))
 # Make clautolisp's ASDF systems (clautolisp/drawing and
 # clautolisp/drawing-dwg) discoverable from the in-repo submodule: add its
 # Lisp directory to quicklisp's local-projects (when quicklisp is present)
 # and to ASDF's central registry (fallback), then load our own system
 # definition. find-symbol keeps this readable even without quicklisp.
-ASD = (require :asdf) (let ((d (truename "$(CLAUTOLISP_CL)/"))) (let ((ql (find-package :ql))) (when ql (let ((lpd (find-symbol "*LOCAL-PROJECT-DIRECTORIES*" ql)) (reg (find-symbol "REGISTER-LOCAL-PROJECTS" ql))) (when (and lpd reg) (pushnew d (symbol-value lpd) :test (function equal)) (funcall reg))))) (pushnew d asdf:*central-registry* :test (function equal))) (asdf:load-asd "$(HERE_ASD)")
+ASD = (require :asdf) $(ASDF_ENCODING_SETUP) (let ((d (truename "$(CLAUTOLISP_CL_LISP)/"))) (let ((ql (find-package :ql))) (when ql (let ((lpd (find-symbol "*LOCAL-PROJECT-DIRECTORIES*" ql)) (reg (find-symbol "REGISTER-LOCAL-PROJECTS" ql))) (when (and lpd reg) (pushnew d (symbol-value lpd) :test (function equal)) (funcall reg))))) (pushnew d asdf:*central-registry* :test (function equal))) (asdf:load-asd (pathname "$(HERE_ASD_LISP)"))
 
 .PHONY: help build install test test-ci run build-libredwg docs-pdf clean
 
@@ -57,7 +72,7 @@ $(EXE): dwg-identifier.asd $(wildcard src/*.lisp)
 		--eval '(when (find-package :ql) (ql:quickload (list "cffi") :silent t))' \
 		--eval '(progn $(ASD))' \
 		--eval '(asdf:load-system "dwg-identifier")' \
-		--eval '(sb-ext:save-lisp-and-die "$(EXE)" :executable t :save-runtime-options t :toplevel (function dwg-identifier::%toplevel))'
+		--eval '(sb-ext:save-lisp-and-die "$(EXE_LISP)" :executable t :save-runtime-options t :toplevel (function dwg-identifier::%toplevel))'
 	@echo "built $(EXE)"
 
 # Install the executable to $(DESTDIR)$(PREFIX)/bin/dwg-identify.

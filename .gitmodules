@@ -1,4 +1,4 @@
 [submodule "third-party/clautolisp"]
 	path = third-party/clautolisp
-	url = git@gitlab.com:ogamita/clautolisp.git
+	url = file:///c/Users/PPBN02261/works/sncf-reseau/src/clautolisp
 	branch = release-1.3
