@@ -8,6 +8,7 @@
 TEST_SUBPROJECTS = \
 	autolisp-vector \
 	autolisp-hash-table \
+	autolisp-introspection \
 	autolisp-json \
 	autolisp-doc \
 	autolisp-misc
@@ -17,6 +18,7 @@ TEST_SUBPROJECTS = \
 CAD_SUBPROJECTS = \
 	autolisp-vector \
 	autolisp-hash-table \
+	autolisp-introspection \
 	autolisp-json \
 	autolisp-doc
 
@@ -31,6 +33,7 @@ DOCS_SUBPROJECTS = \
 	autolisp-script \
 	autolisp-vector \
 	autolisp-hash-table \
+	autolisp-introspection \
 	autolisp-json \
 	autolisp-formatter \
 	autolisp-misc \
