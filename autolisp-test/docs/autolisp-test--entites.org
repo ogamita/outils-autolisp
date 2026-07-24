@@ -1,0 +1,58 @@
+#+TITLE: Assertions d'introspection des entités
+#+LANGUAGE: fr
+#+OPTIONS: toc:2 num:t
+
+* Chargement
+
+Charger dans cet ordre :
+
+#+begin_src lisp
+(load "../autolisp-test/test-framework.lsp")
+(load "../autolisp-introspection/src/autolisp-introspection.lsp")
+(load "../autolisp-test/test-entites.lsp")
+#+end_src
+
+* Utilisation
+
+La bibliothèque compare deux photographies par handle. En AutoLISP portable,
+la portée et les messages sont explicites :
+
+#+begin_src lisp
+(setq avant (ei-snapshot 'all))
+(fonction-mutatrice)
+(setq diff (ei-diff avant (ei-snapshot 'all)))
+
+(attendu-aucune-creation diff nil)
+(attendu-aucune-suppression diff nil)
+(attendu-modifiees diff 1 nil)
+
+(setq ediff (modif-unique diff))
+(attendu-attribut-modifie ediff 8 "0" "PK" nil)
+(attendu-attribut-inchange ediff 10 nil)
+(attendu-xdata-ajoutee
+  ediff
+  "SCHMS_PK"
+  '((1001 . "SCHMS_PK") (1000 . "12+345"))
+  nil)
+#+end_src
+
+La valeur =nil= passée comme liste xdata désactive la vérification de son
+contenu. La valeur =nil= passée en dernier argument demande le message
+d'échec produit automatiquement.
+
+* API du DSL
+
+- primitives : =attendu=, =attendu-non=, =attendu-egal= ;
+- cardinalités : =attendu-creees=, =attendu-supprimees=,
+  =attendu-modifiees= ;
+- absences : =attendu-aucune-creation=,
+  =attendu-aucune-suppression= ;
+- sélection : =modif-entite=, =modif-unique= ;
+- attributs : =attendu-attribut-modifie=,
+  =attendu-attribut-inchange=, =attendu-attribut-valeur= ;
+- xdata : =attendu-xdata-ajoutee=, =attendu-xdata-supprimee=,
+  =attendu-xdata-modifiee=, =attendu-xdata-valeur=,
+  =attendu-aucune-xdata-changee=.
+
+Chaque assertion renvoie =t= ou appelle =t:fail=. Les échecs sont donc
+comptabilisés par =run-suite= et =run-all=.

@@ -126,6 +126,15 @@ Implémentation d'une table de hashage AutoLISP construite au-dessus de `autolis
 
 Documentation: [autolisp-hash-table/docs/autolisp-hash-table--manual.org](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-hash-table/docs/autolisp-hash-table--manual.org)
 
+### `autolisp-introspection`
+
+Bibliothèque de photographie et de comparaison des entités d'un dessin par
+handle, avec détail des attributs DXF et xdata modifiés. Le module
+`autolisp-test/test-entites.lsp` fournit le DSL d'assertions `attendu-…`.
+
+Documentation: `autolisp-introspection/docs/autolisp-introspection--specifications.org`
+et `autolisp-test/docs/autolisp-test--entites.org`.
+
 ### `autolisp-json`
 
 Lecture et écriture de fichiers JSON en AutoLISP: sérialisation et désérialisation d'une `sexp` Lisp vers/depuis du JSON. La version 1 traite le document en bloc (un fichier, une `sexp`); une version incrémentale est prévue. La représentation est balisée (`(aj-object ...)`, `(aj-array ...)`, `aj-true`/`aj-false`/`aj-null`) et garantit un aller-retour exact.
@@ -172,7 +181,8 @@ En mode BricsCAD macOS `batch`, les `source.lsp` sont maintenant autorisés par 
 
 État des cibles principales:
 
-- `make test-ci` lance actuellement `autolisp-script`, `autolisp-vector` et `autolisp-hash-table`;
+- `make test-ci` lance notamment `autolisp-vector`, `autolisp-hash-table`,
+  `autolisp-introspection`, `autolisp-json`, `autolisp-doc` et `autolisp-misc`;
 - [`autolisp-doc/Makefile`](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-doc/Makefile) expose ses propres tests via `make -C autolisp-doc test`;
 - `autolisp-script` propose aussi un backend de vérification sans CAD réel:
 

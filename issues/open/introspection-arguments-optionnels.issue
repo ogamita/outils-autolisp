@@ -1,0 +1,20 @@
+#+TITLE: Arguments optionnels du DSL et de ei-snapshot
+
+* Problème
+
+La spécification emploie des arguments optionnels, par exemple
+=(ei-snapshot [scope])= et =(attendu condition [msg])=. Les fonctions
+utilisateur AutoLISP ont une arité fixe et AutoLISP / Visual LISP ne fournit
+pas =defmacro= nativement. L'exemple complet omet effectivement ces arguments.
+
+* Résolution proposée
+
+Pour la v1 portable, rendre les arguments explicites :
+
+- =(ei-snapshot 'all)= pour la portée par défaut ;
+- =nil= comme dernier argument lorsqu'aucun message n'est fourni ;
+- =nil= comme valeurs xdata lorsqu'elles ne doivent pas être vérifiées.
+
+Une syntaxe abrégée pourrait être fournie plus tard par le sous-projet
+=autolisp-macro=, mais elle imposerait alors son chargeur =mload= à tous les
+consommateurs et ne constituerait plus une bibliothèque AutoLISP autonome.
