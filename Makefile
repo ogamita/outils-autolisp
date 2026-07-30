@@ -99,6 +99,6 @@ docs-pdf:
 	@for d in $(DOCS_SUBPROJECTS); do $(MAKE) -C $$d docs-pdf || exit 1; done
 
 clean:
-	@for d in $(TEST_SUBPROJECTS) autolisp-formatter autolisp-script; do \
+	@for d in $(TEST_SUBPROJECTS) autolisp-formatter autolisp-script dwg-identifier; do \
 		$(MAKE) -C $$d clean || exit 1; \
 	done

@@ -21,8 +21,8 @@
 # CLAUTOLISP_SOURCES at the clautolisp/ Lisp directory of a checkout,
 # e.g. `make CLAUTOLISP_SOURCES=$$HOME/works/clautolisp/clautolisp`;
 # the executable then looks for the shim in that checkout's dev tree —
-# build it there first (`make build-libredwg` forwards when possible),
-# or set CLAUTOLISP_DWG_LIBDIR at run time.
+# build it there first (`make build-libredwg` in that directory), or
+# set CLAUTOLISP_DWG_LIBDIR at run time.
 
 CLAUTOLISP_PREFIX  ?= /opt/local
 CLAUTOLISP_SOURCES_DEFAULT := $(CLAUTOLISP_PREFIX)/share/common-lisp/source/clautolisp
@@ -70,7 +70,7 @@ QL  = (let ((q (merge-pathnames "quicklisp/setup.lisp" (user-homedir-pathname)))
 # directory, which fails on a root-owned system installation.
 ASD = (require :asdf) (pushnew (truename "$(CLAUTOLISP_SOURCES)/") asdf:*central-registry* :test (function equal)) (asdf:load-asd "$(HERE_ASD)")
 
-.PHONY: help build install test test-ci run check-clautolisp build-libredwg docs-pdf clean
+.PHONY: help build install test test-ci run check-clautolisp docs-pdf clean
 
 help:
 	@echo "dwg-identifier targets:"
@@ -132,19 +132,6 @@ install: build
 	install -d "$(DESTDIR)$(PREFIX)/bin"
 	install -m 755 "$(EXE)" "$(DESTDIR)$(PREFIX)/bin/dwg-identify"
 	@echo "installed $(DESTDIR)$(PREFIX)/bin/dwg-identify"
-
-# The shim ships with the clautolisp installation; this target only
-# forwards to a checkout when CLAUTOLISP_SOURCES points at one.
-build-libredwg:
-	@if [ -f "$(CLAUTOLISP_SOURCES)/Makefile" ]; then \
-	  $(MAKE) -C "$(CLAUTOLISP_SOURCES)" build-libredwg ; \
-	else \
-	  echo "build-libredwg: the native DWG codec ships with the clautolisp" ; \
-	  echo "installation (expected: $(INSTALLED_SHIM));" ; \
-	  echo "install the clautolisp native libraries, or build against a checkout" ; \
-	  echo "with CLAUTOLISP_SOURCES=/path/to/checkout/clautolisp." ; \
-	  exit 1 ; \
-	fi
 
 test: check-clautolisp
 	$(SBCL) --noinform --no-userinit --non-interactive \

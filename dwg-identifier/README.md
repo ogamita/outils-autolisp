@@ -66,8 +66,8 @@ N1A_V1.dwg
   installation, never on a source checkout.
 - Developers hacking on clautolisp itself can build against a checkout
   instead: `make CLAUTOLISP_SOURCES=/path/to/checkout/clautolisp …`
-  (build the shim there with `make build-libredwg`, which forwards to
-  the checkout, or set `CLAUTOLISP_DWG_LIBDIR` at run time).
+  (build the shim there with `make build-libredwg` in that directory,
+  or set `CLAUTOLISP_DWG_LIBDIR` at run time).
 - **CFFI** (Quicklisp). DXF input needs neither libredwg nor the shim.
 - `make test` runs the unit tests (synthetic drawings; no libredwg
   needed).
