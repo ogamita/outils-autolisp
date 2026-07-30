@@ -6,7 +6,7 @@
   "Name used in usage/version/diagnostic messages and as the installed
 executable name.")
 
-(defparameter *version* "1.0.0"
+(defparameter *version* "1.1.0"
   "dwg-identify version, reported by -V/--version.")
 
 (defun report (classification &optional (stream *standard-output*) verbose)

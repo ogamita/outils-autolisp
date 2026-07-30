@@ -5,12 +5,12 @@ Identify which SNCF EPURE application produced a DWG/DXF drawing —
 by reading the registered-application (APPID) table the application
 stamps into every drawing it touches.
 
-It is a small Common-Lisp tool built on the
-[clautolisp](../third-party/clautolisp) drawing library (vendored as a
-git submodule under `third-party/clautolisp`): clautolisp reads the drawing
-(DXF natively, DWG via its `clautolisp/drawing-dwg` system + the
-vendored libredwg) into a backend-independent value, and this tool
-classifies it. No AutoLISP and no running CAD are involved.
+It is a small Common-Lisp tool built on the clautolisp drawing
+library (a required system dependency, installed under `/opt/local`
+by default): clautolisp reads the drawing (DXF natively, DWG via its
+`clautolisp/drawing-dwg` system + libredwg) into a backend-independent
+value, and this tool classifies it. No AutoLISP and no running CAD are
+involved.
 
 ## How identification works
 
@@ -49,20 +49,26 @@ N1A_V1.dwg
 
 ## Build / dependencies
 
-- **clautolisp** (its `drawing` + `drawing-dwg` systems), vendored as a
-  git submodule under `third-party/clautolisp`. Populate it once after
-  cloning outils-autolisp, from the repo root:
-  ```
-  git submodule update --init --recursive third-party/clautolisp
-  ```
-  The Makefile adds the submodule's Lisp directory to quicklisp's
-  local-projects so ASDF finds the systems by relative path; override the
-  location with `make CLAUTOLISP=/path/to/clautolisp …` if you keep a
-  checkout elsewhere (default: the in-repo submodule).
-- **CFFI** (Quicklisp) and a **built libredwg shim** for DWG input —
-  build it once with `make build-libredwg` (DXF input needs neither).
-  Building libredwg needs cmake + a C toolchain; install host tools with
-  `third-party/get-dependencies` inside the clautolisp submodule.
+- **clautolisp** (its `drawing` + `drawing-dwg` systems) is a required
+  **system installation** — it is no longer vendored as a submodule. A
+  complete clautolisp installation under `CLAUTOLISP_PREFIX` (default
+  `/opt/local`) provides both:
+  - the CL sources: `$(CLAUTOLISP_PREFIX)/share/common-lisp/source/clautolisp/`
+  - the native DWG codec (libredwg + CFFI shim):
+    `$(CLAUTOLISP_PREFIX)/lib/clautolisp/<os>/<arch>/`
+
+  Both ship in a clautolisp release "libraries" artefact. The Makefile
+  adds the installed source directory to quicklisp's local-projects so
+  ASDF finds the systems; `make check-clautolisp` verifies the
+  installation. The executable is built against those installed
+  sources, so at run time it derives the native-library directory from
+  them: the installed `dwg-identify` depends only on the clautolisp
+  installation, never on a source checkout.
+- Developers hacking on clautolisp itself can build against a checkout
+  instead: `make CLAUTOLISP_SOURCES=/path/to/checkout/clautolisp …`
+  (build the shim there with `make build-libredwg`, which forwards to
+  the checkout, or set `CLAUTOLISP_DWG_LIBDIR` at run time).
+- **CFFI** (Quicklisp). DXF input needs neither libredwg nor the shim.
 - `make test` runs the unit tests (synthetic drawings; no libredwg
   needed).
 

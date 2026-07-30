@@ -1,4 +1,0 @@
-[submodule "third-party/clautolisp"]
-	path = third-party/clautolisp
-	url = git@gitlab.com:ogamita/clautolisp.git
-	branch = release-1.3

@@ -6,12 +6,12 @@
 ;;;; libredwg) and classifies it by the application appids it carries —
 ;;;; SCHMS, SCHME, SCHMIEUX, PV, and the EPURE umbrella.
 ;;;;
-;;;; clautolisp is not installed yet (its drawing layer is unreleased),
-;;;; so it ships as a git submodule of outils-autolisp under
-;;;; third-party/clautolisp; the Makefile makes its systems discoverable
-;;;; by adding the submodule's Lisp directory to quicklisp's local-projects
-;;;; (see the Makefile / README). Once clautolisp ships, this becomes a
-;;;; plain dependency.
+;;;; clautolisp is a plain system dependency: a complete clautolisp
+;;;; installation (CL sources + native DWG codec libraries) is required,
+;;;; by default under /opt/local. The Makefile makes its systems
+;;;; discoverable by adding the installed source directory to
+;;;; quicklisp's local-projects (see the Makefile / README);
+;;;; CLAUTOLISP_SOURCES overrides it to build against a checkout.
 
 (asdf:defsystem "dwg-identifier"
   :description "Identify the SNCF application (SCHMS / SCHME / SCHMIEUX / PV / EPURE) that produced a DWG/DXF drawing."

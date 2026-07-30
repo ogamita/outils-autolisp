@@ -39,7 +39,7 @@ DOCS_SUBPROJECTS = \
 	autolisp-misc \
 	autolisp-doc
 
-.PHONY: test-ci test test-clautolisp test-bricscad test-autocad benchmark docs-pdf clean
+.PHONY: test-ci test test-clautolisp test-bricscad test-autocad benchmark install docs-pdf clean
 
 # CI / headless : clautolisp pour les libs. (autolisp-script est déprécié.)
 test-ci: test-clautolisp
@@ -82,6 +82,18 @@ benchmark:
 		cat $(CURDIR)/$$d-benchmark.txt >> benchmark-results.txt; \
 	done
 	@echo "=== benchmark-results.txt ==="; cat benchmark-results.txt
+
+# Installation des exécutables des sous-projets (aujourd'hui : dwg-identifier).
+# clautolisp est une dépendance système requise de dwg-identifier
+# (installation complète sous CLAUTOLISP_PREFIX, /opt/local par défaut) ;
+# PREFIX / DESTDIR / CLAUTOLISP_PREFIX sont transmis.
+INSTALL_SUBPROJECTS = dwg-identifier
+
+install:
+	@for d in $(INSTALL_SUBPROJECTS); do \
+		echo "== $$d (install) =="; \
+		$(MAKE) -C $$d install || exit 1; \
+	done
 
 docs-pdf:
 	@for d in $(DOCS_SUBPROJECTS); do $(MAKE) -C $$d docs-pdf || exit 1; done
