@@ -38,6 +38,21 @@ DESTDIR       ?=
 BUILD_DIR     ?= $(CURDIR)/bin
 EXE           := $(BUILD_DIR)/dwg-identify
 
+# GNU Make under Git Bash exposes MSYS paths (/c/Users/...), while native
+# Windows SBCL expects Windows paths. cygpath -m keeps forward slashes, which
+# are accepted by both Common Lisp pathnames and Unix-like shells.
+ifeq ($(OS),Windows_NT)
+lisp_path = $(shell cygpath -am "$(1)")
+ASDF_ENCODING_SETUP = (setf sb-impl::*default-external-format* (list :utf-8 :newline :crlf) asdf:*default-encoding* :default)
+else
+lisp_path = $(1)
+ASDF_ENCODING_SETUP = (values)
+endif
+
+CLAUTOLISP_SOURCES_LISP := $(call lisp_path,$(CLAUTOLISP_SOURCES))
+HERE_ASD_LISP           := $(call lisp_path,$(HERE_ASD))
+EXE_LISP                := $(call lisp_path,$(EXE))
+
 # os/arch/extension tags as in clautolisp's Makefile (REL_OS/REL_ARCH)
 # — used only to diagnose the native DWG codec location.
 REL_OS   := $(shell uname | tr 'A-Z' 'a-z' | sed -e 's/^mingw.*/windows/' -e 's/^msys.*/windows/' -e 's/^cygwin.*/windows/')
@@ -68,7 +83,7 @@ QL  = (let ((q (merge-pathnames "quicklisp/setup.lisp" (user-homedir-pathname)))
 # our own system definition. quicklisp's local-projects is NOT used
 # for this: its indexer writes a system-index.txt into the registered
 # directory, which fails on a root-owned system installation.
-ASD = (require :asdf) (pushnew (truename "$(CLAUTOLISP_SOURCES)/") asdf:*central-registry* :test (function equal)) (asdf:load-asd "$(HERE_ASD)")
+ASD = (require :asdf) $(ASDF_ENCODING_SETUP) (pushnew (truename "$(CLAUTOLISP_SOURCES_LISP)/") asdf:*central-registry* :test (function equal)) (asdf:load-asd (pathname "$(HERE_ASD_LISP)"))
 
 .PHONY: help build install test test-ci run check-clautolisp docs-pdf clean
 
@@ -121,7 +136,7 @@ $(EXE): dwg-identifier.asd $(wildcard src/*.lisp)
 		--eval '(when (find-package :ql) (ql:quickload (list "cffi") :silent t))' \
 		--eval '(progn $(ASD))' \
 		--eval '(asdf:load-system "dwg-identifier")' \
-		--eval '(sb-ext:save-lisp-and-die "$(EXE)" :executable t :save-runtime-options t :toplevel (function dwg-identifier::%toplevel))'
+		--eval '(sb-ext:save-lisp-and-die "$(EXE_LISP)" :executable t :save-runtime-options t :toplevel (function dwg-identifier::%toplevel))'
 	@echo "built $(EXE)"
 
 # Install the executable to $(DESTDIR)$(PREFIX)/bin/dwg-identify. The

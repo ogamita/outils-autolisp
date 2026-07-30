@@ -20,6 +20,7 @@ Règles pratiques:
 - Dans le code source, les identificateurs peuvent rester sans accent; en revanche, les commentaires et textes français doivent être accentués.
 - Pour un nouveau fichier documentaire, choisir `org-mode` par défaut sauf raison technique explicite.
 - Pour un fichier existant, on peut ajuster l'encodage et les fins de ligne pour respecter ces conventions, sans changer son format.
+- Sur ce poste Windows, GNU Make 4.4.1 est disponible à l'emplacement `C:/Program Files/make-4.4.1-with-guile-w32/bin/make.exe`.
 
 Organisation du dépôt:
 
