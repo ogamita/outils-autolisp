@@ -190,6 +190,18 @@ En mode BricsCAD macOS `batch`, les `source.lsp` sont maintenant autorisés par 
 make -C autolisp-script test-fakecad
 ```
 
+### Compilation et installation de dwg-identifier
+
+```bash
+cd outils-autolisp
+( git submodule init && git submodule update --recursive )
+( cd third-party/clautolisp && git submodule init && git submodule update --recursive ) 
+make -C dwg-identifier clean build-libredwg build test \
+&& sudo make -C third-party/clautolisp/clautolisp/third-party/libredwg/ install PREFIX=/opt/local \
+&& sudo make -C dwg-identifier install PREFIX=/opt/local
+dwg-identify ~/works/sncf-reseau/dwg/pjb/2018.dwg 
+```
+
 ## Vérification récente
 
 Vérification effectuée localement sur les modifications récentes:
