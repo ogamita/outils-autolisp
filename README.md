@@ -47,21 +47,32 @@ Le tableau ci-dessous résume les changements marquants entre les tags actuellem
 
 ## Architecture de chargement
 
-Les fichiers `loader.lsp` jouent le rôle d'un chargeur déclaratif minimal.
-Le helper commun [`cl-loader.lsp`](/Users/pjb/works/sncf-reseau/src/outils-autolisp/cl-loader.lsp) fournit:
+Le chargement est décrit par des définitions de systèmes ALPM
+(AutoLISP Package Management, <https://gitlab.com/ogamita/alpm>) :
+`outils-autolisp.alpm` à la racine — le système « parapluie » qui
+remplace l'ancien `loader.lsp` — et un `<sous-projet>.alpm` dans
+chaque sous-projet de bibliothèque AutoLISP (`autolisp-vector`,
+`autolisp-hash-table`, `autolisp-introspection`, `autolisp-json`,
+`autolisp-doc`, `autolisp-defstruct`, `autolisp-misc`,
+`autolisp-test`).
+
+Exemple depuis la racine du dépôt:
+
+```lisp
+(alpm-register-directory "/chemin/vers/outils-autolisp")
+(alpm-load-system "outils-autolisp")   ; ou un sous-projet seul :
+(alpm-load-system "autolisp-json")
+```
+
+ALPM est en cours de spécification ; en attendant son
+implémentation, les `loader.lsp` de sous-projets restent
+utilisables. Ils s'appuient sur le helper commun `cl-loader.lsp`,
+qui fournit:
 
 - `*verbose*` pour activer les traces de chargement;
 - `clload` pour charger un fichier avec options;
 - `clload-files` pour charger une liste de fichiers dans l'ordre;
 - `cl-path-join` pour construire les chemins de travail.
-
-Exemple depuis la racine du dépôt:
-
-```lisp
-(setq *outils-autolisp-path* "/chemin/vers/outils-autolisp")
-(setq *verbose* T)
-(load (strcat *outils-autolisp-path* "/loader.lsp"))
-```
 
 ## Sous-projets
 

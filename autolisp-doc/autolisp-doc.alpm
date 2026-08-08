@@ -1,0 +1,11 @@
+;;;; -*- mode:lisp -*-
+;;;; ALPM system definition for AUTOLISP-DOC.
+;;;; Usage: (alpm-register-directory "/path/to/outils-autolisp")
+;;;;        (alpm-load-system "autolisp-doc")
+(alpm-define-system 1
+ '(name        "autolisp-doc"
+   description "AutoLISP reference data (autolisp-ref) and documentation helpers."
+   encoding    "utf-8"
+   pathname    "src"
+   files       ("autolisp-ref"
+                (file "autolisp-doc" depends-on ("autolisp-ref")))))

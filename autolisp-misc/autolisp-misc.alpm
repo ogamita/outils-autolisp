@@ -1,0 +1,17 @@
+;;;; -*- mode:lisp -*-
+;;;; ALPM system definition for AUTOLISP-MISC.
+;;;; Sources live in src/ except symbols.lsp (subproject root), hence
+;;;; the per-file pathname properties. browser uses the pwd/cd/ls
+;;;; utilities of fs. (Note: the legacy autolisp-misc.prj OWN-LIST
+;;;; lists only browser/cat/format -- it omits fs and symbols.)
+;;;; Usage: (alpm-register-directory "/path/to/outils-autolisp")
+;;;;        (alpm-load-system "autolisp-misc")
+(alpm-define-system 1
+ '(name        "autolisp-misc"
+   description "Miscellaneous shell-like utilities: fs (pwd/cd/ls), browser, cat, format, symbols."
+   encoding    "utf-8"
+   files       ((file "fs"      pathname "src/fs.lsp")
+                (file "browser" pathname "src/browser.lsp" depends-on ("fs"))
+                (file "cat"     pathname "src/cat.lsp")
+                (file "format"  pathname "src/format.lsp")
+                "symbols")))

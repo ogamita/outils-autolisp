@@ -1,0 +1,22 @@
+;;;; -*- mode:lisp -*-
+;;;; ALPM umbrella system for OUTILS-AUTOLISP.
+;;;;
+;;;; Replaces the former top-level loader.lsp: loading this system
+;;;; loads the same libraries it used to load (vector, hash-table,
+;;;; introspection, json, doc). The other library subprojects
+;;;; (autolisp-defstruct, autolisp-misc, autolisp-test) have their
+;;;; own .alpm and are loaded individually on demand.
+;;;;
+;;;; Usage: (alpm-register-directory "/path/to/outils-autolisp")
+;;;;        (alpm-load-system "outils-autolisp")
+;;;; Registering the repository root makes every subproject system
+;;;; findable as <root>/<name>/<name>.alpm, and this umbrella as
+;;;; <root>/outils-autolisp.alpm.
+(alpm-define-system 1
+ '(name        "outils-autolisp"
+   description "Umbrella system: the outils-autolisp AutoLISP libraries."
+   depends-on  ("autolisp-vector"
+                "autolisp-hash-table"
+                "autolisp-introspection"
+                "autolisp-json"
+                "autolisp-doc")))

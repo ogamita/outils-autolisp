@@ -1,0 +1,10 @@
+;;;; -*- mode:lisp -*-
+;;;; ALPM system definition for AUTOLISP-JSON.
+;;;; Usage: (alpm-register-directory "/path/to/outils-autolisp")
+;;;;        (alpm-load-system "autolisp-json")
+(alpm-define-system 1
+ '(name        "autolisp-json"
+   description "JSON reader/writer for AutoLISP (bulk: one file / one sexp)."
+   encoding    "utf-8"
+   pathname    "src"
+   files       ("autolisp-json")))

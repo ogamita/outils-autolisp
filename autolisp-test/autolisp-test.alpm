@@ -1,0 +1,12 @@
+;;;; -*- mode:lisp -*-
+;;;; ALPM system definition for AUTOLISP-TEST.
+;;;; test-example.lsp is an example, not part of the library.
+;;;; Usage: (alpm-register-directory "/path/to/outils-autolisp")
+;;;;        (alpm-load-system "autolisp-test")
+(alpm-define-system 1
+ '(name        "autolisp-test"
+   version     "1.7.0"
+   description "Unit test framework for AutoLISP, with entity mutation assertions (test-entites)."
+   encoding    "utf-8"
+   files       ("test-framework"
+                "test-entites")))

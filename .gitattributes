@@ -3,6 +3,7 @@
 
 # AutoLISP sources, documentation and specifications.
 *.lsp text eol=crlf
+*.alpm text eol=crlf
 *.lisp text eol=crlf
 *.org text eol=crlf
 *.md text eol=crlf
