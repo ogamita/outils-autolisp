@@ -1,0 +1,84 @@
+#+TITLE: Manuel de autolisp-algetypes
+#+LANGUAGE: fr
+#+OPTIONS: toc:2 num:t
+
+* Objet
+
+=autolisp-algetypes= fournit de petits types algébriques immuables en AutoLISP :
+un type possède plusieurs variantes et chaque variante possède zéro ou plusieurs
+champs nommés. La bibliothèque ne dépend d'aucun autre module.
+
+* Chargement
+
+#+begin_src lisp
+(load "autolisp-algetypes/loader.lsp")
+#+end_src
+
+* Déclarer et construire un type
+
+Le schéma associe chaque variante à ses champs :
+
+#+begin_src lisp
+(al-define-type 'shape '((circle (radius))
+                         (rectangle (width height))
+                         (origin ())))
+
+(setq s (al-construct 'shape 'rectangle '(10.0 5.0)))
+(al-field s 'width)              ; => 10.0
+(al-type-of s)                   ; => shape
+(al-variant-of s)                ; => rectangle
+#+end_src
+
+Une redéclaration du même type remplace son schéma. Les valeurs sont des listes
+ordinaires, mais leur représentation est un détail d'implémentation ; utiliser
+les fonctions publiques pour les lire.
+
+* Filtrage
+
+=al-match= reçoit une liste associative entre variantes et fonctions. Les champs
+de la variante sont passés comme arguments à la fonction correspondante.
+
+#+begin_src lisp
+(al-match
+  s
+  (list
+    (cons 'circle (function (lambda (r) (* pi r r))))
+    (cons 'rectangle (function (lambda (w h) (* w h))))
+    (cons 'origin (function (lambda () 0.0)))))
+#+end_src
+
+Le filtrage doit couvrir toutes les variantes. Un cas =otherwise= permet de
+fournir une valeur par défaut.
+
+* Types fournis
+
+** Option
+
+- =(al-some value)=
+- =(al-none)=
+- =(al-option-map function option)=
+- =(al-option-bind function option)=
+
+** Résultat
+
+- =(al-ok value)=
+- =(al-error reason)=
+- =(al-result-map function result)=
+- =(al-result-bind function result)=
+
+Les fonctions =bind= exigent que la fonction fournie retourne le même type
+(=option= ou =result=). Les variantes =none= et =error= sont propagées sans
+appeler la fonction.
+
+* API générique
+
+- =(al-define-type type variants)=
+- =(al-type-defined-p type)=
+- =(al-construct type variant values)=
+- =(al-value-p value)=
+- =(al-type-of value)=
+- =(al-variant-of value)=
+- =(al-values value)=
+- =(al-field value field)=
+- =(al-is-p value type variant)=
+- =(al-match value cases)=

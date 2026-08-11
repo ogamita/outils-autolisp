@@ -65,7 +65,7 @@ build:clautolisp:fabrik:
   extends: .linux-test
   parallel:
     matrix:
-      - SUBPROJECT: [autolisp-vector, autolisp-hash-table, autolisp-json, autolisp-doc, autolisp-misc]
+      - SUBPROJECT: [autolisp-algetypes, autolisp-vector, autolisp-hash-table, autolisp-json, autolisp-doc, autolisp-misc]
   script:
     - 'make -C "$SUBPROJECT" test-clautolisp'
 
@@ -146,16 +146,16 @@ windows:clautolisp:
   extends: .on-release-or-manual
   tags: [windows, shell]
   script:
-    - 'foreach ($d in "autolisp-vector","autolisp-hash-table","autolisp-json","autolisp-doc","autolisp-misc") { Write-Host "== $d (clautolisp) =="; make -C $d test-clautolisp; if ($LASTEXITCODE) { exit 1 } }'
+    - 'foreach ($d in "autolisp-algetypes","autolisp-vector","autolisp-hash-table","autolisp-json","autolisp-doc","autolisp-misc") { Write-Host "== $d (clautolisp) =="; make -C $d test-clautolisp; if ($LASTEXITCODE) { exit 1 } }'
 
 windows:bricscad:
   extends: .on-release-or-manual
   tags: [windows, shell]
   script:
-    - 'foreach ($d in "autolisp-vector","autolisp-hash-table","autolisp-json","autolisp-doc") { Write-Host "== $d (bricscad) =="; make -C $d test-bricscad; if ($LASTEXITCODE) { exit 1 } }'
+    - 'foreach ($d in "autolisp-algetypes","autolisp-vector","autolisp-hash-table","autolisp-json","autolisp-doc") { Write-Host "== $d (bricscad) =="; make -C $d test-bricscad; if ($LASTEXITCODE) { exit 1 } }'
 
 windows:autocad:
   extends: .on-release-or-manual
   tags: [windows, shell]
   script:
-    - 'foreach ($d in "autolisp-vector","autolisp-hash-table","autolisp-json","autolisp-doc") { Write-Host "== $d (autocad) =="; make -C $d test-autocad; if ($LASTEXITCODE) { exit 1 } }'
+    - 'foreach ($d in "autolisp-algetypes","autolisp-vector","autolisp-hash-table","autolisp-json","autolisp-doc") { Write-Host "== $d (autocad) =="; make -C $d test-autocad; if ($LASTEXITCODE) { exit 1 } }'

@@ -6,6 +6,7 @@
 
 # Sous-projets basés sur le framework autolisp-test (+ misc, harnais shell).
 TEST_SUBPROJECTS = \
+	autolisp-algetypes \
 	autolisp-vector \
 	autolisp-hash-table \
 	autolisp-introspection \
@@ -16,6 +17,7 @@ TEST_SUBPROJECTS = \
 # Sous-projets qui exposent des cibles CAO (common.mk : test-bricscad /
 # test-autocad). misc en est exclu (harnais shell, clautolisp seulement).
 CAD_SUBPROJECTS = \
+	autolisp-algetypes \
 	autolisp-vector \
 	autolisp-hash-table \
 	autolisp-introspection \
@@ -31,6 +33,7 @@ BACKEND ?= clautolisp
 
 DOCS_SUBPROJECTS = \
 	autolisp-script \
+	autolisp-algetypes \
 	autolisp-vector \
 	autolisp-hash-table \
 	autolisp-introspection \

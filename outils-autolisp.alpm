@@ -15,7 +15,8 @@
 (alpm-define-system 1
  '(name        "outils-autolisp"
    description "Umbrella system: the outils-autolisp AutoLISP libraries."
-   depends-on  ("autolisp-vector"
+   depends-on  ("autolisp-algetypes"
+                "autolisp-vector"
                 "autolisp-hash-table"
                 "autolisp-introspection"
                 "autolisp-json"

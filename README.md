@@ -53,7 +53,7 @@ Le chargement est décrit par des définitions de systèmes ALPM
 remplace l'ancien `loader.lsp` — et un `<sous-projet>.alpm` dans
 chaque sous-projet de bibliothèque AutoLISP (`autolisp-vector`,
 `autolisp-hash-table`, `autolisp-introspection`, `autolisp-json`,
-`autolisp-doc`, `autolisp-defstruct`, `autolisp-misc`,
+`autolisp-doc`, `autolisp-algetypes`, `autolisp-defstruct`, `autolisp-misc`,
 `autolisp-test`).
 
 Exemple depuis la racine du dépôt:
@@ -125,6 +125,14 @@ Le sous-projet fournit notamment:
 
 Documentation: [autolisp-doc/docs/autolisp-doc--manual.org](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-doc/docs/autolisp-doc--manual.org)
 
+### `autolisp-algetypes`
+
+Petite bibliothèque de types algébriques immuables : déclaration de types
+somme, construction de variantes, champs nommés, filtrage exhaustif et types
+usuels `option` / `result`.
+
+Documentation: `autolisp-algetypes/docs/autolisp-algetypes--manual.org`
+
 ### `autolisp-vector`
 
 Implémentation d'un vecteur AutoLISP indexé par arbre, utilisé comme brique de base pour d'autres structures.
@@ -192,7 +200,7 @@ En mode BricsCAD macOS `batch`, les `source.lsp` sont maintenant autorisés par 
 
 État des cibles principales:
 
-- `make test-ci` lance notamment `autolisp-vector`, `autolisp-hash-table`,
+- `make test-ci` lance notamment `autolisp-algetypes`, `autolisp-vector`, `autolisp-hash-table`,
   `autolisp-introspection`, `autolisp-json`, `autolisp-doc` et `autolisp-misc`;
 - [`autolisp-doc/Makefile`](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-doc/Makefile) expose ses propres tests via `make -C autolisp-doc test`;
 - `autolisp-script` propose aussi un backend de vérification sans CAD réel:
