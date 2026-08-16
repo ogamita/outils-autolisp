@@ -162,9 +162,11 @@ Documentation: [autolisp-json/docs/autolisp-json--manual.org](/Users/pjb/works/s
 
 ### `autolisp-formatter`
 
-Projet de formateur / pretty-printer AutoLISP. Le dépôt contient surtout les spécifications et le plan de travail.
+Formateur / pretty-printer AutoLISP écrit en AutoLISP: relecture syntaxique du source (scanner, CST), puis réémission déterministe et idempotente. Trois styles de parenthèses (`cl`, `nail`, et `stacked-nail` accepté en entrée mais jamais émis par défaut), trois politiques de casse avec fichier d'exceptions, normalisation ou préservation des commentaires, fichier de configuration. Les coupures de ligne de l'auteur sont conservées: le formateur ne reflue pas le code.
 
-Documentation: [autolisp-formatter/docs/autolisp-formatter--specifications.org](/Users/pjb/works/sncf-reseau/src/outils-autolisp/autolisp-formatter/docs/autolisp-formatter--specifications.org)
+Lanceur: `autolisp-formatter/scripts/autolisp-format [OPTIONS] FICHIER...` (`--check`, `--in-place`, `--output`).
+
+Documentation: [autolisp-formatter/README.md](autolisp-formatter/README.md), manuel: [autolisp-formatter/docs/autolisp-formatter--manual.org](autolisp-formatter/docs/autolisp-formatter--manual.org), spécifications: [autolisp-formatter/docs/autolisp-formatter--specifications.org](autolisp-formatter/docs/autolisp-formatter--specifications.org)
 
 ### `autolisp-defstruct`
 

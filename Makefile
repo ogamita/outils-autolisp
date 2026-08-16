@@ -11,6 +11,7 @@ TEST_SUBPROJECTS = \
 	autolisp-hash-table \
 	autolisp-introspection \
 	autolisp-json \
+	autolisp-formatter \
 	autolisp-doc \
 	autolisp-misc
 
@@ -22,6 +23,7 @@ CAD_SUBPROJECTS = \
 	autolisp-hash-table \
 	autolisp-introspection \
 	autolisp-json \
+	autolisp-formatter \
 	autolisp-doc
 
 # Sous-projets avec un benchmark de vitesse (structure vs liste/a-list).
@@ -102,6 +104,6 @@ docs-pdf:
 	@for d in $(DOCS_SUBPROJECTS); do $(MAKE) -C $$d docs-pdf || exit 1; done
 
 clean:
-	@for d in $(TEST_SUBPROJECTS) autolisp-formatter autolisp-script dwg-identifier; do \
+	@for d in $(TEST_SUBPROJECTS) autolisp-script dwg-identifier; do \
 		$(MAKE) -C $$d clean || exit 1; \
 	done

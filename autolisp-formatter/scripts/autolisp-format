@@ -1,0 +1,61 @@
+#!/bin/bash
+# autolisp-format --- formate des sources AutoLISP depuis la ligne de commande.
+#
+# Le formateur est écrit en AutoLISP ; ce script n'est qu'un lanceur : il
+# charge les modules dans clautolisp et appelle (fmt-main ARGS).
+#
+# Options : voir « autolisp-format » sans argument, ou docs/.
+#
+# Variables d'environnement :
+#   CLAUTOLISP          binaire à utiliser (défaut : clautolisp)
+#   AUTOLISP_FORMAT_DIALECT   dialecte clautolisp (défaut : clautolisp —
+#                             le lanceur utilise (quit STATUS), qui est une
+#                             extension clautolisp ; les sources du
+#                             formateur, elles, sont testées en --dialect
+#                             strict par « make test »)
+
+set -u
+
+here=$(cd "$(dirname "$0")" && pwd -P)
+root=$(dirname "$here")
+
+CLAUTOLISP=${CLAUTOLISP:-clautolisp}
+dialect=${AUTOLISP_FORMAT_DIALECT:-clautolisp}
+
+modules=(fmt-util fmt-scanner fmt-parser fmt-options fmt-io
+         fmt-case fmt-rules fmt-printer fmt-main)
+
+load_args=()
+for module in "${modules[@]}" ; do
+    load_args+=(-l "$root/src/$module.lsp")
+done
+
+# Les arguments du shell deviennent une liste de chaînes AutoLISP ; seuls
+# le backslash et le guillemet doivent être échappés.
+items=""
+trusted=""
+for arg ; do
+    escaped=${arg//\\/\\\\}
+    escaped=${escaped//\"/\\\"}
+    items="$items \"$escaped\""
+    # Les fichiers à formater sont des sources .lsp : sous SECURELOAD, leur
+    # lecture depuis un dossier non déclaré émet un avertissement. Puisque
+    # l'utilisateur les désigne explicitement, on déclare leurs dossiers.
+    if [ -f "$arg" ] ; then
+        dir=$(cd "$(dirname "$arg")" && pwd -P)
+        case ";$trusted;" in
+        (*";$dir;"*) ;;
+        (*) trusted="${trusted:+$trusted;}$dir" ;;
+        esac
+    fi
+done
+
+trust_args=()
+if [ -n "$trusted" ] ; then
+    trust_args=(-x "(setvar \"TRUSTEDPATHS\" \"$trusted\")")
+fi
+
+exec "$CLAUTOLISP" --no-init --dialect "$dialect" -q \
+     "${load_args[@]}" \
+     ${trust_args[0]+"${trust_args[@]}"} \
+     -x "(quit (fmt-main (list$items)))"

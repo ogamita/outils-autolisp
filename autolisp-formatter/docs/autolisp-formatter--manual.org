@@ -1,0 +1,322 @@
+#+TITLE: Manuel de l'utilisateur du formateur AutoLISP
+#+AUTHOR: outils-autolisp
+#+LANGUAGE: fr
+#+OPTIONS: toc:3 num:t
+
+* Présentation
+
+=autolisp-formatter= est un formateur source-à-source pour AutoLISP, écrit
+lui-même en AutoLISP. Il lit un fichier, en reconstruit la structure
+syntaxique — sans jamais l'évaluer — et le réémet selon un jeu d'options.
+
+Deux propriétés sont garanties par la suite de tests :
+
+- *déterminisme* : mêmes entrée et options, même sortie ;
+- *idempotence* : =fmt(fmt(x)) = fmt(x)=.
+
+Une troisième est vérifiée sur corpus réel : la suite des tokens de code
+(parenthèses, atomes, chaînes, quotes) est identique avant et après
+formatage. Autrement dit, le formateur ne peut pas corrompre le code : il
+n'en change que la mise en page.
+
+** Ce que le formateur ne fait pas
+
+Le formateur *ne reflue pas* le code : il ne joint ni ne coupe de lignes de
+sa propre initiative. Les coupures voulues par l'auteur sont conservées.
+Ce qui est recalculé :
+
+- l'indentation de chaque ligne ;
+- le placement des parenthèses fermantes ;
+- la casse des symboles ;
+- la présentation des commentaires ;
+- les lignes blanches (au plus une consécutive, aucune en tête ni en queue).
+
+* Ligne de commande
+
+#+begin_src sh
+scripts/autolisp-format [OPTIONS] FICHIER...
+#+end_src
+
+** Options
+
+| Option                                     | Défaut     | Effet                                            |
+|--------------------------------------------+------------+--------------------------------------------------|
+| =--style cl\vert nail\vert stacked-nail=   | =cl=       | style de parenthèses                             |
+| =--symbol-case preserve\vert downcase\vert upcase= | =preserve= | casse des symboles                       |
+| =--comment-style preserve\vert cl=         | =preserve= | préfixes de commentaires                         |
+| =--block-comments preserve\vert to-semicolons= | =preserve= | traitement des =;\vert ... \vert;=           |
+| =--contextual-comments yes\vert no=        | =no=       | préfixe choisi selon l'emplacement               |
+| =--inline-comment-column N=                | aucun      | colonne des commentaires de fin de ligne         |
+| =--case-exceptions FICHIER=                | aucun      | exceptions de capitalisation                     |
+| =--check-case-exceptions=                  | non        | signale les exceptions jamais rencontrées        |
+| =--report-stacked=                         | non        | signale les lignes en fermetures empilées        |
+| =--config FICHIER=                         | aucun      | fichier de configuration                         |
+| =--in-place=                               | non        | remplace le fichier source                       |
+| =--check=                                  | non        | vérifie sans écrire                              |
+| =--output FICHIER=                         | stdout     | écrit vers un autre fichier                      |
+
+** Codes de retour
+
+- =0= : succès (ou fichiers déjà conformes en mode =--check=) ;
+- =1= : au moins un fichier non conforme en mode =--check= ;
+- =2= : erreur (option inconnue, fichier introuvable, source mal formé).
+
+** Exemples
+
+#+begin_src sh
+# afficher le résultat sans rien modifier
+scripts/autolisp-format src/module.lsp
+
+# reformater en place, style historique, symboles en minuscules
+scripts/autolisp-format --style nail --symbol-case downcase --in-place src/*.lsp
+
+# contrôle en intégration continue
+scripts/autolisp-format --check src/*.lsp || echo "sources non formatés"
+
+# repérer le style à fermetures empilées avant migration
+scripts/autolisp-format --report-stacked --check src/*.lsp
+#+end_src
+
+* Styles de parenthèses
+
+** =cl=
+
+Fermantes ramenées sur la dernière ligne de contenu.
+
+#+begin_src lisp
+(defun foo (x)
+  (if (> x 0)
+      (progn
+        (bar x)
+        (baz x))))
+#+end_src
+
+L'indentation suit une table de règles par tête de forme : =defun=, =lambda=,
+=progn=, =cond=, =while=, =repeat=, =foreach= indentent leur corps de deux
+colonnes ; =if=, =setq= et les appels de fonction alignent leurs arguments
+sous le premier argument.
+
+** =nail=
+
+Nail-clipping : chaque fermante sur sa propre ligne, à la colonne de la
+forme qu'elle ferme ; indentation uniforme de deux colonnes.
+
+#+begin_src lisp
+(defun foo (x)
+  (if (> x 0)
+    (progn
+      (bar x)
+      (baz x)
+    )
+  )
+)
+#+end_src
+
+** =stacked-nail=
+
+/Nail-clipping à fermetures empilées/ : plusieurs fermantes sur une même
+ligne, séparées par des espaces.
+
+#+begin_src lisp
+(defun foo (x)
+  (if (> x 0)
+    (progn
+      (bar x)
+      (baz x)
+) ) )
+#+end_src
+
+Ce style crée l'illusion que les fermantes correspondent verticalement aux
+ouvrantes situées au-dessus, alors que leur ordre est inversé. Il est
+*accepté en entrée* et normalisé vers le style cible ; il n'est *émis* que
+si =--style stacked-nail= est demandé explicitement. =--report-stacked=
+signale les lignes concernées, fichier et numéro de ligne.
+
+* Commentaires
+
+** Préservation
+
+Par défaut (=--comment-style preserve=), les préfixes sont laissés tels
+quels ; seule l'indentation change. Le texte interne d'un commentaire n'est
+jamais modifié.
+
+** Normalisation
+
+Avec =--comment-style cl=, les préfixes sont normalisés. Avec
+=--contextual-comments yes=, le préfixe dépend de l'emplacement :
+
+| Emplacement                        | Préfixe |
+|------------------------------------+---------|
+| bannière (avant toute forme)       | =;;;;=  |
+| commentaire de premier niveau      | =;;;=   |
+| commentaire interne à une forme    | =;;=    |
+| commentaire de fin de ligne        | =;=     |
+
+Sans =--contextual-comments=, tous les commentaires sur ligne dédiée
+reçoivent =;;=, les commentaires de fin de ligne =;=.
+
+** Commentaires bloc
+
+=--block-comments to-semicolons= convertit un =;| ... |;= en une suite de
+commentaires préfixés par des points-virgules, une ligne par ligne du bloc.
+Par défaut le bloc est conservé tel quel, y compris sa mise en page interne.
+
+** Alignement
+
+=--inline-comment-column 40= aligne les commentaires de fin de ligne sur la
+colonne 40. Si le code dépasse déjà cette colonne, un espace au moins est
+inséré avant le =;=.
+
+* Casse des symboles
+
+Trois politiques : =preserve=, =downcase=, =upcase=. Elles ne s'appliquent
+qu'aux symboles : ni les chaînes, ni le texte des commentaires, ni les
+littéraux numériques ne sont modifiés.
+
+=:foo= n'est pas un mot-clé au sens Common Lisp mais un symbole ordinaire
+dont le nom commence par =:= ; il suit donc la politique générale.
+
+** Fichier d'exceptions
+
+Un symbole par ligne, écrit exactement tel qu'il doit être réémis :
+
+#+begin_src text
+PATH
+CreateFileW
+LabelCourte
+#+end_src
+
+Toute occurrence, quelle que soit sa casse dans le source, est réécrite
+ainsi. L'ordre de priorité est :
+
+1. exceptions du fichier ;
+2. politique générale de casse ;
+3. texte d'origine.
+
+=--check-case-exceptions= liste les entrées du fichier jamais rencontrées
+dans les sources traités — utile pour purger une liste devenue obsolète.
+
+* Fichier de configuration
+
+Toutes les options peuvent être placées dans un fichier, passé par
+=--config=. Deux formes sont acceptées.
+
+Une s-expression englobante :
+
+#+begin_src lisp
+(:style-parentheses :cl
+ :casse-symboles :minuscules
+ :fichier-exceptions-casse "capitalisation.txt"
+ :colonne-commentaires-en-ligne 40
+ "entree.lsp")
+#+end_src
+
+Ou les items à plat :
+
+#+begin_src lisp
+:style-parentheses :nail
+:casse-symboles :majuscules
+#+end_src
+
+Les commentaires =;= sont acceptés dans ce fichier.
+
+** Correspondance des noms
+
+Chaque option existe sous un nom anglais (ligne de commande) et un nom
+français (fichier de configuration) ; les deux désignent la même clé
+interne, analysée par un module unique.
+
+| Ligne de commande         | Fichier de configuration           |
+|---------------------------+------------------------------------|
+| =--style=                 | =:style-parentheses=               |
+| =--symbol-case=           | =:casse-symboles=                  |
+| =--comment-style=         | =:style-commentaires=              |
+| =--block-comments=        | =:commentaires-bloc=               |
+| =--contextual-comments=   | =:commentaires-contextuels=        |
+| =--inline-comment-column= | =:colonne-commentaires-en-ligne=   |
+| =--case-exceptions=       | =:fichier-exceptions-casse=        |
+| =--check-case-exceptions= | =:controle-exceptions-casse=       |
+| =--report-stacked=        | =:signaler-empilees=               |
+| =--in-place=              | =:sur-place=                       |
+| =--check=                 | =:verifier=                        |
+| =--output=                | =:sortie=                          |
+| =--config=                | =:fichier-configuration=           |
+
+Les valeurs suivent la même règle : =cl= et =:cl=, =downcase= et
+=:minuscules=, =upcase= et =:majuscules=, =yes= / =oui= et =no= / =non=.
+
+** Priorité
+
+1. options passées à l'appel courant ;
+2. options lues dans le fichier de configuration ;
+3. valeurs par défaut.
+
+* API AutoLISP
+
+#+begin_src lisp
+(load "autolisp-formatter/loader.lsp")
+#+end_src
+
+| Fonction                                    | Résultat                                |
+|---------------------------------------------+-----------------------------------------|
+| =(fmt-format TEXTE ITEMS)=                  | texte formaté, options brutes           |
+| =(fmt-format-string TEXTE OPTIONS)=         | texte formaté, options normalisées      |
+| =(fmt-check-string TEXTE OPTIONS)=          | =T= si le texte est déjà conforme       |
+| =(fmt-format-file ENTREE SORTIE OPTIONS)=   | écrit SORTIE, renvoie le texte          |
+| =(fmt-check-file FICHIER OPTIONS)=          | =T= si le fichier est déjà conforme     |
+| =(fmt-build-options ITEMS)=                 | structure d'options normalisée          |
+| =(fmt-main ITEMS)=                          | code de retour du programme             |
+| =(fmt-stacked-report TEXTE)=                | lignes en fermetures empilées           |
+
+#+begin_src lisp
+(fmt-format "(setq  a  1)\n" '("--style" "nail"))
+(fmt-format-file "entree.lsp" "sortie.lsp"
+                 (fmt-build-options '("--symbol-case" "downcase")))
+#+end_src
+
+* Erreurs détectées
+
+Le formateur refuse de produire une sortie à partir d'un source qu'il n'a pas
+su reconstruire. Sont signalés, avec ligne et colonne approximatives :
+
+- parenthèses non équilibrées (ouvrante non fermée, fermante en trop) ;
+- chaîne non terminée ;
+- commentaire bloc =;| ... |;= non terminé ;
+- quote orpheline en fin de forme ou de fichier.
+
+Le message est préfixé par =FMT-ERROR:=.
+
+* Architecture
+
+Le traitement est découpé en passes, un module par passe :
+
+| Module              | Passe                                                  |
+|---------------------+--------------------------------------------------------|
+| =fmt-io=            | lecture brute du fichier                               |
+| =fmt-scanner=       | tokens : parenthèses, quote, chaînes, commentaires…    |
+| =fmt-parser=        | CST — structure + commentaires + lignes blanches       |
+| =fmt-case=          | normalisation de casse                                 |
+| =fmt-rules=         | table des règles d'indentation                         |
+| =fmt-printer=       | réémission textuelle                                   |
+| =fmt-options=       | analyse unique des options (CLI, config, API)          |
+| =fmt-main=          | API publique et pilote                                 |
+
+Les commentaires et les lignes blanches ne sont pas des /trivia/ attachés
+aux nœuds voisins mais des nœuds à part entière insérés dans la séquence :
+l'imprimeur les retrouve à leur place sans analyse supplémentaire.
+
+La ligne de la parenthèse fermante d'une forme est délibérément ignorée dans
+le calcul de « cette forme tenait-elle sur une ligne ? ». C'est ce qui permet
+de reconnaître qu'une forme en style nail tenait bien sur une seule ligne de
+contenu, et donc de convertir nail vers cl sans éclater le code.
+
+* Limites connues (version 1)
+
+- L'alignement intra-ligne obtenu par plusieurs espaces consécutifs est
+  normalisé à un espace : les tableaux alignés à la main ne survivent pas au
+  formatage.
+- =--comment-style cl= applique une heuristique de contexte ; les
+  spécifications n'exigent pas de perfection éditoriale en v1.
+- Pas de reflux du texte en prose dans les commentaires.
+- Pas de règles d'indentation spécifiques au-delà des formes courantes ; la
+  table de =fmt-rules= est prévue pour être étendue.
