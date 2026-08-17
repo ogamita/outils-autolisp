@@ -1,0 +1,11 @@
+;;;; -*- mode:lisp -*-
+;;;; ergo project file for autolisp-misc (a sub-project of outils-autolisp).
+;;;; Build/load it with:  ergo build   (in this directory)
+;;;; or depend on it from another project via the outils-autolisp repo.
+(ergo:project
+ :designator   (git "git@gitlab.com:pjb-cimon/outils-autolisp.git")
+ :dependencies ()
+ :build (alpm "autolisp-misc")
+ :load  (alpm "autolisp-misc")
+ :name        "autolisp-misc"
+ :description "Miscellaneous shell-like utilities: fs (pwd/cd/ls), browser, cat, format, symbols.")

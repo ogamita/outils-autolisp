@@ -1,0 +1,11 @@
+;;;; -*- mode:lisp -*-
+;;;; ergo project file for autolisp-vector (a sub-project of outils-autolisp).
+;;;; Build/load it with:  ergo build   (in this directory)
+;;;; or depend on it from another project via the outils-autolisp repo.
+(ergo:project
+ :designator   (git "git@gitlab.com:pjb-cimon/outils-autolisp.git")
+ :dependencies ()
+ :build (alpm "autolisp-vector")
+ :load  (alpm "autolisp-vector")
+ :name        "autolisp-vector"
+ :description "Tree-backed vector implementation for AutoLISP.")

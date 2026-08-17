@@ -8,6 +8,7 @@
 *.org text eol=crlf
 *.md text eol=crlf
 *.scr text eol=crlf
+*.ergo text eol=crlf
 
 # Files executed directly on Unix-like systems.
 *.sh text eol=lf
