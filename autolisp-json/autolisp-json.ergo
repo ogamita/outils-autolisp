@@ -1,0 +1,11 @@
+;;;; -*- mode:lisp -*-
+;;;; ergo project file for autolisp-json (a sub-project of outils-autolisp).
+;;;; Build/load it with:  ergo build   (in this directory)
+;;;; or depend on it from another project via the outils-autolisp repo.
+(ergo:project
+ :designator   (git "git@gitlab.com:pjb-cimon/outils-autolisp.git")
+ :dependencies ()
+ :build (alpm "autolisp-json")
+ :load  (alpm "autolisp-json")
+ :name        "autolisp-json"
+ :description "JSON reader/writer for AutoLISP (bulk: one file / one sexp).")

@@ -1,0 +1,11 @@
+;;;; -*- mode:lisp -*-
+;;;; ergo project file for autolisp-test (a sub-project of outils-autolisp).
+;;;; Build/load it with:  ergo build   (in this directory)
+;;;; or depend on it from another project via the outils-autolisp repo.
+(ergo:project
+ :designator   (git "git@gitlab.com:pjb-cimon/outils-autolisp.git")
+ :dependencies ()
+ :build (alpm "autolisp-test")
+ :load  (alpm "autolisp-test")
+ :name        "autolisp-test"
+ :description "Unit test framework for AutoLISP, with entity mutation assertions (test-entites).")
