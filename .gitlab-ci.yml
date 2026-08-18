@@ -5,6 +5,16 @@ stages:
   - release
   - collect
 
+# version-M.m et version-M sont des POINTEURS : on ne fait que les
+# déplacer sur un commit déjà tagué, dont le pipeline a déjà tourné.
+# Sans cette règle, chaque publication en déclenche trois de plus, qui
+# se disputent les mêmes runners que celui du tag.
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^version-/'
+      when: never
+    - when: always
+
 default:
   # Retry transient runner/infrastructure failures (e.g. a shared
   # runner's docker daemon returning EOF during prepare).
@@ -225,6 +235,25 @@ windows:autocad:
       when: on_success
     - when: manual
       allow_failure: true
+  # L'ORDRE DES ÉTAPES NE DOIT PAS SERVIR DE PORTE ICI. Sans `needs',
+  # l'étape release attend que TOUTE l'étape test soit terminée — y
+  # compris les lanes CAO macOS et Windows, qui tournent sur des postes
+  # intermittents. Runner Windows éteint = jobs `pending' indéfiniment,
+  # et la publication entière reste bloquée derrière eux, alors qu'elle
+  # ne dépend d'aucun de leurs résultats (c'est arrivé sur la 1.9.1).
+  #
+  # La porte utile est la suite Linux : elle, elle doit passer. On la
+  # nomme explicitement — un `needs' sur un job parallel:matrix attend
+  # tous ses enfants — et les lanes CAO redeviennent ce qu'elles sont :
+  # informatives, jamais bloquantes.
+  #
+  # artifacts:false : chaque lane fabrique elle-même son installation
+  # clautolisp dans $CLAUTOLISP_PREFIX, qui est justement
+  # $CI_PROJECT_DIR/.clautolisp — l'artefact de build:clautolisp
+  # (une installation de PROGRAMMES) y atterrirait par-dessus.
+  needs:
+    - job: "linux:clautolisp"
+      artifacts: false
 
 # --- artefacts indépendants de la plate-forme ------------------------------
 #
@@ -368,7 +397,7 @@ release:programs:ubuntu:arm64:
 release:programs:raspbian:arm32:
   extends: .release-programs-linux
   image: $DEBIAN_ARMV7_BASE
-  tags: [linux, arm32, docker]
+  tags: [linux, arm32, qemu]      # le seul runner arm32 enregistré (émulé)
   rules:
     - if: '$CI_SERVER_HOST == "fabrik.sncf.fr"'
       when: never
