@@ -2,6 +2,10 @@
 #+AUTHOR: OpenAI
 #+LANGUAGE: fr
 #+OPTIONS: toc:2 num:t
+#+TEXINFO_FILENAME: autolisp-doc.info
+#+TEXINFO_DIR_CATEGORY: outils-autolisp
+#+TEXINFO_DIR_TITLE: autolisp-doc: (autolisp-doc)
+#+TEXINFO_DIR_DESC: AutoLISP reference data (autolisp-ref) and documentation helpers.
 
 * Objet
 
@@ -118,7 +122,7 @@ Le motif utilise une syntaxe de wildcard simple compatible =wcmatch= :
 
 - =*= :: n'importe quelle suite de caractères ;
 - =?= :: un caractère ;
-- sans wildcard explicite, la recherche est traitée comme un *=contains=*.
+- (aucun) :: sans wildcard explicite, la recherche est traitée comme un *=contains=*.
 
 Exemples :
 

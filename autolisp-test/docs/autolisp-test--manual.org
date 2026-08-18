@@ -1,0 +1,269 @@
+#+TITLE: Manuel utilisateur de autolisp-test
+#+AUTHOR: Pascal J. Bourguignon
+#+LANGUAGE: fr
+#+OPTIONS: toc:2 num:t
+#+TEXINFO_DIR_CATEGORY: outils-autolisp
+#+TEXINFO_DIR_TITLE: autolisp-test: (autolisp-test)
+#+TEXINFO_DIR_DESC: Cadre de tests unitaires pour AutoLISP
+#+TEXINFO_FILENAME: autolisp-test.info
+
+* Objet
+
+=autolisp-test= est un cadre de tests unitaires pour AutoLISP : des
+suites, des tests, des assertions, et deux fonctions pour tout lancer.
+Il est délibérément petit et n'utilise que de l'AutoLISP *portable* —
+il tourne à l'identique sous AutoCAD, BricsCAD et =clautolisp=.
+
+Il fournit en outre, via =test-entites.lsp=, un jeu d'assertions
+spécialisées qui vérifient ce qu'une commande a *changé dans le
+dessin*, en s'appuyant sur =autolisp-introspection=.
+
+C'est le cadre sur lequel reposent les suites de tous les autres
+sous-projets d'=outils-autolisp=.
+
+* Chargement
+
+Via ALPM (recommandé) — charge =test-framework= et =test-entites= :
+
+#+begin_src lisp
+(alpm-register-directory "/chemin/vers/outils-autolisp")
+(alpm-load-system "autolisp-test")
+#+end_src
+
+Directement, si l'on ne veut que le cadre de base :
+
+#+begin_src lisp
+(load "autolisp-test/test-framework.lsp")
+#+end_src
+
+Pour les assertions d'entités, l'ordre de chargement compte —
+=test-entites.lsp= a besoin des deux précédents :
+
+#+begin_src lisp
+(load "autolisp-test/test-framework.lsp")
+(load "autolisp-introspection/src/autolisp-introspection.lsp")
+(load "autolisp-test/test-entites.lsp")
+#+end_src
+
+Les noms publics sont non préfixés (=deftest=, =is-equal=, …) ; les
+noms internes portent le préfixe =t:=.
+
+* Démarrage rapide
+
+#+begin_src lisp
+(load "autolisp-test/test-framework.lsp")
+
+(defsuite "math")
+(in-suite "math")
+
+(deftest "addition"
+  (function
+    (lambda ()
+      (is-equal 3 (+ 1 2) nil)
+      (is (= 7 (+ 3 4)) nil)
+      (is-not (= 0 (+ 1 2)) nil))))
+
+(run-suite "math")
+#+end_src
+
+produit :
+
+#+begin_example
+OK    [math] addition
+---- Suite [math] ----
+Total: 1  OK: 1  FAIL: 0  ERROR: 0
+#+end_example
+
+* Suites et tests
+
+** Déclarer une suite
+
+#+begin_src lisp
+(defsuite "nom")     ; crée la suite si elle n'existe pas
+(in-suite  "nom")    ; en fait la suite courante
+#+end_src
+
+La suite courante vaut ="default"= tant qu'aucun =in-suite= n'a été
+exécuté. =defsuite= sur une suite existante ne la vide pas.
+
+** Déclarer un test
+
+#+begin_src lisp
+(deftest "nom" (function (lambda () ...)))
+#+end_src
+
+Le test est ajouté à la *suite courante*. Redéfinir un test de même nom
+*remplace* l'ancien au lieu de l'ajouter — recharger un fichier de
+tests ne duplique donc rien.
+
+Le corps est une /fonction sans argument/, passée par =(function
+(lambda () …))=. Il n'y a pas de macro : AutoLISP n'en a pas.
+
+Les tests d'une suite s'exécutent dans leur *ordre de définition*.
+
+* Assertions
+
+Toutes prennent un dernier argument =msg= : le message d'échec, ou
+=nil= pour laisser le cadre en construire un qui montre l'attendu et
+l'obtenu. Toutes rendent =t= en cas de succès et signalent un échec
+sinon.
+
+| Assertion                              | Vérifie                                      |
+|----------------------------------------+----------------------------------------------|
+| =(is CONDITION MSG)=                   | =CONDITION= est vraie                        |
+| =(is-not CONDITION MSG)=               | =CONDITION= est fausse                       |
+| =(is-equal ATTENDU OBTENU MSG)=        | =(equal ATTENDU OBTENU)=                     |
+| =(is-approx ATTENDU OBTENU TOL MSG)=   | =(equal ATTENDU OBTENU TOL)= — numérique     |
+| =(signals-error THUNK MSG)=            | =THUNK= signale bien une erreur              |
+
+#+begin_src lisp
+(is-approx 1.0 1.001 0.01 nil)
+
+(signals-error (function (lambda () (error "boum"))) nil)
+#+end_src
+
+=signals-error= appelle son /thunk/ sous =vl-catch-all-apply= : le test
+réussit si et seulement si une erreur est signalée.
+
+* Exécution
+
+#+begin_src lisp
+(run-suite "nom")   ; lance une suite,  rend son résumé
+(run-all)           ; lance toutes les suites, rend la liste des résumés
+#+end_src
+
+=run-suite= sur une suite inconnue affiche =[run-suite] Unknown suite:
+nom= et rend =nil= — ce n'est pas une erreur.
+
+** Sortie
+
+Une ligne par test :
+
+#+begin_example
+OK    [suite] nom-du-test
+FAIL  [suite] nom-du-test -- TEST-FAIL: is-equal: expected=3 actual=4
+ERROR [suite] nom-du-test -- message de l'erreur
+#+end_example
+
+puis, par suite :
+
+#+begin_example
+---- Suite [suite] ----
+Total: N  OK: N  FAIL: N  ERROR: N
+#+end_example
+
+=FAIL= et =ERROR= sont distincts : un =FAIL= est une assertion qui n'a
+pas tenu (le message commence par =TEST-FAIL:=), un =ERROR= est
+n'importe quelle *autre* erreur — le test lui-même est cassé.
+
+Les lignes =OK= et les résumés partent sur la sortie standard, les
+=FAIL= et =ERROR= sur la sortie d'erreur.
+
+** Compteurs
+
+Après exécution, quatre variables globales portent les totaux :
+
+- =*t:last-total*=
+- =*t:last-ok*=
+- =*t:last-fail*=
+- =*t:last-error*=
+
+=run-all= les remet à zéro avant de commencer ; =run-suite= *ajoute*
+aux compteurs, ce qui permet d'enchaîner plusieurs suites choisies.
+
+Le résumé rendu par =run-suite= est la liste
+=(:suite NOM :total N :ok N :fail N :error N)=.
+
+** Code de sortie
+
+=t:set-status= transmet un code de sortie à l'hôte : sous =clautolisp=
+via l'extension =autolisp-set-status= (le dialecte bascule
+temporairement en =lax= le temps de l'appel, puis est restauré), sous
+AutoCAD et BricsCAD via le bootstrap file-IPC d'=alfe=.
+
+Le patron habituel d'un =run-tests.lsp= est donc :
+
+#+begin_src lisp
+(defun C:MAIN ()
+  (run-all)
+  (t:set-status (if (and (= *t:last-fail* 0) (= *t:last-error* 0)) 0 1))
+  (princ))
+#+end_src
+
+lancé par =make test-clautolisp= (voir =makefiles/common.mk=).
+
+** Redirection vers des fichiers
+
+Les variables d'environnement =OUTFILE= et =ERRFILE= — ou, à défaut,
+les variables AutoLISP =*AUTOLISP_OUTFILE*= et =*AUTOLISP_ERRFILE*= —
+nomment des fichiers où les lignes sont *aussi* écrites (en ajout).
+C'est ce qui permet de récupérer un rapport depuis une CAO dont la
+console n'est pas capturable.
+
+* Assertions d'entités
+
+=test-entites.lsp= ajoute un petit langage d'assertions au-dessus
+d'=autolisp-introspection= : on photographie le dessin, on exécute la
+commande, on photographie à nouveau, et on affirme ce qui a changé.
+
+#+begin_src lisp
+(setq avant (ei-snapshot nil))
+(fonction-mutatrice)
+(setq diff (ei-diff avant (ei-snapshot nil)))
+
+(attendu-aucune-creation    diff nil)
+(attendu-aucune-suppression diff nil)
+(attendu-modifiees          diff 1 nil)
+
+(setq ediff (modif-unique diff))
+(attendu-attribut-modifie  ediff 8 "0" "PK" nil)
+(attendu-attribut-inchange ediff 10 nil)
+(attendu-xdata-ajoutee ediff "SCHMS_PK"
+                       '((1001 . "SCHMS_PK") (1000 . "12+345"))
+                       nil)
+#+end_src
+
+Le vocabulaire :
+
+- primitives : =attendu=, =attendu-non=, =attendu-egal= ;
+- cardinalités : =attendu-creees=, =attendu-supprimees=,
+  =attendu-modifiees= ;
+- absences : =attendu-aucune-creation=, =attendu-aucune-suppression= ;
+- sélection : =modif-entite=, =modif-unique= ;
+- attributs : =attendu-attribut-modifie=, =attendu-attribut-inchange=,
+  =attendu-attribut-valeur= ;
+- xdata : =attendu-xdata-ajoutee=, =attendu-xdata-supprimee=,
+  =attendu-xdata-modifiee=, =attendu-xdata-valeur=,
+  =attendu-aucune-xdata-changee=.
+
+Passer =nil= comme liste de xdata attendue désactive la vérification du
+contenu ; passer =nil= comme dernier argument demande le message
+d'échec automatique.
+
+Chaque assertion rend =t= ou appelle =t:fail= : les échecs sont donc
+comptabilisés par =run-suite= et =run-all= comme n'importe quels
+autres.
+
+* Notes de portabilité
+
+Ces contraintes expliquent la forme du code du cadre, et celle qu'on
+attend des tests écrits avec lui :
+
+- pas de =let= — il n'est pas de l'AutoLISP portable ; on déclare les
+  variables locales dans la liste =/= de =defun= ;
+- pas de macro — =deftest= reçoit une fonction, pas un corps ;
+- les mots-clés (=:ok=, =:fail=, …) n'existent pas en AutoLISP : le
+  cadre les lie explicitement à eux-mêmes, sans quoi ils vaudraient
+  tous =nil= et tous les tests seraient comptés OK ;
+- =vl-catch-all-error-message= peut rendre =nil= sous =clautolisp=, et
+  =(strcat … nil)= y est une erreur fatale : les champs sont donc
+  coercés avant tout =strcat=.
+
+* Voir aussi
+
+- =autolisp-introspection= — les instantanés et différences de dessin
+  sur lesquels reposent les assertions d'entités ;
+- =autolisp-test--entites.org= — la référence du DSL d'entités, dans le
+  même répertoire ;
+- =makefiles/common.mk= — les cibles =test=, =test-clautolisp=,
+  =test-bricscad= et =test-autocad= partagées par les sous-projets.

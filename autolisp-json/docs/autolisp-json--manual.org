@@ -2,6 +2,10 @@
 #+AUTHOR: SNCF Réseau
 #+LANGUAGE: fr
 #+OPTIONS: toc:2 num:t
+#+TEXINFO_FILENAME: autolisp-json.info
+#+TEXINFO_DIR_CATEGORY: outils-autolisp
+#+TEXINFO_DIR_TITLE: autolisp-json: (autolisp-json)
+#+TEXINFO_DIR_DESC: JSON reader/writer for AutoLISP (bulk: one file / one sexp).
 
 * Objet
 

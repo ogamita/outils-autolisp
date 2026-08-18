@@ -2,6 +2,10 @@
 #+AUTHOR: outils-autolisp
 #+LANGUAGE: fr
 #+OPTIONS: toc:3 num:t
+#+TEXINFO_FILENAME: autolisp-formatter.info
+#+TEXINFO_DIR_CATEGORY: outils-autolisp
+#+TEXINFO_DIR_TITLE: autolisp-formatter: (autolisp-formatter)
+#+TEXINFO_DIR_DESC: Source-to-source AutoLISP pretty-printer (cl / nail paren styles).
 
 * Présentation
 

@@ -1,6 +1,10 @@
 #+TITLE: Manuel de autolisp-algetypes
 #+LANGUAGE: fr
 #+OPTIONS: toc:2 num:t
+#+TEXINFO_FILENAME: autolisp-algetypes.info
+#+TEXINFO_DIR_CATEGORY: outils-autolisp
+#+TEXINFO_DIR_TITLE: autolisp-algetypes: (autolisp-algetypes)
+#+TEXINFO_DIR_DESC: Small immutable algebraic data types for AutoLISP.
 
 * Objet
 
