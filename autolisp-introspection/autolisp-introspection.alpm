@@ -4,7 +4,7 @@
 ;;;;        (alpm-load-system "autolisp-introspection")
 (alpm-define-system 1
  '(name        "autolisp-introspection"
-   version     "1.9.3"
+   version     "1.9.4"
    description "Drawing entity introspection (entity data snapshots) for AutoLISP."
    encoding    "utf-8"
    pathname    "src"

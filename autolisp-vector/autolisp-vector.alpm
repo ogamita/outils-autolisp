@@ -4,7 +4,7 @@
 ;;;;        (alpm-load-system "autolisp-vector")
 (alpm-define-system 1
  '(name        "autolisp-vector"
-   version     "1.9.3"
+   version     "1.9.4"
    description "Tree-backed vector implementation for AutoLISP."
    encoding    "utf-8"
    pathname    "src"
