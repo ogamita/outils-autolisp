@@ -368,6 +368,12 @@ release:programs:debian:arm64:
     REL_TARGET: debian-arm64
   image: $DEBIAN_ARM64_BASE
   tags: [linux, arm64, qemu]
+  # Construction ÉMULÉE (qemu-user) : compter en heures, pas en
+  # minutes. Le défaut de GitLab est d'une heure, et la lane arm64 de
+  # la 1.9.1 s'est fait couper dessus en pleine compilation SBCL,
+  # après avoir déjà bâti libredwg. Le temps est dominé par le
+  # compilateur C sous émulation puis par save-lisp-and-die.
+  timeout: 3h
   allow_failure: true      # émulée : lente, et le runner peut manquer
   artifacts:
     name: "outils-autolisp-$CI_COMMIT_TAG-debian-arm64"
@@ -391,6 +397,12 @@ release:programs:ubuntu:arm64:
     REL_TARGET: ubuntu-arm64
   image: $UBUNTU_ARM64_BASE
   tags: [linux, arm64, qemu]
+  # Construction ÉMULÉE (qemu-user) : compter en heures, pas en
+  # minutes. Le défaut de GitLab est d'une heure, et la lane arm64 de
+  # la 1.9.1 s'est fait couper dessus en pleine compilation SBCL,
+  # après avoir déjà bâti libredwg. Le temps est dominé par le
+  # compilateur C sous émulation puis par save-lisp-and-die.
+  timeout: 3h
   allow_failure: true      # émulée
   artifacts:
     name: "outils-autolisp-$CI_COMMIT_TAG-ubuntu-arm64"
@@ -414,6 +426,12 @@ release:programs:raspbian:arm32:
     REL_TARGET: raspbian-arm32
   image: $DEBIAN_ARMV7_BASE
   tags: [linux, arm32, qemu]      # le seul runner arm32 enregistré (émulé)
+  # Construction ÉMULÉE (qemu-user) : compter en heures, pas en
+  # minutes. Le défaut de GitLab est d'une heure, et la lane arm64 de
+  # la 1.9.1 s'est fait couper dessus en pleine compilation SBCL,
+  # après avoir déjà bâti libredwg. Le temps est dominé par le
+  # compilateur C sous émulation puis par save-lisp-and-die.
+  timeout: 3h
   rules:
     - if: '$CI_SERVER_HOST == "fabrik.sncf.fr"'
       when: never
