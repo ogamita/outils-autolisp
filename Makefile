@@ -51,6 +51,22 @@ REL_ARCH := $(shell uname -m | tr 'A-Z' 'a-z' \
                       -e 's/^aarch64$$/arm64/' -e 's/^armv7l$$/arm32/' \
                       -e 's/^armv6l$$/arm32/'  -e 's/^i[3456]86$$/x86/')
 
+# Étiquette de cible portée par le nom de l'artefact « programs ».
+#
+# La déduire d'uname NE SUFFIT PAS, pour deux raisons distinctes :
+#
+#   - uname ment sur l'architecture dans un conteneur 32 bits tournant
+#     sur un noyau 64 bits : une image i386 rend `x86_64', et l'artefact
+#     32 bits se retrouve étiqueté x86-64.
+#   - uname ne dit rien de la DISTRIBUTION : Debian et Ubuntu x86-64
+#     produisent deux artefacts distincts sous un seul et même nom.
+#
+# Dans les deux cas, deux constructions différentes portent le même nom
+# et la dernière écrase la précédente. Chaque lane CI pose donc son
+# étiquette explicitement (REL_TARGET=debian-x86, ubuntu-x86-64, …) ;
+# hors CI, la valeur déduite reste un défaut raisonnable.
+REL_TARGET ?= $(REL_OS)-$(REL_ARCH)
+
 # ---------------------------------------------------------------------
 # Ce que la version 1.9.0 publie.
 # ---------------------------------------------------------------------
@@ -100,7 +116,7 @@ help:  ## Affiche ce message (les cibles et ce qu'elles font).
 	@echo ""
 	@echo "  PROJECT=$(PROJECT)  VERSION=$(VERSION)"
 	@echo "  PREFIX=$(PREFIX)  DESTDIR=$(DESTDIR)"
-	@echo "  cible programs : $(REL_OS)/$(REL_ARCH)"
+	@echo "  cible programs : $(REL_TARGET)  (uname: $(REL_OS)/$(REL_ARCH))"
 
 all: build  ## Construit toutes les phases.
 
@@ -370,8 +386,8 @@ release-libraries: stage-libraries  ## Empaquette les systèmes ALPM (indépenda
 release-documentation: stage-documentation  ## Empaquette les manuels (indépendant de la plate-forme).
 	@$(call package-stage,$(STAGE)/documentation,$(PROJECT)-$(VERSION)-documentation)
 
-release-programs: stage-programs  ## Empaquette les exécutables pour $(REL_OS)/$(REL_ARCH).
-	@$(call package-stage,$(STAGE)/programs,$(PROJECT)-$(VERSION)-programs-$(REL_OS)-$(REL_ARCH))
+release-programs: stage-programs  ## Empaquette les exécutables pour $(REL_TARGET).
+	@$(call package-stage,$(STAGE)/programs,$(PROJECT)-$(VERSION)-programs-$(REL_TARGET))
 
 # Le seul artefact sans arbre staged : les fichiers suivis par git.
 # Il embarque manifest-sources.txt à sa racine, que make-manifest.sh

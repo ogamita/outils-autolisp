@@ -335,6 +335,8 @@ release:portable:
 # Debian x86-64 — la cible de référence.
 release:programs:debian:x86-64:
   extends: .release-programs-linux
+  variables:
+    REL_TARGET: debian-x86-64
   image: debian:bookworm
   tags: [linux, amd64, docker]
   artifacts:
@@ -347,6 +349,8 @@ release:programs:debian:x86-64:
 # telle quelle sur le runner amd64.
 release:programs:debian:x86:
   extends: .release-programs-linux
+  variables:
+    REL_TARGET: debian-x86
   image: i386/debian:bookworm
   tags: [linux, amd64, docker]
   allow_failure: true      # SBCL x86 32 bits : lane non encore validée
@@ -360,6 +364,8 @@ release:programs:debian:x86:
 # construction passe sous qemu (contrairement à arm32, plus bas).
 release:programs:debian:arm64:
   extends: .release-programs-linux
+  variables:
+    REL_TARGET: debian-arm64
   image: $DEBIAN_ARM64_BASE
   tags: [linux, arm64, qemu]
   allow_failure: true      # émulée : lente, et le runner peut manquer
@@ -370,6 +376,8 @@ release:programs:debian:arm64:
 
 release:programs:ubuntu:x86-64:
   extends: .release-programs-linux
+  variables:
+    REL_TARGET: ubuntu-x86-64
   image: ubuntu:24.04
   tags: [linux, amd64, docker]
   artifacts:
@@ -379,6 +387,8 @@ release:programs:ubuntu:x86-64:
 
 release:programs:ubuntu:arm64:
   extends: .release-programs-linux
+  variables:
+    REL_TARGET: ubuntu-arm64
   image: $UBUNTU_ARM64_BASE
   tags: [linux, arm64, qemu]
   allow_failure: true      # émulée
@@ -392,10 +402,16 @@ release:programs:ubuntu:arm64:
 # threads (sb-thread absent), et bordeaux-threads le refuse
 # (« This implementation is unsupported »). Il faut donc à la fois un
 # runner arm32 NATIF et un SBCL armhf construit avec les threads.
-# D'ici là : manuel, jamais bloquant — le job reste en file jusqu'à ce
-# qu'un tel runner soit enregistré.
+# D'ici là : manuel, jamais bloquant.
+#
+# L'image est le Debian armhf officiel, et non une Raspbian : il n'y en
+# a pas d'officielle sur Docker Hub, et Raspberry Pi OS est un dérivé
+# de Debian armhf. L'étiquette de l'artefact reste `raspbian-arm32',
+# qui nomme la cible visée.
 release:programs:raspbian:arm32:
   extends: .release-programs-linux
+  variables:
+    REL_TARGET: raspbian-arm32
   image: $DEBIAN_ARMV7_BASE
   tags: [linux, arm32, qemu]      # le seul runner arm32 enregistré (émulé)
   rules:
@@ -413,6 +429,8 @@ release:programs:raspbian:arm32:
 # Quicklisp dans ~/quicklisp/.
 release:programs:macos:arm64:
   extends: .release-rules
+  variables:
+    REL_TARGET: darwin-arm64
   stage: release
   tags: [macos, shell]
   allow_failure: true      # runner intermittent
@@ -445,6 +463,8 @@ release:programs:macos:arm64:
 # construit et lit les DXF, mais pas les DWG.
 release:programs:windows:x86-64:
   extends: .release-rules
+  variables:
+    REL_TARGET: windows-x86-64
   stage: release
   tags: [windows, shell]
   rules:
@@ -471,21 +491,40 @@ release:programs:windows:x86-64:
 # celui à partir duquel la Release GitLab est publiée. Les lanes
 # optionnelles sont déclarées `optional: true' : une cible dont le
 # runner est absent ne bloque pas la collecte.
+# PAS de `needs' ici — c'est l'ORDRE DES ÉTAPES qui doit ordonner ce
+# job, et lui seul.
+#
+# Un `needs' qui nomme un job MANUEL non joué fait passer le dépendant
+# en `skipped', même déclaré `optional' : optional ne couvre que le cas
+# où le job est absent du pipeline, pas celui où il y figure sans avoir
+# été lancé. Les lanes raspbian et windows étant manuelles, la collecte
+# de la 1.9.1 a été sautée alors que six artefacts l'attendaient.
+#
+# En s'appuyant sur l'étape, la collecte part quand l'étape release est
+# terminée, et les jobs manuels non joués ne la retiennent pas.
+# `dependencies' ne fait que choisir les artefacts à rapatrier : il
+# n'ordonne rien, et un job absent y est sans effet.
 collect:release:
-  extends: .release-rules
   stage: collect
   image: debian:bookworm
   tags: [linux, amd64, docker]
-  needs:
-    - { job: "release:portable",                   artifacts: true }
-    - { job: "release:programs:debian:x86-64",     artifacts: true }
-    - { job: "release:programs:debian:x86",        artifacts: true, optional: true }
-    - { job: "release:programs:debian:arm64",      artifacts: true, optional: true }
-    - { job: "release:programs:ubuntu:x86-64",     artifacts: true, optional: true }
-    - { job: "release:programs:ubuntu:arm64",      artifacts: true, optional: true }
-    - { job: "release:programs:raspbian:arm32",    artifacts: true, optional: true }
-    - { job: "release:programs:macos:arm64",       artifacts: true, optional: true }
-    - { job: "release:programs:windows:x86-64",    artifacts: true, optional: true }
+  rules:
+    - if: '$CI_SERVER_HOST == "fabrik.sncf.fr"'
+      when: never
+    - if: '$CI_COMMIT_TAG =~ /^release-[0-9]/'
+      when: on_success
+    - when: manual
+      allow_failure: true
+  dependencies:
+    - "release:portable"
+    - "release:programs:debian:x86-64"
+    - "release:programs:debian:x86"
+    - "release:programs:debian:arm64"
+    - "release:programs:ubuntu:x86-64"
+    - "release:programs:ubuntu:arm64"
+    - "release:programs:raspbian:arm32"
+    - "release:programs:macos:arm64"
+    - "release:programs:windows:x86-64"
   script:
     - ls -l dist/
     - 'echo "--- artefacts de la release $CI_COMMIT_TAG ---"'
