@@ -14,3 +14,7 @@ tmp
 benchmark-results.txt
 *-benchmark.txt
 benchmark.txt
+
+# Sorties de construction (phases build/stage/release du Makefile racine).
+build/
+dist/
