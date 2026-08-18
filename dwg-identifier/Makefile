@@ -76,6 +76,24 @@ else
 endif
 
 QL  = (let ((q (merge-pathnames "quicklisp/setup.lisp" (user-homedir-pathname)))) (when (probe-file q) (load q)))
+
+# Quicklisp systems to pull in before loading ours. They must be listed
+# EXPLICITLY, transitive dependencies included: ASDF's quicklisp hook
+# resolves a missing system by name, but it does NOT walk the
+# dependencies of the systems we load from the installed clautolisp
+# sources. Those are plain ASDF systems on the central registry, so a
+# dependency of theirs that quicklisp has not already installed fails
+# the build with
+#
+#   Component "trivial-gray-streams" not found,
+#   required by #<SYSTEM "clautolisp/autolisp-reader">
+#
+# on any machine whose quicklisp does not happen to have it — a fresh
+# CI container, typically, while a developer's box has had it for
+# years. babel and trivial-gray-streams became core clautolisp
+# dependencies in 1.8.28; cffi is ours (drawing-dwg's CFFI bindings).
+QL_SYSTEMS       = "cffi" "babel" "trivial-gray-streams"
+QL_TEST_SYSTEMS  = $(QL_SYSTEMS) "fiveam"
 # Make clautolisp's ASDF systems (clautolisp/drawing and
 # clautolisp/drawing-dwg — secondary systems of clautolisp.asd)
 # discoverable from the installed source tree (or the
@@ -133,7 +151,7 @@ $(EXE): dwg-identifier.asd $(wildcard src/*.lisp)
 	@mkdir -p "$(BUILD_DIR)"
 	$(SBCL) --noinform --no-userinit --non-interactive \
 		--eval '$(QL)' \
-		--eval '(when (find-package :ql) (ql:quickload (list "cffi") :silent t))' \
+		--eval '(when (find-package :ql) (ql:quickload (list $(QL_SYSTEMS)) :silent t))' \
 		--eval '(progn $(ASD))' \
 		--eval '(asdf:load-system "dwg-identifier")' \
 		--eval '(sb-ext:save-lisp-and-die "$(EXE_LISP)" :executable t :save-runtime-options t :toplevel (function dwg-identifier::%toplevel))'
@@ -162,7 +180,7 @@ install:
 test: check-clautolisp
 	$(SBCL) --noinform --no-userinit --non-interactive \
 		--eval '$(QL)' \
-		--eval '(when (find-package :ql) (ql:quickload (list "fiveam" "cffi") :silent t))' \
+		--eval '(when (find-package :ql) (ql:quickload (list $(QL_TEST_SYSTEMS)) :silent t))' \
 		--eval '(progn $(ASD))' \
 		--eval '(asdf:test-system "dwg-identifier")'
 
@@ -171,7 +189,7 @@ test-ci: test
 run: check-clautolisp
 	@$(SBCL) --noinform --no-userinit --non-interactive \
 		--eval '$(QL)' \
-		--eval '(when (find-package :ql) (ql:quickload (list "cffi") :silent t))' \
+		--eval '(when (find-package :ql) (ql:quickload (list $(QL_SYSTEMS)) :silent t))' \
 		--eval '(progn $(ASD))' \
 		--eval '(asdf:load-system "dwg-identifier")' \
 		--eval '(uiop:quit (dwg-identifier:main (remove "" (uiop:split-string "$(ARGS)" :separator " ") :test (function string=))))'

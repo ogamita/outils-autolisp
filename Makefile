@@ -272,9 +272,14 @@ $(DOC_BUILD)/$(1)/html/index.html: $(DOC_BUILD)/$(1)/$(1)--manual.texi
 	rm -rf $(DOC_BUILD)/$(1)/html
 	cd $(DOC_BUILD)/$(1) && $(MAKEINFO) --html -o html $(1)--manual.texi
 
+# En cas d'échec, org ne dit que « See *Org PDF LaTeX Output* », qui
+# n'existe pas en mode batch : on affiche le .log de LaTeX, seul endroit
+# où figure le \usepackage introuvable ou l'erreur de syntaxe réelle.
 $(DOC_BUILD)/$(1)/$(1)--manual.pdf: $(DOC_BUILD)/$(1)/$(1)--manual.org
 	cd $(DOC_BUILD)/$(1) && $(EMACS) $(EMACSFLAGS) $(1)--manual.org \
-	    --funcall org-latex-export-to-pdf
+	    --funcall org-latex-export-to-pdf \
+	  || { echo "=== $(1)--manual.log ===" ; \
+	       tail -60 $(1)--manual.log 2>/dev/null ; false ; }
 
 endef
 

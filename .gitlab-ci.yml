@@ -18,6 +18,24 @@ variables:
   CLAUTOLISP_PREFIX: "$CI_PROJECT_DIR/.clautolisp"
   CLAUTOLISP_GIT_URL: "https://gitlab.com/ogamita/clautolisp.git"
 
+  # Images de base d'une AUTRE architecture, épinglées à leur DIGEST DE
+  # MANIFESTE par architecture.
+  #
+  # Le runner docker de GitLab Runner ignore la clé `platform' : un
+  # `arm64v8/debian:bookworm' est donc résolu comme amd64 et le tirage
+  # échoue sur « no matching manifest for linux/amd64 ». Épingler le
+  # sous-manifeste arm force le démon à tirer CETTE image-là (mono
+  # plate-forme), que binfmt / qemu-user-static exécute ensuite.
+  #
+  # Rafraîchir avec :
+  #   docker manifest inspect debian:bookworm \
+  #     | jq -r '.manifests[]|select(.platform.architecture=="arm64" or
+  #              (.platform.architecture=="arm" and .platform.variant=="v7"))
+  #              |"\(.platform.architecture)\(.platform.variant//"") \(.digest)"'
+  DEBIAN_ARM64_BASE: "debian@sha256:62743235a2f74084cf11ba2ae8cb2a7dfcfa5cd33d44debaf9c45b3012f09192"
+  DEBIAN_ARMV7_BASE: "debian@sha256:e774455174cd21d5b6c3d1f59aa515ad583026eb8755ed398e52ad1a796a1c70"
+  UBUNTU_ARM64_BASE: "ubuntu@sha256:b17516cd982bf06bdd5d5600253d12a8de017b9eb831cc052b532a0363d294f9"
+
 # Deux instances GitLab avec des runners différents :
 #   - gitlab.com (ogamita / pjb-cimon) : runners taggés <os>+<exécuteur>
 #     (linux/docker, macos/shell, windows/shell).
@@ -221,10 +239,18 @@ release:portable:
   tags: [linux, amd64, docker]
   before_script:
     - apt-get update
+    # La chaîne documentaire : Emacs (export org), texinfo (makeinfo,
+    # pour l'Info et les deux formes HTML), TeX (les PDF).
+    # texlive-plain-generic fournit ulem, et texlive-fonts-recommended
+    # wasysym : deux paquets que l'export LaTeX d'org charge par défaut
+    # et que « texlive texlive-latex-extra » seuls n'apportent pas —
+    # sans eux, chaque PDF échoue sur un \usepackage introuvable.
     - >
       apt-get install -y --no-install-recommends
       make bash git bzip2 zip ca-certificates
-      emacs-nox texinfo texlive texlive-latex-extra texlive-lang-french
+      emacs-nox texinfo
+      texlive texlive-latex-base texlive-latex-recommended texlive-latex-extra
+      texlive-fonts-recommended texlive-plain-generic texlive-lang-french
     - command -v emacs makeinfo pdflatex zip
   script:
     - make release-libraries
@@ -305,7 +331,7 @@ release:programs:debian:x86:
 # construction passe sous qemu (contrairement à arm32, plus bas).
 release:programs:debian:arm64:
   extends: .release-programs-linux
-  image: arm64v8/debian:bookworm
+  image: $DEBIAN_ARM64_BASE
   tags: [linux, arm64, qemu]
   allow_failure: true      # émulée : lente, et le runner peut manquer
   artifacts:
@@ -324,7 +350,7 @@ release:programs:ubuntu:x86-64:
 
 release:programs:ubuntu:arm64:
   extends: .release-programs-linux
-  image: arm64v8/ubuntu:24.04
+  image: $UBUNTU_ARM64_BASE
   tags: [linux, arm64, qemu]
   allow_failure: true      # émulée
   artifacts:
@@ -341,7 +367,7 @@ release:programs:ubuntu:arm64:
 # qu'un tel runner soit enregistré.
 release:programs:raspbian:arm32:
   extends: .release-programs-linux
-  image: arm32v7/debian:bookworm
+  image: $DEBIAN_ARMV7_BASE
   tags: [linux, arm32, docker]
   rules:
     - if: '$CI_SERVER_HOST == "fabrik.sncf.fr"'
