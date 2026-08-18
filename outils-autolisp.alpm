@@ -14,7 +14,7 @@
 ;;;; <root>/outils-autolisp.alpm.
 (alpm-define-system 1
  '(name        "outils-autolisp"
-   version     "1.9.0"
+   version     "1.9.1"
    description "Umbrella system: the outils-autolisp AutoLISP libraries."
    depends-on  ("autolisp-algetypes"
                 "autolisp-vector"

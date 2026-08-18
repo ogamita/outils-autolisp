@@ -4,7 +4,7 @@
 ;;;;        (alpm-load-system "autolisp-hash-table")
 (alpm-define-system 1
  '(name        "autolisp-hash-table"
-   version     "1.9.0"
+   version     "1.9.1"
    description "Hash tables inspired by Common Lisp."
    encoding    "utf-8"
    pathname    "src"

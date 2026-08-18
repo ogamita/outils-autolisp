@@ -4,7 +4,7 @@
 ;;;;        (alpm-load-system "autolisp-algetypes")
 (alpm-define-system 1
  '(name        "autolisp-algetypes"
-   version     "1.9.0"
+   version     "1.9.1"
    description "Small immutable algebraic data types for AutoLISP."
    encoding    "utf-8"
    pathname    "src"

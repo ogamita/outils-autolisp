@@ -4,7 +4,7 @@
 ;;;;        (alpm-load-system "autolisp-formatter")
 (alpm-define-system 1
  '(name        "autolisp-formatter"
-   version     "1.9.0"
+   version     "1.9.1"
    description "Source-to-source AutoLISP pretty-printer (cl / nail paren styles)."
    encoding    "utf-8"
    pathname    "src"

@@ -5,7 +5,7 @@
 ;;;;        (alpm-load-system "autolisp-test")
 (alpm-define-system 1
  '(name        "autolisp-test"
-   version     "1.9.0"
+   version     "1.9.1"
    description "Unit test framework for AutoLISP, with entity mutation assertions (test-entites)."
    encoding    "utf-8"
    files       ("test-framework"

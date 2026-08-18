@@ -8,7 +8,7 @@
 ;;;;        (alpm-load-system "autolisp-misc")
 (alpm-define-system 1
  '(name        "autolisp-misc"
-   version     "1.9.0"
+   version     "1.9.1"
    description "Miscellaneous shell-like utilities: fs (pwd/cd/ls), browser, cat, format, symbols."
    encoding    "utf-8"
    files       ((file "fs"      pathname "src/fs.lsp")
