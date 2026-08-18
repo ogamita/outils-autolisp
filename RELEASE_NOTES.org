@@ -2,6 +2,42 @@
 #+LANGUAGE: fr
 #+OPTIONS: toc:2 num:nil
 
+* 1.9.2
+
+Corrections de publication. Aucun changement visible par
+l'utilisateur : même jeu de fonctionnalités que 1.9.0, mais c'est la
+première version dont la matrice d'artefacts est à la fois complète et
+correctement étiquetée.
+
+- *Les artefacts « programs » portent une étiquette de cible
+  explicite.* Trois constructions différentes sortaient sous le même
+  nom =…-programs-linux-x86-64= : Debian et Ubuntu x86-64 (=uname= ne
+  dit rien de la distribution) et Debian i386 (=uname= *ment* sur
+  l'architecture dans un conteneur 32 bits sur noyau 64 bits, et rend
+  =x86_64=). La dernière écrasait les précédentes, et le binaire 32
+  bits se serait publié sous une étiquette 64 bits. Chaque lane pose
+  désormais son =REL_TARGET= (=debian-x86=, =ubuntu-x86-64=, …).
+- *Les lanes émulées ont trois heures.* Sous =qemu-user=, la
+  compilation C de libredwg puis =save-lisp-and-die= se comptent en
+  heures : le délai d'une heure de GitLab coupait la lane arm64 en
+  pleine compilation SBCL.
+- *La publication ne dépend plus des runners CAO intermittents.* Les
+  jobs de release attendaient la fin de toute l'étape =test=, lanes
+  macOS et Windows comprises ; le runner Windows étant éteint, toute la
+  matrice restait bloquée derrière des jobs =pending=, alors qu'elle ne
+  dépend d'aucun de leurs résultats. Ils nomment maintenant leur seule
+  vraie porte, la suite Linux.
+- *La collecte des artefacts n'est plus sautée.* Un =needs= qui nomme
+  un job manuel non joué fait passer le dépendant en =skipped=, même
+  déclaré =optional= — celui-ci ne couvre que le cas où le job est
+  absent du pipeline. La collecte s'ordonne par l'étape.
+- *Plus de pipeline sur les branches =version-*=.* Ce sont des
+  pointeurs, déplacés sur un commit déjà construit ; chaque publication
+  en déclenchait trois de plus, qui se disputaient les runners.
+- La lane arm32 est taggée =[linux, arm32, qemu]=, seul runner arm32
+  enregistré : =docker= ne correspondait à aucun runner, le job
+  n'aurait jamais pu démarrer.
+
 * 1.9.1
 
 Corrections de construction. Aucun changement visible par

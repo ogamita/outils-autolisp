@@ -4,7 +4,7 @@
 ;;;;        (alpm-load-system "autolisp-defstruct")
 (alpm-define-system 1
  '(name        "autolisp-defstruct"
-   version     "1.9.1"
+   version     "1.9.2"
    description "Common Lisp style defstruct for AutoLISP."
    encoding    "utf-8"
    files       ("defstruct")))

@@ -4,7 +4,7 @@
 ;;;;        (alpm-load-system "autolisp-json")
 (alpm-define-system 1
  '(name        "autolisp-json"
-   version     "1.9.1"
+   version     "1.9.2"
    description "JSON reader/writer for AutoLISP (bulk: one file / one sexp)."
    encoding    "utf-8"
    pathname    "src"
