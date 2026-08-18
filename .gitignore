@@ -18,3 +18,10 @@ benchmark.txt
 # Sorties de construction (phases build/stage/release du Makefile racine).
 build/
 dist/
+
+# Arbres de travail des jobs CI : l'installation clautolisp fabriquée
+# par chaque lane et le clone dont elle sort. Non ignorés, ils font
+# passer l'arbre pour « dirty » dans le manifeste de provenance.
+.clautolisp/
+clautolisp-src/
+clautolisp-stable/

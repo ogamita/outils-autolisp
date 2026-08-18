@@ -57,6 +57,15 @@ fi
 # --- provenance -------------------------------------------------------
 if git rev-parse --git-dir >/dev/null 2>&1; then
     origin=$(git remote get-url origin 2>/dev/null || echo "no origin remote")
+    # Strip any userinfo from the URL. CI checkouts routinely carry a
+    # credential in `origin' — GitLab clones as
+    # https://gitlab-ci-token:<token>@host/group/project.git — and this
+    # manifest is PUBLISHED: it ships inside every release artefact and
+    # every installed tree. The job token is short-lived, but a
+    # credential still has no business in a public file, and a secret
+    # scanner is right to flag it. The host and path are what identify
+    # the origin; the userinfo never was.
+    origin=$(printf '%s\n' "$origin" | sed -e 's|://[^/@]*@|://|')
     commit=$(git rev-parse HEAD)
     cdate=$(git log -1 --format=%aI)
     describe=$(git describe --tags --match 'release-[0-9]*' --always 2>/dev/null)

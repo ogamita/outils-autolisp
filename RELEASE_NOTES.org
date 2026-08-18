@@ -2,6 +2,29 @@
 #+LANGUAGE: fr
 #+OPTIONS: toc:2 num:nil
 
+* 1.9.3
+
+Corrections du manifeste de provenance. Aucun changement visible par
+l'utilisateur, mais le manifeste est *publié* — il voyage dans chaque
+artefact et dans chaque arbre installé — et il portait deux défauts
+qu'on ne veut pas diffuser.
+
+- *Plus d'identifiant dans l'URL d'origine.* Une copie de travail de CI
+  porte couramment un jeton dans son =origin= : GitLab clone en
+  =https://gitlab-ci-token:<jeton>@hôte/groupe/projet.git=, et le
+  manifeste recopiait l'URL telle quelle. Le jeton de job est
+  éphémère, mais un identifiant n'a rien à faire dans un fichier
+  public, et un scanner de secrets a raison de le signaler. Seuls
+  l'hôte et le chemin identifient l'origine ; la partie
+  « utilisateur » ne l'a jamais fait. Corrigé dans la copie canonique
+  du dépôt de règles, puis reversé ici.
+- *L'arbre n'est plus déclaré « dirty » à tort.* Chaque lane de
+  publication fabrique son installation clautolisp dans
+  =.clautolisp/=, depuis un clone =clautolisp-src/=. Ni l'un ni
+  l'autre n'étant ignorés, =git status= les voyait et le manifeste
+  annonçait un arbre modifié alors que la construction sortait d'un
+  checkout intact.
+
 * 1.9.2
 
 Corrections de publication. Aucun changement visible par
