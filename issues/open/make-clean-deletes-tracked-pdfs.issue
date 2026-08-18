@@ -1,0 +1,89 @@
+make clean supprime des PDF suivis par git
+==========================================
+
+Symptôme
+--------
+
+Depuis un arbre propre, `make clean` à la racine laisse l'arbre de
+travail SALE : il supprime des fichiers suivis par git.
+
+    $ git status --short
+    $ make clean
+    $ git status --short
+     D autolisp-misc/docs/autolisp-misc--specifications.pdf
+
+Le même effet touche les autres PDF suivis :
+
+    autolisp-doc/docs/autolisp-doc--manual.pdf
+    autolisp-formatter/docs/autolisp-formatter--specifications.pdf
+    autolisp-formatter/docs/plan.pdf
+    autolisp-hash-table/docs/autolisp-hash-table--manual.pdf
+    autolisp-hash-table/docs/autolisp-hash-table--specifications.pdf
+    autolisp-vector/docs/autolisp-vector--manual.pdf
+    autolisp-vector/docs/autolisp-vector--specifications.pdf
+    autolisp-script/docs/*.pdf
+
+Reproduction
+------------
+
+    git status --short          # rien
+    make clean
+    git status --short          # des « D » sur des PDF suivis
+
+Cause
+-----
+
+Deux décisions qui, prises séparément, se tiennent, et qui se
+contredisent une fois réunies :
+
+1. `.gitignore` ignore `*.pdf` MAIS conserve délibérément les PDF déjà
+   suivis :
+
+       # Les PDF générés à partir des sources org ne sont plus versionnés :
+       # ils se régénèrent via `make docs-pdf`. (Les PDF déjà suivis restent
+       # suivis ; on ne les retire pas rétroactivement.)
+
+2. Le `docs/Makefile` de plusieurs sous-projets (autolisp-vector,
+   autolisp-hash-table, autolisp-misc, …) dérive mécaniquement la liste
+   des PDF de celle des `.org` et les supprime tous :
+
+       ORG_FILES := $(wildcard *.org)
+       PDF_FILES := $(ORG_FILES:.org=.pdf)
+       clean:
+               rm -f $(PDF_FILES) $(TEX_FILES)
+
+`clean` traite donc en produits de construction des fichiers que le
+dépôt traite en sources. C'est `clean` qui a raison sur le fond — un
+PDF EST un produit de construction — mais il n'a pas le droit de
+supprimer ce que git suit sans qu'on le lui demande.
+
+Correction possible
+-------------------
+
+Deux voies, à trancher :
+
+(a) Aligner le dépôt sur `clean` : `git rm` les PDF suivis, puisque la
+    phase documentation les régénère tous (`make build-documentation`
+    produit les manuels en pdf/info/html/html paginé sous `build/doc/`).
+    C'est la voie cohérente avec build-rules.md — aucun produit de
+    construction dans le dépôt — mais elle contredit la note explicite
+    du `.gitignore`, qui est une décision prise sciemment.
+
+(b) Aligner `clean` sur le dépôt : ne supprimer que les PDF NON suivis,
+    par exemple
+
+        rm -f $$(git ls-files --others --ignored --exclude-standard -- '*.pdf')
+
+    ou en ne nettoyant que sous `build/`.
+
+Voie (a) recommandée : depuis la version 1.9.0, la documentation est
+une phase à part entière, entièrement reconstructible, et les PDF
+suivis ne sont plus à jour vis-à-vis de leurs sources dès qu'un `.org`
+change. Ils donnent au lecteur une version périmée sans le prévenir.
+
+Remarque
+--------
+
+Trouvé en vérifiant l'arbre après `make clean` pendant la préparation
+de la version 1.9.0. Antérieur à cette version : ni le `.gitignore` ni
+les `docs/Makefile` en cause n'y ont été modifiés.
