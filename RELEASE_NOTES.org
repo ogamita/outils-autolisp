@@ -2,6 +2,29 @@
 #+LANGUAGE: fr
 #+OPTIONS: toc:2 num:nil
 
+* 1.9.1
+
+Corrections de construction. Aucun changement visible par
+l'utilisateur : même jeu de fonctionnalités que 1.9.0, mais c'est la
+première version dont la chaîne de publication produit réellement tous
+ses artefacts. Le pipeline de 1.9.0 échouait sur deux points, et un tag
+de version ne se déplace jamais — d'où cette version de correction.
+
+- =dwg-identifier= précharge explicitement ses dépendances quicklisp
+  transitives (=babel=, =trivial-gray-streams=, en plus de =cffi=). Le
+  hook quicklisp d'ASDF résout un système absent par son nom, mais ne
+  parcourt pas les dépendances des systèmes chargés depuis les sources
+  clautolisp installées : sur un conteneur neuf, la construction
+  s'arrêtait sur « Component "trivial-gray-streams" not found ». Un
+  poste de développement ne voyait rien, son quicklisp les ayant déjà.
+- Les images de base d'une autre architecture sont épinglées à leur
+  digest de sous-manifeste : le runner docker de GitLab ignore la clé
+  =platform=, et tirait donc les images arm64 comme amd64.
+- La lane documentation installe les paquets TeX qu'il lui manquait
+  (=ulem=, =wasysym=, chargés par défaut par l'export LaTeX d'org), et
+  la règle PDF affiche désormais le journal de LaTeX quand elle échoue
+  — en mode batch, org ne renvoyait qu'à un tampon inexistant.
+
 * 1.9.0
 
 Première version publiée selon [[https://gitlab.com/informatimago/rules][les règles de version et de construction]]
