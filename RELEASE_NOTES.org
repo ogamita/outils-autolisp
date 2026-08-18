@@ -1,0 +1,104 @@
+#+TITLE: Notes de version — outils-autolisp
+#+LANGUAGE: fr
+#+OPTIONS: toc:2 num:nil
+
+* 1.9.0
+
+Première version publiée selon [[https://gitlab.com/informatimago/rules][les règles de version et de construction]]
+communes : un tag =release-M.m.d=, des phases installables séparément,
+et des artefacts produits depuis l'arbre même qui est installé.
+
+** Ce que la version publie
+
+*Bibliothèques* — neuf systèmes ALPM, installés sous
+=$PREFIX/share/autolisp/<système>/= :
+
+| Système                  | Objet                                                     |
+|--------------------------+-----------------------------------------------------------|
+| =autolisp-algetypes=     | types algébriques immuables                               |
+| =autolisp-doc=           | base de documentation, =documentation= / =describe= / =apropos= |
+| =autolisp-formatter=     | formateur de source (styles de parenthèses cl / nail)     |
+| =autolisp-hash-table=    | tables de hachage à la Common Lisp                        |
+| =autolisp-introspection= | instantanés et différences d'entités d'un dessin          |
+| =autolisp-json=          | lecture et écriture JSON                                  |
+| =autolisp-misc=          | utilitaires shell : =fs=, =browser=, =cat=, =format=, =symbols= |
+| =autolisp-test=          | cadre de tests unitaires (+ assertions d'entités)         |
+| =autolisp-vector=        | vecteur indexé par arbre                                  |
+
+Enregistrer =$PREFIX/share/autolisp= auprès d'ALPM rend chacun
+chargeable par =(alpm-load-system "autolisp-vector")= ; le système
+parapluie =outils-autolisp= charge le lot habituel.
+
+*Programme* — =dwg-identify= 1.1.0, installé dans =$PREFIX/bin=.
+Il identifie l'application SNCF (SCHMS / SCHME / SCHMIEUX / PV / EPURE)
+qui a produit un dessin DWG ou DXF, sans CAO ni AutoLISP. Ses sources
+n'ont pas changé dans cette série, il garde donc son propre numéro
+(version-rules.md R5 : les versions de programme sont un axe
+indépendant).
+
+*Documentation* — chaque système et le programme ont désormais un
+manuel =docs/<nom>--manual.org=, rendu en quatre formats :
+
+- =.pdf= — lecture et impression ;
+- =.info= — lecture dans Emacs, enregistré dans =share/info/dir= ;
+- une page HTML unique ;
+- un répertoire HTML d'une page par section, avec navigation et index.
+
+Ils s'installent sous =$PREFIX/share/doc/outils-autolisp/<composant>/=,
+les fichiers Info sous =$PREFIX/share/info/=.
+
+** Nouveautés de cette version
+
+- Manuels neufs pour =autolisp-introspection=, =autolisp-test= et
+  =dwg-identifier=, qui n'en avaient pas.
+- =autolisp-misc/docs/user-manual.org= devient
+  =autolisp-misc/docs/autolisp-misc--manual.org=, pour que tous les
+  manuels suivent la même convention de nom.
+- Toutes les définitions de systèmes ALPM portent une propriété
+  =version=.
+
+** Construction, installation, publication
+
+Le =Makefile= racine suit les phases et les verbes de
+[[https://gitlab.com/informatimago/rules][build-rules.md]] :
+
+#+begin_src sh
+make help                  # les cibles et ce qu'elles font
+make build                 # bibliothèques + programmes (pas la doc, lente)
+make build-documentation   # les 10 manuels x 4 formats
+sudo make install          # installe tout dans /opt/local
+make install PREFIX=~/opt  # ou ailleurs
+make release               # les artefacts sous dist/
+make uninstall             # retire exactement ce qu'install a posé
+#+end_src
+
+Chaque phase s'installe seule : une machine sans Emacs ni TeX installe
+quand même =install-libraries= et =install-programs=. =install= ne
+compile rien — c'est =stage= qui construit — de sorte que
+=sudo make install= ne laisse jamais de fichiers appartenant à root
+dans l'arbre de travail. Chaque arbre installé porte son manifeste de
+provenance =share/doc/outils-autolisp/manifest-<phase>.txt=, qui nomme
+le dépôt, le tag et le commit d'où il sort.
+
+** Artefacts
+
+Les bibliothèques, la documentation et les sources ne contiennent aucun
+code binaire : un seul runner Linux les produit, en =.tar.bz2= et en
+=.zip=. =dwg-identify= est une image SBCL, donc un artefact par cible :
+Debian (x86, x86-64, arm64), Ubuntu (x86-64, arm64), Raspbian (arm32),
+macOS (arm64) et Windows (x86-64).
+
+*Réserves sur les cibles.* Les lanes x86-64 Linux sont les cibles de
+référence. arm64 est construit sous émulation, arm32 attend un runner
+natif *et* un SBCL armhf compilé avec les threads (celui de Debian ne
+l'est pas), et la lane Windows attend que clautolisp publie ses
+bibliothèques natives Windows — sa propre lane Windows est encore un
+stub. Ces cibles-là sont donc déclarées non bloquantes : leur absence
+ne fait pas échouer la publication.
+
+** Historique antérieur
+
+Les versions antérieures sont marquées =vM.m.d= (=v1.0.0= … =v1.7.0=).
+Ce format est *déprécié* : les tags publiés restent en place, mais les
+versions nouvelles utilisent =release-M.m.d=. Voir la section « Tags et
+branches » du =README.md=.
