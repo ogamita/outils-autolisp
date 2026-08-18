@@ -1,0 +1,253 @@
+#+TITLE: Manuel utilisateur de autolisp-introspection
+#+AUTHOR: Pascal J. Bourguignon
+#+LANGUAGE: fr
+#+OPTIONS: toc:2 num:t
+#+TEXINFO_DIR_CATEGORY: outils-autolisp
+#+TEXINFO_DIR_TITLE: autolisp-introspection: (autolisp-introspection)
+#+TEXINFO_DIR_DESC: Instantanés et comparaison des entités d'un dessin AutoLISP
+#+TEXINFO_FILENAME: autolisp-introspection.info
+
+* Objet
+
+=autolisp-introspection= observe le contenu d'un dessin depuis
+AutoLISP : il prend un *instantané* (/snapshot/) des entités, et compare
+deux instantanés pour dire ce qui a été ajouté, supprimé ou modifié —
+attribut par attribut (codes de groupe DXF) et application par
+application (xdata).
+
+C'est l'outil qui répond à « qu'est-ce que cette commande a réellement
+changé dans le dessin ? », sans lire le dessin à l'œil ni écrire à la
+main la comparaison des listes =entget=.
+
+Deux usages principaux :
+
+- dans les *tests* — c'est le moteur des assertions de mutation
+  d'entités de [[info:autolisp-test][autolisp-test]] (=test-entites= ; voir le manuel
+  d'autolisp-test) ;
+- en *diagnostic interactif*, pour instrumenter une commande d'un
+  applicatif existant et voir précisément ce qu'elle touche.
+
+* Chargement
+
+Via ALPM (recommandé) :
+
+#+begin_src lisp
+(alpm-register-directory "/chemin/vers/outils-autolisp")
+(alpm-load-system "autolisp-introspection")
+#+end_src
+
+Ou directement :
+
+#+begin_src lisp
+(load "autolisp-introspection/src/autolisp-introspection.lsp")
+#+end_src
+
+Le module appelle =(vl-load-com)= au chargement. Tous les noms publics
+sont préfixés par =ei-= (/entity introspection/) ; les noms internes,
+par =ei--=.
+
+* Modèle de données
+
+Quatre types d'enregistrements, tous représentés par des listes dont le
+premier élément est un symbole marqueur. On n'y accède jamais
+directement : chaque champ a son accesseur.
+
+** L'enregistrement d'entité (=ei-rec=)
+
+Ce que =ei-snapshot= capture pour une entité.
+
+| Accesseur        | Contenu                                                     |
+|------------------+-------------------------------------------------------------|
+| =ei-rec-handle=  | le /handle/ (code 5), identité stable de l'entité           |
+| =ei-rec-ename=   | le nom d'entité (=ENAME=) au moment de la capture            |
+| =ei-rec-type=    | le type (code 0) : ="LINE"=, ="CIRCLE"=, …                   |
+| =ei-rec-dxf=     | la liste des paires pointées DXF, hors codes exclus          |
+| =ei-rec-xdata=   | les xdata, regroupées par application                        |
+
+Les codes -1 (nom d'entité), -2, 5 (handle) et -3 (bloc xdata brut)
+sont *exclus* de =ei-rec-dxf= : ce sont soit des identités volatiles,
+soit une redite de champs déjà exposés. Le handle reste accessible par
+=ei-rec-handle=, les xdata par =ei-rec-xdata=.
+
+Chaque entrée de =ei-rec-xdata= a la forme =((1001 . APP) . VALEURS)= :
+le nom d'application en tête, ses paires ensuite.
+
+** La différence globale (=ei-diff=)
+
+Ce que =ei-diff= rend, en comparant deux instantanés.
+
+| Accesseur      | Contenu                                                          |
+|----------------+------------------------------------------------------------------|
+| =ei-added=     | la liste des =ei-rec= présents seulement dans l'instantané final |
+| =ei-deleted=   | la liste des =ei-rec= présents seulement dans l'initial          |
+| =ei-modified=  | une liste de paires =(AVANT . APRÈS)= de =ei-rec=                |
+
+L'appariement se fait sur le *handle*, jamais sur l'=ENAME= : un
+=ENAME= peut changer d'une session à l'autre, le handle non.
+
+** La différence d'une entité (=ei-entity-diff=)
+
+| Accesseur              | Contenu                                          |
+|------------------------+--------------------------------------------------|
+| =ei-attr-changes=      | la liste des changements d'attributs (=ei-ac=)   |
+| =ei-xdata-added=       | les applications dont les xdata apparaissent     |
+| =ei-xdata-deleted=     | les applications dont les xdata disparaissent    |
+| =ei-xdata-modified=    | les applications dont les xdata changent         |
+
+** Le changement d'attribut (=ei-ac=)
+
+| Accesseur     | Contenu                                                    |
+|---------------+------------------------------------------------------------|
+| =ei-ac-code=  | le code de groupe DXF concerné                             |
+| =ei-ac-old=   | l'ancienne valeur (=nil= si le code apparaît)              |
+| =ei-ac-new=   | la nouvelle valeur (=nil= si le code disparaît)            |
+| =ei-ac-kind=  | =:added=, =:deleted=, =:changed= ou =:multi=               |
+
+=:multi= signale un code présent *plusieurs fois* de part et d'autre —
+les sommets d'une polyligne, par exemple : =ei-ac-old= et =ei-ac-new=
+sont alors des listes de valeurs, et non des valeurs simples.
+
+** Le changement de xdata (=ei-xd=)
+
+| Accesseur    | Contenu                                    |
+|--------------+--------------------------------------------|
+| =ei-xd-app=  | le nom de l'application (code 1001)        |
+| =ei-xd-old=  | l'ancienne entrée xdata, ou =nil=          |
+| =ei-xd-new=  | la nouvelle entrée xdata, ou =nil=         |
+
+* API publique
+
+** Prendre un instantané
+
+#+begin_src lisp
+(ei-snapshot PORTÉE) => instantané
+#+end_src
+
+La /portée/ est l'un de :
+
+- =nil= — *tout le dessin* : parcours de =(entnext)= en =(entnext)= ;
+- un *jeu de sélection* (=PICKSET=), tel que rendu par =ssget= ;
+- une *liste de noms d'entités*.
+
+Toute autre valeur signale l'erreur =« ei-snapshot: portée invalide »=.
+
+L'instantané rendu est une liste d'association =handle → ei-rec=,
+dans l'ordre du parcours.
+
+#+begin_src lisp
+(setq avant (ei-snapshot nil))                 ; tout le dessin
+(setq avant (ei-snapshot (ssget "X" '((0 . "LINE")))))
+(setq avant (ei-snapshot (list e1 e2 e3)))
+#+end_src
+
+** Comparer deux instantanés
+
+#+begin_src lisp
+(ei-diff AVANT APRÈS) => différence
+#+end_src
+
+#+begin_src lisp
+(setq avant (ei-snapshot nil))
+(command "_.LINE" '(0 0) '(10 10) "")
+(setq apres (ei-snapshot nil))
+(setq d (ei-diff avant apres))
+
+(length (ei-added d))     ; => 1
+(ei-rec-type (car (ei-added d)))   ; => "LINE"
+#+end_src
+
+Une entité n'est comptée « modifiée » que si sa comparaison détaillée
+produit au moins un changement d'attribut ou de xdata : les entités
+recapturées à l'identique n'apparaissent nulle part.
+
+** Comparer une entité
+
+#+begin_src lisp
+(ei-entity-diff AVANT APRÈS) => différence d'entité
+#+end_src
+
+Les deux enregistrements doivent porter le *même handle* ; sinon
+l'erreur =« ei-entity-diff: les handles diffèrent »= est signalée.
+
+#+begin_src lisp
+(foreach paire (ei-modified d)
+  (setq ed (ei-entity-diff (car paire) (cdr paire)))
+  (foreach ac (ei-attr-changes ed)
+    (princ (strcat "\ncode " (itoa (ei-ac-code ac))
+                   " " (vl-princ-to-string (ei-ac-kind ac))))))
+#+end_src
+
+* Comparaison des valeurs
+
+Deux règles gouvernent l'égalité, et elles expliquent la plupart des
+surprises.
+
+** Les noms d'entités sont normalisés en handles
+
+Avant toute comparaison, tout =ENAME= rencontré — y compris au fond
+d'une liste imbriquée — est remplacé par le handle de l'entité qu'il
+désigne. Une référence qui pointe toujours sur la *même* entité est
+donc vue comme inchangée, même si le =ENAME= a changé entre les deux
+captures.
+
+** Les nombres sont comparés avec une tolérance
+
+La variable globale =ei-*fuzz*= (0.0 par défaut) est la tolérance
+passée à =equal= pour les nombres. Les coordonnées d'un dessin passent
+par des calculs en virgule flottante ; comparer à l'identique produit
+alors des différences qui n'en sont pas.
+
+#+begin_src lisp
+(setq ei-*fuzz* 1e-9)   ; ignorer le bruit de calcul flottant
+#+end_src
+
+La tolérance est *globale* et lue à chaque comparaison : la poser avant
+un =ei-diff= suffit, il n'y a pas de paramètre par appel.
+
+* Exemple complet
+
+Instrumenter une commande et rapporter ce qu'elle a fait :
+
+#+begin_src lisp
+(defun rapporter-mutations (nom / avant apres d ed)
+  (setq ei-*fuzz* 1e-9)
+  (setq avant (ei-snapshot nil))
+  (command nom)
+  (setq apres (ei-snapshot nil))
+  (setq d (ei-diff avant apres))
+  (princ (strcat "\n" nom " :"
+                 " +" (itoa (length (ei-added d)))
+                 " -" (itoa (length (ei-deleted d)))
+                 " ~" (itoa (length (ei-modified d)))))
+  (foreach paire (ei-modified d)
+    (setq ed (ei-entity-diff (car paire) (cdr paire)))
+    (princ (strcat "\n  " (ei-rec-type (car paire))
+                   " " (ei-rec-handle (car paire))))
+    (foreach ac (ei-attr-changes ed)
+      (princ (strcat "\n    " (itoa (ei-ac-code ac)) " : "
+                     (vl-princ-to-string (ei-ac-old ac)) " -> "
+                     (vl-princ-to-string (ei-ac-new ac)))))
+    (foreach xd (ei-xdata-modified ed)
+      (princ (strcat "\n    xdata " (ei-xd-app xd) " modifiées"))))
+  (princ))
+#+end_src
+
+* Limites
+
+- L'instantané du dessin complet parcourt l'espace courant par
+  =entnext= : les entités des blocs ne sont pas visitées
+  individuellement, seule la référence de bloc l'est. Pour les
+  atteindre, construire la portée soi-même.
+- Les entités sans handle sont ignorées par l'instantané global.
+- La comparaison est *par valeur* : une entité supprimée puis recréée
+  à l'identique apparaît comme une suppression *et* un ajout, car son
+  handle a changé.
+- =ei-*fuzz*= est une variable globale, pas un paramètre : deux
+  comparaisons concurrentes ne peuvent pas avoir deux tolérances.
+
+* Voir aussi
+
+- =autolisp-test= — le cadre de tests unitaires, dont les assertions de
+  mutation d'entités reposent sur ce module ;
+- =autolisp-introspection--specifications.org= — la spécification
+  détaillée, dans le même répertoire.

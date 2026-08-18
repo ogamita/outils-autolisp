@@ -2,6 +2,10 @@
 #+AUTHOR: OpenAI
 #+LANGUAGE: fr
 #+OPTIONS: toc:2 num:t
+#+TEXINFO_FILENAME: autolisp-misc.info
+#+TEXINFO_DIR_CATEGORY: outils-autolisp
+#+TEXINFO_DIR_TITLE: autolisp-misc: (autolisp-misc)
+#+TEXINFO_DIR_DESC: Miscellaneous shell-like utilities: fs (pwd/cd/ls), browser, cat, format, symbols.
 
 * Objet
 

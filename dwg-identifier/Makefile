@@ -143,10 +143,21 @@ $(EXE): dwg-identifier.asd $(wildcard src/*.lisp)
 # clautolisp it was built against stays a runtime dependency (sources
 # for provenance, native libraries for DWG), so it must remain
 # installed under CLAUTOLISP_PREFIX.
-install: build
-	install -d "$(DESTDIR)$(PREFIX)/bin"
-	install -m 755 "$(EXE)" "$(DESTDIR)$(PREFIX)/bin/dwg-identify"
-	@echo "installed $(DESTDIR)$(PREFIX)/bin/dwg-identify"
+# Installation belongs to the repository root, which owns the single
+# staged tree for the `programs' phase (build-rules.md B2: install
+# copies a staged tree and compiles nothing, so that `sudo make
+# install' never leaves root-owned objects in the work tree). A
+# subproject-level `install' that depends on `build' is exactly the
+# shape B2 forbids, so this one only redirects.
+install:
+	@echo "dwg-identifier: installation is driven from the repository root."
+	@echo ""
+	@echo "  make -C .. install-programs            # into $(PREFIX)/bin"
+	@echo "  make -C .. install-programs PREFIX=... # elsewhere"
+	@echo ""
+	@echo "The root stages $(EXE) into its programs/ staging area and"
+	@echo "copies that tree; 'make build' here builds the executable alone."
+	@exit 1
 
 test: check-clautolisp
 	$(SBCL) --noinform --no-userinit --non-interactive \

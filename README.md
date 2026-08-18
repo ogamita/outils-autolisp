@@ -19,23 +19,50 @@ Cette semaine, le dépôt a évolué sur quatre axes principaux:
 
 ## Tags et branches
 
-Le dépôt utilise deux familles de repères:
-
-- `release-1.0` et `version-1` désignent la branche qui suit la dernière version 1.0 disponible;
-- `vM.n.p` désigne un tag figé, associé à une version précise et non modifié après coup.
-
-Il peut donc exister, en parallèle, une branche `version-1` ou `release-1.0` qui avance avec la série 1.0, et des tags immuables `v1.0.x` qui marquent les versions publiées.
-
-Pour éviter toute ambiguïté avec les branches, les anciens tags de suivi ont été renommés `tag-version-1` et `tag-release-1.0`.
+Depuis la version 1.9.0, le dépôt suit les [règles de version](https://gitlab.com/informatimago/rules/-/blob/master/version-rules.md) communes.
 
 | Repère | Nature | Rôle |
 | --- | --- | --- |
-| `version-1` | branche | suit l'état courant de la série 1 |
-| `release-1.0` | branche | suit l'état courant de la branche de maintenance 1.0 |
-| `tag-version-1` | tag figé | tag de suivi associé à la branche `version-1` |
-| `tag-release-1.0` | tag figé | tag de suivi associé à la branche `release-1.0` |
-| `v1.0.0` | tag figé | premier jalon stable identifié pour la série 1.0 |
-| `v1.0.10` | tag figé | état actuel de référence de la série 1.0 dans ce dépôt |
+| `release-M.m.d` | **tag annoté** | une version figée, jamais déplacée ni supprimée |
+| `version-M.m` | branche | pointeur sur la version la plus récente de la série `M.m` |
+| `version-M` | branche | pointeur sur la version la plus récente du majeur `M` |
+| `master` | branche | le tronc, là où le développement se fait |
+| `maint-M.m` | branche | ligne de maintenance d'une série figée, créée à la demande |
+| `fix-*`, `feat-*` | branche | une correction ou une fonctionnalité, éphémère |
+
+Une version est un **tag**, parce qu'elle doit être immuable: une
+branche bouge par construction. Un pointeur de série est une
+**branche**, parce qu'il doit bouger — et parce que `git fetch` ne met
+pas à jour un tag déjà présent localement, ce qui figerait
+silencieusement la copie de l'utilisateur. Rien n'est jamais commité
+sur `version-M.m` ni `version-M`: ils ne font que se déplacer sur un
+commit portant un tag `release-*`.
+
+Pour installer la dernière version de la série 1.9 et suivre ses
+corrections:
+
+```sh
+git clone -b version-1.9 git@gitlab.com:ogamita/outils-autolisp.git
+```
+
+`make check-versions` vérifie les invariants (un `release-*` est bien
+un tag, les versions d'une série s'ordonnent par ascendance, chaque
+pointeur est exactement sur sa version la plus récente).
+
+### Repères antérieurs — **dépréciés**
+
+Les versions publiées avant 1.9.0 sont marquées `vM.n.p` (`v1.0.0` …
+`v1.7.0`), et des branches `release-1.x` / `version-1` ont servi de
+pointeurs. **Ces deux formats sont dépréciés: on n'en crée plus.** Les
+refs déjà publiées restent en place — les supprimer casserait les
+copies déjà récupérées — mais le nom `release-*` est désormais réservé
+aux tags.
+
+| Repère | Nature | Rôle historique |
+| --- | --- | --- |
+| `v1.0.0` … `v1.7.0` | tag figé | les versions publiées de la série 1 |
+| `version-1`, `release-1.0` | branche | anciens pointeurs de suivi |
+| `tag-version-1`, `tag-release-1.0` | tag figé | anciens tags de suivi |
 
 ### Jalons 1.0
 
@@ -223,14 +250,72 @@ défaut — le sous-module `third-party/clautolisp` a été supprimé.
 
 ```bash
 cd outils-autolisp
-make -C dwg-identifier clean build test \
-&& sudo make -C dwg-identifier install
+make -C dwg-identifier clean build test   # construire et tester
+sudo make install-programs                # installer (depuis la racine)
 dwg-identify ~/works/sncf-reseau/dwg/pjb/2018.dwg
 ```
+
+L'installation se pilote depuis la **racine**, qui possède l'unique
+arbre de staging de la phase `programs`: `make -C dwg-identifier
+install` ne fait que renvoyer vers elle. C'est la règle B2 des
+[règles de construction](https://gitlab.com/informatimago/rules/-/blob/master/build-rules.md):
+`install` copie un arbre déjà construit et ne compile rien, pour que
+`sudo make install` ne laisse jamais de fichiers appartenant à root
+dans l'arbre de travail.
 
 (`PREFIX` et `CLAUTOLISP_PREFIX` valent `/opt/local` par défaut ;
 pour développer contre un checkout de clautolisp :
 `make CLAUTOLISP_SOURCES=/chemin/checkout/clautolisp …`.)
+
+## Construction, installation, publication
+
+Le `Makefile` racine est structuré en **phases** — `libraries`
+(les systèmes ALPM), `programs` (`dwg-identify`) et `documentation`
+(les manuels) — et en quatre **verbes** définis sur chacune:
+`build-`, `stage-`, `install-`, `release-`.
+
+```bash
+make help                  # les cibles et ce qu'elles font
+make build                 # bibliothèques + programmes (pas la doc, lente)
+make build-documentation   # les 10 manuels x 4 formats
+sudo make install          # tout installer dans /opt/local
+make install PREFIX=~/opt  # ou ailleurs
+make release               # les artefacts sous dist/
+make uninstall             # retirer exactement ce qu'install a posé
+```
+
+Chaque phase s'installe **seule** (`make install-libraries`,
+`install-programs`, `install-documentation`): une machine sans Emacs ni
+TeX installe quand même les bibliothèques et le programme.
+
+Ce qui atterrit sous `$PREFIX`:
+
+| Chemin | Contenu |
+| --- | --- |
+| `share/autolisp/<système>/` | les systèmes ALPM et leurs sources |
+| `share/autolisp/outils-autolisp.alpm` | le système parapluie |
+| `bin/dwg-identify` | le programme |
+| `share/doc/outils-autolisp/<composant>/` | manuel en `.org`, `.pdf`, HTML une page et `html/` paginé |
+| `share/info/<composant>.info` | les manuels Info, enregistrés dans `share/info/dir` |
+| `share/doc/outils-autolisp/manifest-<phase>.txt` | le manifeste de provenance (dépôt, tag, commit) |
+
+Enregistrer `$PREFIX/share/autolisp` auprès d'ALPM suffit ensuite à
+rendre chaque système chargeable:
+
+```lisp
+(alpm-register-directory "/opt/local/share/autolisp")
+(alpm-load-system "autolisp-vector")
+```
+
+### Documentation
+
+Chaque système et chaque programme a un manuel
+`<composant>/docs/<composant>--manual.org`, rendu par
+`make build-documentation` en quatre formats: PDF (export LaTeX
+d'org), Info, une page HTML unique, et un répertoire `html/` d'une page
+par section. Les trois derniers passent par le même `.texi` produit par
+org, de sorte que les formats Info et HTML sont structurellement
+identiques.
 
 ## Vérification récente
 

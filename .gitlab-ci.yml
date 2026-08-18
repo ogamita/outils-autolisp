@@ -2,6 +2,8 @@ stages:
   - build
   - test
   - benchmark
+  - release
+  - collect
 
 default:
   # Retry transient runner/infrastructure failures (e.g. a shared
@@ -17,14 +19,15 @@ variables:
   CLAUTOLISP_GIT_URL: "https://gitlab.com/ogamita/clautolisp.git"
 
 # Deux instances GitLab avec des runners différents :
-#   - gitlab.com (pjb-cimon) : runners taggés <os>+<exécuteur> (linux/docker,
-#     macos/shell, windows/shell).
+#   - gitlab.com (ogamita / pjb-cimon) : runners taggés <os>+<exécuteur>
+#     (linux/docker, macos/shell, windows/shell).
 #   - fabrik.sncf.fr : runners d'instance (partagés) SANS tags → il faut des
 #     jobs SANS tags. On duplique donc les jobs Linux (docker) : variante taggée
 #     pour gitlab.com, variante non taggée pour fabrik, sélectionnées par
 #     $CI_SERVER_HOST. (Un tag vide via variable ne marche pas : GitLab ne
 #     ferait matcher aucun runner.)
-# Les runners CAO (macOS/Windows) n'existent que sur gitlab.com.
+# Les runners CAO (macOS/Windows) et la matrice de release n'existent que
+# sur gitlab.com.
 
 # ===========================================================================
 # LINUX (docker) : build de clautolisp stable puis suites headless.
@@ -134,6 +137,7 @@ benchmark:fabrik:
     - if: '$CI_SERVER_HOST == "fabrik.sncf.fr"'
       when: never
     - if: '$CI_COMMIT_BRANCH =~ /^release-/'
+    - if: '$CI_COMMIT_TAG =~ /^release-[0-9]/'
     - when: manual
   allow_failure: true
 
@@ -166,3 +170,272 @@ windows:autocad:
   tags: [windows, shell]
   script:
     - 'foreach ($d in "autolisp-algetypes","autolisp-vector","autolisp-hash-table","autolisp-json","autolisp-doc") { Write-Host "== $d (autocad) =="; make -C $d test-autocad; if ($LASTEXITCODE) { exit 1 } }'
+
+# ===========================================================================
+# RELEASE
+# ===========================================================================
+#
+# Deux familles d'artefacts, parce qu'elles n'ont pas la même nature :
+#
+#   INDÉPENDANTS DE LA PLATE-FORME — libraries (systèmes ALPM : du source
+#     AutoLISP), documentation (org rendu en pdf/info/html) et sources.
+#     Aucun code binaire : un seul runner Linux les produit, une fois.
+#     Chacun sort en .tar.bz2 ET en .zip (les utilisateurs Windows n'ont
+#     ni tar ni bzip2 sous la main) — cf. la macro package-stage du
+#     Makefile racine.
+#
+#   PROPRES À UNE CIBLE — programs : dwg-identify est une image SBCL,
+#     donc un artefact par os/arch. La matrice demandée est
+#       debian   x86, x86-64, arm64
+#       ubuntu   x86-64, arm64
+#       raspbian arm32
+#       macos    arm64
+#       windows  x86-64
+#     Les lanes Linux tournent dans des images docker, macOS et Windows
+#     sur les runners shell.
+#
+# Tout part du MÊME arbre staged que l'installation (build-rules.md B7) :
+# déballer un artefact et installer donnent le même arbre.
+#
+# Déclenchement : automatique sur un tag release-M.m.d, manuel sinon.
+
+.release-rules:
+  rules:
+    - if: '$CI_SERVER_HOST == "fabrik.sncf.fr"'
+      when: never
+    - if: '$CI_COMMIT_TAG =~ /^release-[0-9]/'
+      when: on_success
+    - when: manual
+      allow_failure: true
+
+# --- artefacts indépendants de la plate-forme ------------------------------
+#
+# La documentation est la phase lente (Emacs + TeX pour 10 manuels x 4
+# formats), mais elle n'est liée à aucune plate-forme : elle tourne sur
+# le runner Linux toujours disponible.
+
+release:portable:
+  extends: .release-rules
+  stage: release
+  image: debian:bookworm
+  tags: [linux, amd64, docker]
+  before_script:
+    - apt-get update
+    - >
+      apt-get install -y --no-install-recommends
+      make bash git bzip2 zip ca-certificates
+      emacs-nox texinfo texlive texlive-latex-extra texlive-lang-french
+    - command -v emacs makeinfo pdflatex zip
+  script:
+    - make release-libraries
+    - make release-documentation
+    - make release-sources
+    - ls -l dist/
+  artifacts:
+    name: "outils-autolisp-$CI_COMMIT_TAG-portable"
+    paths: [dist/]
+    expire_in: 30 days
+
+# --- programs : la matrice dwg-identify ------------------------------------
+#
+# Chaque lane doit disposer d'une installation clautolisp (sources CL +
+# codec DWG natif) pour l'os/arch cible : c'est une dépendance SYSTÈME de
+# dwg-identifier, pas un sous-module. On la fabrique sur place à partir
+# des sources de clautolisp — `make release-libraries' y produit un
+# tarball déjà en forme de $PREFIX (share/common-lisp/source/clautolisp/
+# + lib/clautolisp/<os>/<arch>/), qu'il suffit de déballer dans
+# $CLAUTOLISP_PREFIX. C'est exactement la disposition que le Makefile de
+# dwg-identifier documente comme requise.
+
+.release-programs-linux:
+  extends: .release-rules
+  stage: release
+  variables:
+    DEBIAN_FRONTEND: noninteractive
+  before_script:
+    - apt-get update
+    - >
+      apt-get install -y --no-install-recommends
+      make bash git curl ca-certificates bzip2 zip
+      sbcl cmake m4 build-essential pkg-config
+    # Quicklisp fournit cffi, dont dépendent clautolisp/drawing-dwg et
+    # dwg-identifier.
+    - curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o /tmp/ql.lisp https://beta.quicklisp.org/quicklisp.lisp
+    - 'sbcl --non-interactive --load /tmp/ql.lisp --eval "(quicklisp-quickstart:install)" --eval "(ql-util:without-prompting (ql:add-to-init-file))"'
+    # clautolisp : bibliothèques (sources CL + libredwg + shim) pour CETTE cible.
+    - 'git clone --depth 1 --branch "$CLAUTOLISP_REF" "$CLAUTOLISP_GIT_URL" clautolisp-src'
+    - 'git -C clautolisp-src submodule update --init --recursive --depth 1'
+    - make -C clautolisp-src release-libraries
+    - mkdir -p "$CLAUTOLISP_PREFIX"
+    - 'for t in clautolisp-src/dist/clautolisp-*-libraries-*.tar.bz2 ; do tar -C "$CLAUTOLISP_PREFIX" -xjf "$t" ; done'
+    - 'test -f "$CLAUTOLISP_PREFIX/share/common-lisp/source/clautolisp/clautolisp.asd"'
+  script:
+    - 'make build-programs CLAUTOLISP_PREFIX="$CLAUTOLISP_PREFIX"'
+    - 'make release-programs CLAUTOLISP_PREFIX="$CLAUTOLISP_PREFIX"'
+    - ls -l dist/
+  artifacts:
+    paths: [dist/]
+    expire_in: 30 days
+
+# Debian x86-64 — la cible de référence.
+release:programs:debian:x86-64:
+  extends: .release-programs-linux
+  image: debian:bookworm
+  tags: [linux, amd64, docker]
+  artifacts:
+    name: "outils-autolisp-$CI_COMMIT_TAG-debian-x86-64"
+    paths: [dist/]
+    expire_in: 30 days
+
+# Debian x86 (i386, 32 bits). Pas d'émulation : un noyau x86-64 exécute
+# nativement un espace utilisateur 32 bits, l'image i386 tourne donc
+# telle quelle sur le runner amd64.
+release:programs:debian:x86:
+  extends: .release-programs-linux
+  image: i386/debian:bookworm
+  tags: [linux, amd64, docker]
+  allow_failure: true      # SBCL x86 32 bits : lane non encore validée
+  artifacts:
+    name: "outils-autolisp-$CI_COMMIT_TAG-debian-x86"
+    paths: [dist/]
+    expire_in: 30 days
+
+# Debian arm64 — poseidon, sous émulation qemu-user (binfmt). SBCL arm64
+# est compilé AVEC les threads, donc bordeaux-threads l'accepte et la
+# construction passe sous qemu (contrairement à arm32, plus bas).
+release:programs:debian:arm64:
+  extends: .release-programs-linux
+  image: arm64v8/debian:bookworm
+  tags: [linux, arm64, qemu]
+  allow_failure: true      # émulée : lente, et le runner peut manquer
+  artifacts:
+    name: "outils-autolisp-$CI_COMMIT_TAG-debian-arm64"
+    paths: [dist/]
+    expire_in: 30 days
+
+release:programs:ubuntu:x86-64:
+  extends: .release-programs-linux
+  image: ubuntu:24.04
+  tags: [linux, amd64, docker]
+  artifacts:
+    name: "outils-autolisp-$CI_COMMIT_TAG-ubuntu-x86-64"
+    paths: [dist/]
+    expire_in: 30 days
+
+release:programs:ubuntu:arm64:
+  extends: .release-programs-linux
+  image: arm64v8/ubuntu:24.04
+  tags: [linux, arm64, qemu]
+  allow_failure: true      # émulée
+  artifacts:
+    name: "outils-autolisp-$CI_COMMIT_TAG-ubuntu-arm64"
+    paths: [dist/]
+    expire_in: 30 days
+
+# Raspbian / arm32 (Raspberry-Pi). NE SE CONSTRUIT PAS SOUS QEMU, et pas
+# davantage avec le SBCL armhf de Debian : celui-ci est compilé SANS les
+# threads (sb-thread absent), et bordeaux-threads le refuse
+# (« This implementation is unsupported »). Il faut donc à la fois un
+# runner arm32 NATIF et un SBCL armhf construit avec les threads.
+# D'ici là : manuel, jamais bloquant — le job reste en file jusqu'à ce
+# qu'un tel runner soit enregistré.
+release:programs:raspbian:arm32:
+  extends: .release-programs-linux
+  image: arm32v7/debian:bookworm
+  tags: [linux, arm32, docker]
+  rules:
+    - if: '$CI_SERVER_HOST == "fabrik.sncf.fr"'
+      when: never
+    - when: manual
+      allow_failure: true
+  artifacts:
+    name: "outils-autolisp-$CI_COMMIT_TAG-raspbian-arm32"
+    paths: [dist/]
+    expire_in: 30 days
+
+# macOS arm64 — runner shell (thalassa, intermittent). Le poste fournit
+# la chaîne d'outils (MacPorts : sbcl, cmake ; cc via Xcode) et
+# Quicklisp dans ~/quicklisp/.
+release:programs:macos:arm64:
+  extends: .release-rules
+  stage: release
+  tags: [macos, shell]
+  allow_failure: true      # runner intermittent
+  before_script:
+    - command -v sbcl cmake cc make git zip
+    - 'git clone --depth 1 --branch "$CLAUTOLISP_REF" "$CLAUTOLISP_GIT_URL" clautolisp-src'
+    - 'git -C clautolisp-src submodule update --init --recursive --depth 1'
+    - make -C clautolisp-src release-libraries
+    - mkdir -p "$CLAUTOLISP_PREFIX"
+    - 'for t in clautolisp-src/dist/clautolisp-*-libraries-*.tar.bz2 ; do tar -C "$CLAUTOLISP_PREFIX" -xjf "$t" ; done'
+    - 'test -f "$CLAUTOLISP_PREFIX/share/common-lisp/source/clautolisp/clautolisp.asd"'
+  script:
+    - 'make build-programs CLAUTOLISP_PREFIX="$CLAUTOLISP_PREFIX"'
+    - 'make release-programs CLAUTOLISP_PREFIX="$CLAUTOLISP_PREFIX"'
+    - ls -l dist/
+  artifacts:
+    name: "outils-autolisp-$CI_COMMIT_TAG-darwin-arm64"
+    paths: [dist/]
+    expire_in: 30 days
+
+# Windows x86-64 — runner shell (exécuteur PowerShell), qui appelle le
+# GNU make et le bash de MSYS2 : le Makefile de dwg-identifier convertit
+# déjà les chemins MSYS en chemins Windows (cygpath -m) pour le SBCL
+# natif.
+#
+# Cette lane dépend des bibliothèques natives clautolisp pour Windows
+# (libredwg + shim), que clautolisp ne publie pas encore — sa propre
+# lane Windows est un stub. Elle est donc manuelle et non bloquante
+# jusqu'à ce que ce soit le cas ; sans le codec natif, dwg-identify se
+# construit et lit les DXF, mais pas les DWG.
+release:programs:windows:x86-64:
+  extends: .release-rules
+  stage: release
+  tags: [windows, shell]
+  rules:
+    - if: '$CI_SERVER_HOST == "fabrik.sncf.fr"'
+      when: never
+    - when: manual
+      allow_failure: true
+  script:
+    - 'foreach ($t in @("sbcl","make","git","bash","cmake")) { $c = Get-Command $t -ErrorAction SilentlyContinue; if ($c) { Write-Host ("  {0}: {1}" -f $t, $c.Source) } else { Write-Host ("  {0}: ABSENT" -f $t) } }'
+    - 'bash -lc "git clone --depth 1 --branch $env:CLAUTOLISP_REF $env:CLAUTOLISP_GIT_URL clautolisp-src && git -C clautolisp-src submodule update --init --recursive --depth 1"'
+    - 'bash -lc "make -C clautolisp-src release-libraries"'
+    - 'bash -lc "mkdir -p \"$env:CLAUTOLISP_PREFIX\" && for t in clautolisp-src/dist/clautolisp-*-libraries-*.tar.bz2 ; do tar -C \"$env:CLAUTOLISP_PREFIX\" -xjf \"$t\" ; done"'
+    - 'bash -lc "make build-programs CLAUTOLISP_PREFIX=\"$env:CLAUTOLISP_PREFIX\" && make release-programs CLAUTOLISP_PREFIX=\"$env:CLAUTOLISP_PREFIX\""'
+    - 'Get-ChildItem dist'
+  artifacts:
+    name: "outils-autolisp-$CI_COMMIT_TAG-windows-x86-64"
+    paths: [dist/]
+    expire_in: 30 days
+
+# --- collect : réunir les dist/ de toutes les lanes ------------------------
+#
+# Pur reconditionnement (aucune compilation) : ramasse les dist/ des
+# lanes qui ont abouti et les expose en un seul artefact téléchargeable,
+# celui à partir duquel la Release GitLab est publiée. Les lanes
+# optionnelles sont déclarées `optional: true' : une cible dont le
+# runner est absent ne bloque pas la collecte.
+collect:release:
+  extends: .release-rules
+  stage: collect
+  image: debian:bookworm
+  tags: [linux, amd64, docker]
+  needs:
+    - { job: "release:portable",                   artifacts: true }
+    - { job: "release:programs:debian:x86-64",     artifacts: true }
+    - { job: "release:programs:debian:x86",        artifacts: true, optional: true }
+    - { job: "release:programs:debian:arm64",      artifacts: true, optional: true }
+    - { job: "release:programs:ubuntu:x86-64",     artifacts: true, optional: true }
+    - { job: "release:programs:ubuntu:arm64",      artifacts: true, optional: true }
+    - { job: "release:programs:raspbian:arm32",    artifacts: true, optional: true }
+    - { job: "release:programs:macos:arm64",       artifacts: true, optional: true }
+    - { job: "release:programs:windows:x86-64",    artifacts: true, optional: true }
+  script:
+    - ls -l dist/
+    - 'echo "--- artefacts de la release $CI_COMMIT_TAG ---"'
+    - 'ls dist/ | sort'
+  artifacts:
+    name: "outils-autolisp-$CI_COMMIT_TAG-release"
+    paths: [dist/]
+    expire_in: 90 days

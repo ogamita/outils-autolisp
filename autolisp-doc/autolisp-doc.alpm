@@ -4,6 +4,7 @@
 ;;;;        (alpm-load-system "autolisp-doc")
 (alpm-define-system 1
  '(name        "autolisp-doc"
+   version     "1.9.0"
    description "AutoLISP reference data (autolisp-ref) and documentation helpers."
    encoding    "utf-8"
    pathname    "src"

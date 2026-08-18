@@ -1,0 +1,177 @@
+#+TITLE: Manuel utilisateur de dwg-identifier
+#+AUTHOR: Pascal J. Bourguignon
+#+LANGUAGE: fr
+#+OPTIONS: toc:2 num:t
+#+TEXINFO_DIR_CATEGORY: outils-autolisp
+#+TEXINFO_DIR_TITLE: dwg-identifier: (dwg-identifier)
+#+TEXINFO_DIR_DESC: Identifier l'application SNCF ayant produit un dessin DWG/DXF
+#+TEXINFO_FILENAME: dwg-identifier.info
+
+* Objet
+
+=dwg-identify= répond à une question et une seule : *quelle application
+EPURE a produit ce dessin ?* — SCHMS, SCHME, SCHMIEUX, PV, ou
+l'ombrelle EPURE.
+
+Il lit le dessin directement (DXF nativement, DWG via le codec natif de
+=clautolisp=) et le classe d'après sa *table APPID*. Il n'a besoin ni
+d'AutoCAD, ni de BricsCAD, ni d'AutoLISP : c'est un exécutable Common
+Lisp autonome, utilisable en lot sur des milliers de fichiers.
+
+C'est le seul *programme* d'=outils-autolisp= ; tous les autres
+sous-projets sont des bibliothèques AutoLISP.
+
+* Installation
+
+** Dépendance système : clautolisp
+
+=dwg-identify= est bâti sur la bibliothèque de dessin de =clautolisp=
+(systèmes =clautolisp/drawing= et =clautolisp/drawing-dwg=). Une
+installation complète de =clautolisp= est *requise*, à la
+construction comme à l'exécution, sous =CLAUTOLISP_PREFIX=
+(=/opt/local= par défaut) :
+
+| Chemin                                                    | Contenu                        |
+|-----------------------------------------------------------+--------------------------------|
+| =$CLAUTOLISP_PREFIX/share/common-lisp/source/clautolisp/= | les sources Common Lisp        |
+| =$CLAUTOLISP_PREFIX/lib/clautolisp/<os>/<arch>/=          | libredwg et son adaptateur     |
+
+Les deux proviennent de l'artefact « libraries » d'une version publiée
+de =clautolisp=. La commande
+
+#+begin_src sh
+make -C dwg-identifier check-clautolisp
+#+end_src
+
+vérifie leur présence et diagnostique ce qui manque. L'absence du codec
+natif n'est qu'un *avertissement* : la lecture DXF n'en a pas besoin,
+seule celle des =.dwg= en dépend.
+
+** Construction et installation
+
+#+begin_src sh
+make build-programs                       # construit bin/dwg-identify
+sudo make install-programs                # installe dans /opt/local/bin
+make install-programs PREFIX=$HOME/opt    # ou ailleurs
+#+end_src
+
+L'exécutable est une image SBCL : elle embarque son propre runtime et ne
+dépend, à l'exécution, que de l'installation =clautolisp= contre
+laquelle elle a été construite — jamais d'une copie de travail.
+
+Pour développer contre une copie de travail de =clautolisp= plutôt que
+contre l'installation :
+
+#+begin_src sh
+make -C dwg-identifier build CLAUTOLISP_SOURCES=$HOME/works/clautolisp/clautolisp
+#+end_src
+
+* Utilisation
+
+#+begin_example
+usage: dwg-identify [-h|--help] [-V|--version] [-v|--verbose] [--json] FICHIER.dwg|FICHIER.dxf ...
+#+end_example
+
+| Option          | Effet                                                        |
+|-----------------+--------------------------------------------------------------|
+| =-h=, =--help=  | affiche l'aide et sort                                       |
+| =-V=, =--version= | affiche la version et sort                                 |
+| =-v=, =--verbose= | ajoute les produits détectés et les drapeaux =+= / EPURE   |
+| =--json=        | émet un objet JSON par fichier au lieu du bloc texte         |
+| =--=            | fin des options : tout ce qui suit est un nom de fichier     |
+
+Plusieurs fichiers peuvent être donnés ; chacun produit son propre
+rapport.
+
+** Rapport texte
+
+#+begin_example
+$ dwg-identify plan.dwg
+plan.dwg
+  application : SCHMS+ (EPURE)
+  format      : DWG
+  entities    : 4213
+  appids      : ACAD SCHMS SCHMSPLUS EPURELIB
+#+end_example
+
+Avec =-v=, trois lignes s'ajoutent :
+
+#+begin_example
+  products    : epure schms
+  plus        : yes
+  epure       : no
+#+end_example
+
+** Rapport JSON
+
+Un objet par ligne, ce qui se prête au traitement en flux (=jq=, un
+script, une base) :
+
+#+begin_src sh
+dwg-identify --json dessins/*.dwg | jq -r '[.source,.application] | @tsv'
+#+end_src
+
+#+begin_example
+{"source":"plan.dwg","application":"SCHMS+ (EPURE)","format":"dwg",
+ "products":["epure","schms"],"plus":true,"epure":true,
+ "entities":4213,"appids":["ACAD","EPURELIB","SCHMS","SCHMSPLUS"]}
+#+end_example
+
+** Code de sortie
+
+| Code | Signification                                        |
+|------+------------------------------------------------------|
+|    0 | tous les fichiers ont été classés                    |
+|    1 | au moins un fichier n'a pu être lu ou classé         |
+|    2 | erreur d'usage (option inconnue, aucun fichier)      |
+|   70 | erreur interne inattendue                            |
+
+Les erreurs par fichier vont sur la sortie d'erreur et n'interrompent
+pas le traitement des suivants : un lot se termine toujours, et le code
+de sortie dit si tout est passé.
+
+* Comment la classification fonctionne
+
+Chaque application EPURE enregistre une famille d'appids éponyme dans
+la table APPID du dessin, et marque ses objets par des xdata sous ces
+appids. L'application d'origine se lit donc *directement dans la table
+APPID*, sans décoder aucun schéma.
+
+| Produit    | Famille d'appids                                        |
+|------------+---------------------------------------------------------|
+| =SCHMS=    | =SCHMS=, =SCHMSPLUS=, =SCHMS_*=, =SCHMS-*=              |
+| =SCHME=    | =SCHME=, =SCHME+=, =SCHMEPLUS=, =SCHME_*=, =SCHME-*=    |
+| =SCHMIEUX= | =SCHMIEUX=, =SCHMIEUX_*=                                |
+| =PV=       | =PV=, =PVPLUS=, =PV2010=, =PV-SUITE=, =PVSX_*=, =PV_*=  |
+| =EPURE=    | =EPURE=, =EPURELIB=, =EPURE_*=, =SNCF-COM_*=            |
+
+Un motif est reconnu par égalité ou par *préfixe* : =SCHMS_VOIES=
+appartient à la famille =SCHMS=. La comparaison ignore la casse.
+
+Trois éléments composent l'étiquette finale :
+
+- les *produits* trouvés, hors ombrelle, joints par =+= s'il y en a
+  plusieurs (un dessin peut passer par plusieurs applications) ;
+- un =+= final si un appid d'édition « plus » est présent (un =+= dans
+  le nom, ou un nom finissant par =PLUS=) ;
+- =(EPURE)= entre parenthèses si un appid de l'ombrelle EPURE est
+  présent.
+
+Un dessin ne portant aucun appid reconnu est étiqueté =unknown= — ce
+qui reste une réponse : le dessin ne vient d'aucune application EPURE.
+
+* Limites
+
+- La classification repose sur la table APPID. Un dessin *purgé* de ses
+  appids (=PURGE=, un export par un outil tiers) sera =unknown= même
+  s'il vient bien d'une application EPURE.
+- La lecture des =.dwg= exige le codec natif de =clautolisp= pour la
+  plateforme courante ; sans lui, seuls les =.dxf= sont lisibles.
+- L'outil identifie l'application, pas la *version* du schéma applicatif.
+
+* Voir aussi
+
+- =dwg-identifier.org= — l'analyse d'origine (marquage des applications,
+  relevés sur dessins réels), dans le même répertoire ;
+- =clautolisp= — https://gitlab.com/ogamita/clautolisp, la bibliothèque
+  de dessin et le codec DWG sous-jacents.
