@@ -5,8 +5,21 @@ stages:
 
 variables:
   GIT_SUBMODULE_STRATEGY: none
-  CLAUTOLISP_REF: "release-1.3"
+  # CLAUTOLISP_REF_<PLATEFORME> : tag/branche de clautolisp à cloner et
+  # compiler pour cette plateforme, ou "local" pour sauter le clone/build et
+  # utiliser le clautolisp/alfe déjà installé sur le runner (sous
+  # CLAUTOLISP_LOCAL_PREFIX). Une variable par plateforme et non une seule
+  # variable globale : GitLab CI n'a pas de variable "dictionnaire" (valeurs
+  # scalaires uniquement), et linux (docker, éphémère) veut d'ordinaire un
+  # clone taggé alors que macos/windows (shell, persistant) veulent
+  # d'ordinaire l'installation locale — chaque job référence la variable de
+  # sa propre plateforme, connue statiquement par ses tags. Voir
+  # gitlab-ci-rules.md § 6 (C10-C12).
+  CLAUTOLISP_REF_LINUX:   "release-1.3"  # docker, éphémère : build à chaque run
+  CLAUTOLISP_REF_MACOS:   "local"        # shell, persistant : déjà installé
+  CLAUTOLISP_REF_WINDOWS: "local"        # shell, persistant : déjà installé
   CLAUTOLISP_PREFIX: "$CI_PROJECT_DIR/.clautolisp"
+  CLAUTOLISP_LOCAL_PREFIX: "/opt/local"
   CLAUTOLISP_GIT_URL: "https://gitlab.com/ogamita/clautolisp.git"
 
 # Deux instances GitLab avec des runners différents :
@@ -32,7 +45,7 @@ variables:
     - curl -fsSL https://beta.quicklisp.org/quicklisp.lisp -o /tmp/quicklisp.lisp
     - 'sbcl --non-interactive --load /tmp/quicklisp.lisp --eval "(quicklisp-quickstart:install)" --eval "(ql-util:without-prompting (ql:add-to-init-file))"'
   script:
-    - 'git clone --depth 1 --branch "$CLAUTOLISP_REF" "$CLAUTOLISP_GIT_URL" clautolisp-stable'
+    - 'git clone --depth 1 --branch "$CLAUTOLISP_REF_LINUX" "$CLAUTOLISP_GIT_URL" clautolisp-stable'
     - make -C clautolisp-stable build-programs
     - 'make -C clautolisp-stable install-programs PREFIX="$CLAUTOLISP_PREFIX"'
     - '"$CLAUTOLISP_PREFIX/bin/clautolisp" --version'
@@ -46,12 +59,25 @@ build:clautolisp:
   extends: .build-clautolisp
   tags: [linux, docker]
   rules:
-    - if: '$CI_SERVER_HOST != "fabrik.sncf.fr"'
+    - if: '$CI_SERVER_HOST != "fabrik.sncf.fr" && $CLAUTOLISP_REF_LINUX != "local"'
 
 build:clautolisp:fabrik:
   extends: .build-clautolisp
   rules:
-    - if: '$CI_SERVER_HOST == "fabrik.sncf.fr"'
+    - if: '$CI_SERVER_HOST == "fabrik.sncf.fr" && $CLAUTOLISP_REF_LINUX != "local"'
+
+# Bascule le PATH sur les binaires clautolisp/alfe : ceux tout juste compilés
+# (CLAUTOLISP_PREFIX, artefact de build:clautolisp*) ou ceux déjà installés
+# sur le runner (CLAUTOLISP_LOCAL_PREFIX) quand CLAUTOLISP_REF_LINUX=local —
+# auquel cas build:clautolisp* n'existe pas (cf. rules ci-dessus).
+.clautolisp-env:
+  before_script:
+    - |
+      if [ "$CLAUTOLISP_REF_LINUX" = "local" ]; then
+        export PATH="$CLAUTOLISP_LOCAL_PREFIX/bin:$PATH"
+      else
+        export PATH="$CLAUTOLISP_PREFIX/bin:$PATH"
+      fi
 
 .linux-test:
   stage: test
@@ -59,7 +85,7 @@ build:clautolisp:fabrik:
   before_script:
     - apt-get update
     - apt-get install -y --no-install-recommends make bash perl
-    - 'export PATH="$CLAUTOLISP_PREFIX/bin:$PATH"'
+    - !reference [.clautolisp-env, before_script]
 
 .linux-clautolisp:
   extends: .linux-test
@@ -72,13 +98,17 @@ build:clautolisp:fabrik:
 linux:clautolisp:
   extends: .linux-clautolisp
   tags: [linux, docker]
-  needs: ["build:clautolisp"]
+  needs:
+    - job: build:clautolisp
+      optional: true
   rules:
     - if: '$CI_SERVER_HOST != "fabrik.sncf.fr"'
 
 linux:clautolisp:fabrik:
   extends: .linux-clautolisp
-  needs: ["build:clautolisp:fabrik"]
+  needs:
+    - job: build:clautolisp:fabrik
+      optional: true
   rules:
     - if: '$CI_SERVER_HOST == "fabrik.sncf.fr"'
 
@@ -95,7 +125,7 @@ linux:clautolisp:fabrik:
   before_script:
     - apt-get update
     - apt-get install -y --no-install-recommends make bash perl
-    - 'export PATH="$CLAUTOLISP_PREFIX/bin:$PATH"'
+    - !reference [.clautolisp-env, before_script]
   script:
     - make benchmark BACKEND=clautolisp
   artifacts:
@@ -119,6 +149,12 @@ benchmark:fabrik:
 # macOS / Windows (shell, gitlab.com uniquement) : moteurs installés localement.
 # Un seul job par moteur (un clic = toute la série). Auto sur release-*, manuel
 # sinon. Jamais sur fabrik (pas de runner macOS/Windows).
+#
+# Pas de job de build source sur ces plateformes (runners shell persistants,
+# parfois un PC intermittent pour Windows) : CLAUTOLISP_REF_MACOS et
+# CLAUTOLISP_REF_WINDOWS ne supportent donc que "local" pour l'instant. La
+# garde en tête de script transforme une valeur différente en échec explicite
+# plutôt qu'en no-op silencieux (cf. gitlab-ci-rules.md C3/C4 et C12).
 # ===========================================================================
 
 .on-release-or-manual:
@@ -134,28 +170,33 @@ macos:clautolisp:
   extends: .on-release-or-manual
   tags: [macos, shell]
   script:
+    - 'if [ "$CLAUTOLISP_REF_MACOS" != "local" ]; then echo "CLAUTOLISP_REF_MACOS=$CLAUTOLISP_REF_MACOS non supporté : seul \"local\" est implémenté sur macOS (pas de job de build source)."; exit 1; fi'
     - make test-clautolisp
 
 macos:bricscad:
   extends: .on-release-or-manual
   tags: [macos, shell]
   script:
+    - 'if [ "$CLAUTOLISP_REF_MACOS" != "local" ]; then echo "CLAUTOLISP_REF_MACOS=$CLAUTOLISP_REF_MACOS non supporté : seul \"local\" est implémenté sur macOS (pas de job de build source)."; exit 1; fi'
     - make test-bricscad
 
 windows:clautolisp:
   extends: .on-release-or-manual
   tags: [windows, shell]
   script:
+    - 'if ($env:CLAUTOLISP_REF_WINDOWS -ne "local") { Write-Host "CLAUTOLISP_REF_WINDOWS=$env:CLAUTOLISP_REF_WINDOWS non supporte : seul ''local'' est implemente sur Windows (pas de job de build source)."; exit 1 }'
     - 'foreach ($d in "autolisp-algetypes","autolisp-vector","autolisp-hash-table","autolisp-json","autolisp-doc","autolisp-misc") { Write-Host "== $d (clautolisp) =="; make -C $d test-clautolisp; if ($LASTEXITCODE) { exit 1 } }'
 
 windows:bricscad:
   extends: .on-release-or-manual
   tags: [windows, shell]
   script:
+    - 'if ($env:CLAUTOLISP_REF_WINDOWS -ne "local") { Write-Host "CLAUTOLISP_REF_WINDOWS=$env:CLAUTOLISP_REF_WINDOWS non supporte : seul ''local'' est implemente sur Windows (pas de job de build source)."; exit 1 }'
     - 'foreach ($d in "autolisp-algetypes","autolisp-vector","autolisp-hash-table","autolisp-json","autolisp-doc") { Write-Host "== $d (bricscad) =="; make -C $d test-bricscad; if ($LASTEXITCODE) { exit 1 } }'
 
 windows:autocad:
   extends: .on-release-or-manual
   tags: [windows, shell]
   script:
+    - 'if ($env:CLAUTOLISP_REF_WINDOWS -ne "local") { Write-Host "CLAUTOLISP_REF_WINDOWS=$env:CLAUTOLISP_REF_WINDOWS non supporte : seul ''local'' est implemente sur Windows (pas de job de build source)."; exit 1 }'
     - 'foreach ($d in "autolisp-algetypes","autolisp-vector","autolisp-hash-table","autolisp-json","autolisp-doc") { Write-Host "== $d (autocad) =="; make -C $d test-autocad; if ($LASTEXITCODE) { exit 1 } }'
