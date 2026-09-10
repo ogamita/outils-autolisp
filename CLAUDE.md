@@ -17,6 +17,7 @@ Règles pratiques:
 - `LF` pour les scripts shell, Python, PowerShell, les `Makefile` et les autres fichiers exécutés directement par des outils Unix.
 - `CRLF` pour les fichiers `*.lsp`, `*.lisp`, `*.org`, `*.scr` et, sauf exception technique explicite, pour les autres fichiers documentaires.
 - À chaque modification de `autolisp-script/autolisp` ou d'une dépendance runtime qu'il charge, incrémenter automatiquement `VERSION_PATCH` dans `autolisp-script/VERSION.TXT`.
+- Le champ `version` de chaque `<sous-projet>/<sous-projet>.alpm` (et de `outils-autolisp.alpm`) n'est PAS géré au fil des commits : tous les systèmes ALPM sont publiés comme un tout et portent la même version de série (`VERSION` à la racine), posée par `scripts/stamp-alpm-version.sh` au moment de la release, selon `version-rules.md` (R4/R5 : un composant modifié dans une série porte le `M.m` de cette série). Un nouveau `.alpm` créé entre deux releases doit simplement reprendre la version courante de `VERSION`, jamais repartir de `1.0.0`.
 - Dans le code source, les identificateurs peuvent rester sans accent; en revanche, les commentaires et textes français doivent être accentués.
 - Pour un nouveau fichier documentaire, choisir `org-mode` par défaut sauf raison technique explicite.
 - Pour un fichier existant, on peut ajuster l'encodage et les fins de ligne pour respecter ces conventions, sans changer son format.
