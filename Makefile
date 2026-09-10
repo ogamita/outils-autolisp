@@ -427,7 +427,8 @@ TEST_SUBPROJECTS = \
 	autolisp-json \
 	autolisp-formatter \
 	autolisp-doc \
-	autolisp-misc
+	autolisp-misc \
+	autolisp-geometry
 
 # Sous-projets qui exposent des cibles CAO (common.mk : test-bricscad /
 # test-autocad). misc en est exclu (harnais shell, clautolisp seulement).
@@ -438,7 +439,8 @@ CAD_SUBPROJECTS = \
 	autolisp-introspection \
 	autolisp-json \
 	autolisp-formatter \
-	autolisp-doc
+	autolisp-doc \
+	autolisp-geometry
 
 # Sous-projets avec un benchmark de vitesse (structure vs liste/a-list).
 BENCH_SUBPROJECTS = \
