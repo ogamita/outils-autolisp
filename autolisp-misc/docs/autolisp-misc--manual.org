@@ -32,6 +32,20 @@ Pour charger la fonction =format= :
 (load "src/format.lsp")
 #+end_src
 
+Pour charger la famille =map= (=mapc=, =mapl=, =maplist=, =mapcan=,
+=mapcon= et leurs variantes =*=) :
+
+#+begin_src lisp
+(load "src/map.lsp")
+#+end_src
+
+Pour charger =aloop= (boucles imbriquées décrites par une liste de
+clauses) :
+
+#+begin_src lisp
+(load "src/aloop.lsp")
+#+end_src
+
 Note : =src/fs.lsp= reste dans le dépôt mais ne fait plus partie du
 projet. Il implémentait =pwd=, =cd= et =ls= avec un *cwd virtuel*
 stocké dans =*misc-cwd*= ; =browser.lsp= le remplace en agissant sur
@@ -230,4 +244,187 @@ Exemples :
 
 (format "~{| ~10A | ~10D~%~}"
         '(("apple" 12 "orange" 423 "strawberry" 1200)))
+#+end_src
+
+** Famille =map= (=mapc=, =mapl=, =maplist=, =mapcan=, =mapcon=)
+
+AutoLISP n'implémente nativement que =mapcar= (native et variadique :
+elle accepte plusieurs listes). =src/map.lsp= ajoute les autres
+fonctions de la famille « map » de Common Lisp (chapitre 14, Conses)
+qui lui manquent : =mapc=, =mapl=, =maplist=, =mapcan= et =mapcon=.
+
+AutoLISP ne permet pas de définir de fonction variadique (pas de
+=&rest=) : chaque fonction Common Lisp =(mapX function &rest lists)=
+est donc scindée en deux fonctions distinctes :
+
+- =(mapX fn list)= : la forme usuelle, une seule liste ;
+- =(mapX* fn lists)= : la forme générale, =lists= étant une *liste de
+  listes* (l'équivalent du =&rest= de Common Lisp, sous forme d'un
+  argument explicite).
+
+Comme =mapcar=, toutes ces fonctions itèrent jusqu'à épuisement de la
+liste la plus courte parmi les listes fournies ; ce n'est pas une
+erreur que les listes aient des longueurs différentes.
+
+=mapcan= et =mapcon= concatènent les résultats successifs avec
+=append= plutôt qu'avec =nconc= (Common Lisp les concatène en place,
+par effet de bord, pour l'efficacité) : AutoLISP n'offre pas de
+modification destructive de liste fiable, et il n'y a pas de gain de
+performance à en attendre ici. Chaque appel de la fonction fournie
+doit donc renvoyer une liste ; le résultat final est équivalent à
+celui de Common Lisp, simplement non destructif.
+
+*** =(mapc fn list)= et =(mapc* fn lists)=
+
+Applique =fn= à chaque élément (ou tuple d'éléments, pour la variante
+=*=) pour ses effets de bord ; les valeurs renvoyées par =fn= sont
+ignorées. Renvoie la première liste, inchangée (comme en Common Lisp).
+
+#+begin_src lisp
+(mapc 'princ '(1 2 3))
+;; affiche 123, renvoie (1 2 3)
+
+(mapc* '+ (list '(1 2 3) '(10 20 30)))
+;; applique + à (1 10), (2 20), (3 30) pour rien, renvoie (1 2 3)
+#+end_src
+
+*** =(mapl fn list)= et =(mapl* fn lists)=
+
+Comme =mapc= / =mapc*=, mais =fn= est appelée avec la ou les
+sous-listes courantes (les =cdr= successifs) plutôt qu'avec les
+éléments. Renvoie la première liste, inchangée.
+
+#+begin_src lisp
+(mapl 'princ '(1 2 3))
+;; affiche successivement (1 2 3) (2 3) (3), renvoie (1 2 3)
+#+end_src
+
+*** =(maplist fn list)= et =(maplist* fn lists)=
+
+Comme =mapcar=, mais =fn= est appelée avec la ou les sous-listes
+courantes plutôt qu'avec les éléments ; les résultats successifs sont
+collectés dans une liste.
+
+#+begin_src lisp
+(maplist 'reverse '(1 2 3))
+;; => ((3 2 1) (3 2) (3))
+
+(maplist* 'append (list '(0 1 2) '(A B C)))
+;; => ((0 1 2 A B C) (1 2 B C) (2 C))
+#+end_src
+
+*** =(mapcan fn list)= et =(mapcan* fn lists)=
+
+Comme =mapcar= / =mapcar= à plusieurs listes, mais les listes
+successivement renvoyées par =fn= sont concaténées (=append=) plutôt
+que collectées telles quelles.
+
+#+begin_src lisp
+(mapcan (function (lambda (x) (list x x))) '(1 2 3))
+;; => (1 1 2 2 3 3)
+
+(mapcan* 'list (list '(1 2 3) '(A B C)))
+;; => (1 A 2 B 3 C)
+#+end_src
+
+*** =(mapcon fn list)= et =(mapcon* fn lists)=
+
+Comme =maplist= / =maplist*=, mais les listes successivement renvoyées
+par =fn= sont concaténées (=append=) plutôt que collectées telles
+quelles.
+
+#+begin_src lisp
+(mapcon 'reverse '(1 2 3))
+;; => (3 2 1 3 2 3)
+
+(mapcon* 'append (list '(0 1 2) '(A B C)))
+;; => (0 1 2 A B C 1 2 B C 2 C)
+#+end_src
+
+** =(aloop clauses fn)=
+
+Boucles imbriquées décrites par une liste de clauses, portage sous
+forme de *fonction* (et non de macro) de la macro Elisp =rloop= de
+=~/src/public/emacs/pjb-emacs.el= :
+
+#+begin_src elisp
+(defmacro rloop (clauses &rest body)
+  (if (null clauses)
+      `(progn ,@body)
+      `(loop ,@(car clauses) do (rloop ,(cdr clauses) ,@body))))
+#+end_src
+
+=rloop= développait =clauses= (une liste de fragments de clause
+Common Lisp =loop=) en boucles =loop= imbriquées, la première clause
+étant la boucle la plus externe. AutoLISP n'a ni macro utilisable comme
+en Elisp/Common Lisp ni boucle =loop= : =aloop= est donc une fonction
+ordinaire. Les clauses y sont de simples données (plus de « for var » :
+la variable de chaque niveau est liée positionnellement, via un
+=lambda=), et =fn= est appelé une fois par combinaison de valeurs, au
+niveau le plus imbriqué -- exactement comme des boucles for imbriquées
+classiques.
+
+Chaque clause est une liste décrivant une dimension d'itération :
+
+- =(from start to end)= ou =(from start upto end)= : entiers de
+  =start= à =end= inclus, pas +1 (=to= et =upto= sont synonymes,
+  comme en Common Lisp =loop=) ;
+- =(from start below end)= : entiers de =start= à =end= exclu, pas +1 ;
+- =(from start downto end)= : entiers de =start= à =end= inclus, pas -1 ;
+- =(from start above end)= : entiers de =start= à =end= exclu, pas -1 ;
+- =(to end)=, =(upto end)=, =(below end)=, =(downto end)=,
+  =(above end)= : comme ci-dessus, avec =start= implicite = 0 ;
+- toutes les clauses numériques ci-dessus acceptent un =by= final
+  donnant le pas, en grandeur (toujours positif -- le sens +/- est
+  déjà donné par le mot-clé de borne) : =(below 10 by 2)= =>
+  0 2 4 6 8 ; =(from 10 downto 0 by 3)= => 10 7 4 1. Sans =by=, le pas
+  est 1 ;
+- =(from start then step-fn bound-kw end)= : pas *calculé* plutôt
+  qu'arithmétique -- la valeur suivante est =(step-fn valeur
+  courante)= au lieu de =valeur+pas= ; =bound-kw=/=end= (=to=/=upto=/
+  =below=/=downto=/=above=, comme ci-dessus) restent obligatoires :
+  =aloop= matérialise chaque clause en liste, il lui faut donc un
+  arrêt garanti -- pas de séquence infinie. Exemple :
+  =(from 1 then (function (lambda (x) (* 2 x))) below 100)= =>
+  1 2 4 8 16 32 64 ;
+- =(in list)= : les éléments de =list=, dans l'ordre (comme le
+  =for var in list= de Common Lisp =loop=) ;
+- =(on list)= : les sous-listes successives de =list=, =list=
+  elle-même comprise (comme =for var on list=) -- ex.
+  =(on (a b c))= => =(a b c) (b c) (c)= ;
+- =(in list)= et =(on list)= acceptent un =by= final donnant la
+  fonction de progression d'une sous-liste à la suivante (défaut :
+  =cdr=) ; n'importe quelle fonction d'un argument convient -- =cdr=,
+  =cddr=, ou une fonction quelconque comme =(function (lambda (l)
+  (cdr (member cible l))))= pour sauter juste après la prochaine
+  occurrence de =cible= (attention : =(member cible l)= *seul*, sans
+  le =cdr= qui saute par-dessus, retomberait indéfiniment sur la même
+  occurrence). Le parcours s'arrête dès que la fonction ne renvoie
+  plus une liste non vide (=nil= compris, ou un atome si la fonction
+  n'est pas conçue pour être rappelée sur son propre résultat).
+
+AutoLISP n'ayant pas de fonctions variadiques, les clauses sont
+regroupées dans une seule liste (et non un argument par clause) ; =fn=
+est un =lambda= prenant autant d'arguments qu'il y a de clauses, dans
+le même ordre (1re clause = 1er argument = boucle la plus externe ;
+dernière clause = dernier argument = boucle la plus interne, celle qui
+varie le plus vite). =aloop= renvoie toujours =nil=.
+
+#+begin_src lisp
+(aloop (list '(below 2) '(in (a b)))
+       (function (lambda (i s) (princ (list i s)))))
+;; affiche (0 A)(0 B)(1 A)(1 B)
+
+;; Une clause peut être construite dynamiquement (ex. issue d'une variable) :
+(aloop (list '(from 1 to 10) '(below 3) '(upto 5)
+             '(from 9 downto 1) '(in (a b c))
+             (list 'in my-list))
+       (function (lambda (a b c d e f) ...)))
+
+(aloop (list '(below 10 by 2)) 'princ)               ; => 0 2 4 6 8
+(aloop (list '(on (a b c))) 'princ)                  ; => (a b c) (b c) (c)
+(aloop (list '(in (a b c d) by cddr)) 'princ)         ; => a c
+
+(aloop (list (list 'from 1 'then (function (lambda (x) (* 2 x))) 'below 100))
+       'princ)                                       ; => 1 2 4 8 16 32 64
 #+end_src

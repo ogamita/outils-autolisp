@@ -48,3 +48,5 @@ run_one() { # name  extra_load_args  script
 
 run_one fs-tests     ""                                   autolisp-misc/tests/fs-tests.lsp
 run_one format-tests "-l autolisp-misc/src/format.lsp"    autolisp-misc/tests/format-tests.lsp
+run_one map-tests    "-l autolisp-misc/src/map.lsp"       autolisp-misc/tests/map-tests.lsp
+run_one aloop-tests  "-l autolisp-misc/src/aloop.lsp"     autolisp-misc/tests/aloop-tests.lsp
