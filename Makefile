@@ -40,6 +40,29 @@ DIST        = dist
 
 EMACS      ?= emacs
 EMACSFLAGS  = --batch -Q
+# Sous MSYS2, Emacs peut recevoir TEMP sous la forme Windows
+# C:/msys64/tmp tout en appliquant la syntaxe de chemins MSYS. Org
+# considère alors ce chemin comme relatif et le préfixe par le dossier
+# courant. Un chemin temporaire relatif au dossier de construction,
+# développé par Emacs lui-même, évite ce mélange de syntaxes.
+EMACS_TEMP_DIR  = .emacs-tmp
+EMACS_TEMP_EVAL = --eval '(setq temporary-file-directory \
+                    (file-name-as-directory \
+                     (expand-file-name "$(EMACS_TEMP_DIR)" default-directory)))'
+# Org sait produire le PDF avec pdfLaTeX, XeLaTeX ou LuaLaTeX. Choisir
+# automatiquement le premier moteur présent permet notamment une
+# construction Windows avec XeLaTeX seul. LATEX_COMPILER reste
+# surchargeable pour rendre le choix explicite et reproductible.
+LATEX_COMPILER ?=
+ifeq ($(strip $(LATEX_COMPILER)),)
+EMACS_LATEX_EVAL = --eval '(setq org-latex-compiler \
+                     (cond ((executable-find "pdflatex") "pdflatex") \
+                           ((executable-find "xelatex") "xelatex") \
+                           ((executable-find "lualatex") "lualatex") \
+                           (t "pdflatex")))'
+else
+EMACS_LATEX_EVAL = --eval '(setq org-latex-compiler "$(LATEX_COMPILER)")'
+endif
 MAKEINFO   ?= makeinfo
 INSTALL_INFO ?= install-info
 
@@ -275,7 +298,8 @@ $(DOC_BUILD)/$(1)/$(1)--manual.org: $(1)/docs/$(1)--manual.org
 	cp $$< $$@
 
 $(DOC_BUILD)/$(1)/$(1)--manual.texi: $(DOC_BUILD)/$(1)/$(1)--manual.org
-	cd $(DOC_BUILD)/$(1) && $(EMACS) $(EMACSFLAGS) $(1)--manual.org \
+	install -d $(DOC_BUILD)/$(1)/$(EMACS_TEMP_DIR)
+	cd $(DOC_BUILD)/$(1) && $(EMACS) $(EMACSFLAGS) $(EMACS_TEMP_EVAL) $(1)--manual.org \
 	    --funcall org-texinfo-export-to-texinfo
 
 $(DOC_BUILD)/$(1)/$(1).info: $(DOC_BUILD)/$(1)/$(1)--manual.texi
@@ -292,7 +316,9 @@ $(DOC_BUILD)/$(1)/html/index.html: $(DOC_BUILD)/$(1)/$(1)--manual.texi
 # n'existe pas en mode batch : on affiche le .log de LaTeX, seul endroit
 # où figure le \usepackage introuvable ou l'erreur de syntaxe réelle.
 $(DOC_BUILD)/$(1)/$(1)--manual.pdf: $(DOC_BUILD)/$(1)/$(1)--manual.org
-	cd $(DOC_BUILD)/$(1) && $(EMACS) $(EMACSFLAGS) $(1)--manual.org \
+	install -d $(DOC_BUILD)/$(1)/$(EMACS_TEMP_DIR)
+	cd $(DOC_BUILD)/$(1) && $(EMACS) $(EMACSFLAGS) $(EMACS_TEMP_EVAL) \
+	    $(EMACS_LATEX_EVAL) $(1)--manual.org \
 	    --funcall org-latex-export-to-pdf \
 	  || { echo "=== $(1)--manual.log ===" ; \
 	       tail -60 $(1)--manual.log 2>/dev/null ; false ; }
