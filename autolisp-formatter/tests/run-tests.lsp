@@ -25,7 +25,8 @@
         (list 'ERROR em)))
     (list 'OK "")))
 
-(defun ft-run-suite (suite-name / cell tests total ok fail err res status msg)
+(defun ft-run-suite (suite-name / cell tests test total ok fail err res status msg
+                                   results start t0 secs)
   (setq cell (assoc suite-name *t:suites*))
   (if (null cell)
     (progn
@@ -37,11 +38,22 @@
       (setq ok    0)
       (setq fail  0)
       (setq err   0)
+      (setq results nil)
+      (setq start (t:millisecs))
       (foreach test tests
         (setq total  (1+ total))
+        (setq t0     (t:millisecs))
         (setq res    (ft-classify (cadr test)))
+        (setq secs   (t:elapsed t0))
         (setq status (car res))
         (setq msg    (cadr res))
+        ;; Enregistrement pour le rapport JUnit du framework (t:junit-record).
+        (setq results
+              (cons (list (cond ((eq status 'OK) :ok)
+                                ((eq status 'FAIL) :fail)
+                                (t :error))
+                          suite-name (car test) msg secs)
+                    results))
         (cond
           ((eq status 'OK)
            (setq ok (1+ ok))
@@ -57,6 +69,7 @@
                      "  OK: " (itoa ok)
                      "  FAIL: " (itoa fail)
                      "  ERROR: " (itoa err) "\n"))
+      (t:junit-record suite-name (reverse results) (t:elapsed start))
       (list total ok fail err))))
 
 ;; Les fixtures de configuration sont des fichiers .lsp ouverts par le

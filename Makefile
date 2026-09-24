@@ -475,6 +475,13 @@ BENCH_SUBPROJECTS = \
 
 BACKEND ?= clautolisp
 
+# Rapport JUnit facultatif (GitLab) : make test-clautolisp JUNIT_DIR=junit
+# écrit junit/<sous-projet>-<moteur>.xml en plus de la sortie console. Le
+# chemin est rendu absolu ici, puisque chaque sous-make tourne dans son
+# propre répertoire.
+JUNIT_DIR ?=
+JUNIT_ARG = $(if $(JUNIT_DIR),JUNIT_DIR="$(abspath $(JUNIT_DIR))")
+
 # CI / headless : clautolisp pour les libs. (autolisp-script est déprécié.)
 test-ci: test-clautolisp  ## Suites headless (CI) : clautolisp.
 
@@ -483,19 +490,19 @@ test-ci: test-clautolisp  ## Suites headless (CI) : clautolisp.
 test-clautolisp:  ## Lance toutes les suites sous clautolisp.
 	@for d in $(TEST_SUBPROJECTS); do \
 		echo "== $$d (clautolisp) =="; \
-		$(MAKE) -C $$d test-clautolisp || exit 1; \
+		$(MAKE) -C $$d test-clautolisp $(JUNIT_ARG) || exit 1; \
 	done
 
 test-bricscad:  ## Lance les suites CAO sous BricsCAD (via alfe).
 	@for d in $(CAD_SUBPROJECTS); do \
 		echo "== $$d (bricscad) =="; \
-		$(MAKE) -C $$d test-bricscad || exit 1; \
+		$(MAKE) -C $$d test-bricscad $(JUNIT_ARG) || exit 1; \
 	done
 
 test-autocad:  ## Lance les suites CAO sous AutoCAD (via alfe).
 	@for d in $(CAD_SUBPROJECTS); do \
 		echo "== $$d (autocad) =="; \
-		$(MAKE) -C $$d test-autocad || exit 1; \
+		$(MAKE) -C $$d test-autocad $(JUNIT_ARG) || exit 1; \
 	done
 
 # Local : chaque sous-projet choisit ses moteurs selon uname (clautolisp + CAO).

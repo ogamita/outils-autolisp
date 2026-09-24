@@ -25,3 +25,6 @@ dist/
 .clautolisp/
 clautolisp-src/
 clautolisp-stable/
+
+# Rapports JUnit des tests (JUNIT_DIR=junit, cf. makefiles/common.mk).
+junit/

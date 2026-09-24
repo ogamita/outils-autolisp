@@ -64,6 +64,9 @@ Compteurs globaux :
 - `*t:last-fail*`
 - `*t:last-error*`
 
+## Rapport JUnit (GitLab)
+Facultatif, en plus de la sortie console : si `AUTOLISP_TEST_JUNIT` (ou `*t:junit-file*`) nomme un fichier, chaque `run-suite` y (ré)écrit un rapport JUnit XML de toutes les suites exécutées. Avec `make`, passer `JUNIT_DIR=<répertoire>` (cf. `makefiles/common.mk`). Détails dans `autolisp-test--manual.org`.
+
 ## Intégration avec le wrapper `autolisp`
 Quand les tests sont lancés via `outils/autolisp-script/autolisp`, la sortie peut être redirigée avec :
 - `OUTFILE` / `*AUTOLISP_OUTFILE*`

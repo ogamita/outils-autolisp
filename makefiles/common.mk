@@ -22,6 +22,10 @@
 # On favorise `--dialect strict` (portable AutoCAD ∩ BricsCAD) ; run-tests bascule
 # temporairement en lax uniquement autour de autolisp-set-status (cf. t:set-status
 # dans autolisp-test/test-framework.lsp).
+# Rapport JUnit (GitLab) : facultatif. Avec JUNIT_DIR=<répertoire absolu>, chaque
+# cible de test écrit AUSSI $(JUNIT_DIR)/$(TEST_SUITE)-<moteur>.xml (variable
+# d'environnement AUTOLISP_TEST_JUNIT lue par le framework). Sans JUNIT_DIR, rien
+# ne change. Ex. :  make test-clautolisp JUNIT_DIR=$PWD/junit
 # Benchmarks (vector/hash-table) : AV_RUN_BENCHMARKS / AH_RUN_BENCHMARKS=1 sur la
 # cible test (les run-tests.lsp consultent ces variables d'environnement).
 
@@ -49,6 +53,12 @@ BACKEND       ?= clautolisp
 BENCH_DIALECT ?= lax
 BENCH_OUTFILE ?= $(CURDIR)/benchmark.txt
 
+JUNIT_DIR ?=
+
+# $(call junit-env,<moteur>) : préfixe de commande shell qui crée JUNIT_DIR et
+# exporte AUTOLISP_TEST_JUNIT ; vide si JUNIT_DIR n'est pas défini.
+junit-env = $(if $(JUNIT_DIR),mkdir -p "$(JUNIT_DIR)" && AUTOLISP_TEST_JUNIT="$(JUNIT_DIR)/$(TEST_SUITE)-$(1).xml")
+
 .PHONY: test-ci test test-clautolisp test-bricscad test-autocad benchmark
 
 test-ci: test
@@ -56,13 +66,13 @@ test-ci: test
 test: $(TEST_TARGETS)
 
 test-clautolisp:
-	$(CLAUTOLISP) --dialect $(CLAUTOLISP_DIALECT) -q $(TEST_SOURCES) $(TEST_MAIN) -x '(quit)'
+	$(call junit-env,clautolisp) $(CLAUTOLISP) --dialect $(CLAUTOLISP_DIALECT) -q $(TEST_SOURCES) $(TEST_MAIN) -x '(quit)'
 
 test-bricscad:
-	$(ALFE) -norc --bricscad --mode batch $(TEST_SOURCES) $(TEST_MAIN) -q
+	$(call junit-env,bricscad) $(ALFE) -norc --bricscad --mode batch $(TEST_SOURCES) $(TEST_MAIN) -q
 
 test-autocad:
-	$(ALFE) -norc --autocad --mode batch $(TEST_SOURCES) $(TEST_MAIN) -q
+	$(call junit-env,autocad) $(ALFE) -norc --autocad --mode batch $(TEST_SOURCES) $(TEST_MAIN) -q
 
 ifeq ($(BACKEND),clautolisp)
 BENCH_CMD = $(CLAUTOLISP) --dialect $(BENCH_DIALECT) -q $(BENCH_SOURCES) -x '(C:BENCH)' -x '(quit)'

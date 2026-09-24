@@ -200,6 +200,53 @@ nomment des fichiers où les lignes sont *aussi* écrites (en ajout).
 C'est ce qui permet de récupérer un rapport depuis une CAO dont la
 console n'est pas capturable.
 
+** Rapport JUnit (GitLab)
+
+En plus de la sortie console — inchangée —, le framework peut écrire un
+rapport au format JUnit XML, que GitLab affiche dans l'onglet « Tests »
+du pipeline et dans le widget des merge requests.
+
+Le rapport est demandé en nommant un fichier par la variable
+d'environnement =AUTOLISP_TEST_JUNIT= ou, à défaut, par la variable
+AutoLISP =*t:junit-file*=. Sans l'une ni l'autre, aucun fichier n'est
+écrit.
+
+Chaque =run-suite= (ré)écrit alors ce fichier en entier, avec *toutes*
+les suites exécutées depuis le dernier =run-all= (ou depuis le
+chargement du framework) : aucun appel de clôture n'est nécessaire, et
+un =run-tests.lsp= existant n'a rien à changer. Chaque suite donne un
+=<testsuite>=, chaque test un =<testcase classname="suite" name="test">=
+avec sa durée (variable système =MILLISECS=, 0 si l'hôte ne la fournit
+pas) ; un =FAIL= devient un =<failure>=, un =ERROR= un =<error>=, avec le
+message de l'erreur.
+
+Un exécuteur maison qui n'appelle pas =run-suite= (c'est le cas
+d'=autolisp-formatter=) alimente le même rapport par :
+
+#+begin_src lisp
+(t:junit-record suite-name results secondes)
+;; results : liste de (STATUT SUITE NOM MESSAGE DURÉE-EN-SECONDES),
+;;           STATUT valant :ok, :fail ou :error.
+#+end_src
+
+Côté =make=, il suffit de passer =JUNIT_DIR= (voir
+=makefiles/common.mk=) ; chaque cible de test écrit alors
+=$(JUNIT_DIR)/<sous-projet>-<moteur>.xml= :
+
+#+begin_src sh
+make test-clautolisp JUNIT_DIR=junit          # à la racine : chemin rendu absolu
+make -C autolisp-json test-clautolisp JUNIT_DIR=$PWD/junit
+#+end_src
+
+La CI GitLab (=.gitlab-ci.yml=) le fait pour les jobs clautolisp Linux et
+macOS et BricsCAD macOS, et déclare =junit/*.xml= en
+=artifacts:reports:junit=.
+
+L'en-tête XML déclare UTF-8, l'encodage des fichiers écrits par
+clautolisp. Sur une CAO qui écrit ses fichiers dans une page de codes,
+seuls les caractères non ASCII des noms et messages seraient mal
+décodés.
+
 * Assertions d'entités
 
 =test-entites.lsp= ajoute un petit langage d'assertions au-dessus

@@ -12,6 +12,10 @@
 (setq *t:last-fail* 0)
 (setq *t:last-error* 0)
 
+;; Résultats accumulés pour le rapport JUnit : liste, en ordre inverse, de
+;; (NOM-DE-SUITE DURÉE-EN-SECONDES RÉSULTATS). Voir « Rapport JUnit » plus bas.
+(setq *t:junit-suites* nil)
+
 ;; AutoLISP has no real keywords: :foo is just a symbol named ":FOO" that
 ;; evaluates to NIL by default on every engine (BricsCAD, AutoCAD,
 ;; clautolisp). Bind each marker used below to itself so that result
@@ -112,6 +116,18 @@
           " actual="
           (t:str actual)))
 
+;; Horloge en millisecondes (variable système MILLISECS : AutoCAD, BricsCAD,
+;; clautolisp). Rend nil si l'hôte ne la fournit pas : les durées valent alors 0.
+(defun t:millisecs (/ ms)
+  (setq ms (vl-catch-all-apply (function getvar) (list "MILLISECS")))
+  (if (numberp ms) ms nil))
+
+(defun t:elapsed (start / now)
+  (setq now (t:millisecs))
+  (if (and start now)
+    (/ (- now start) 1000.0)
+    0.0))
+
 ;; -----------------------------
 ;; Assertions
 ;; -----------------------------
@@ -182,22 +198,25 @@
 ;; Runner + report
 ;; -----------------------------
 
-(defun t:run-test (suite-name test / name fn r em is-fail)
+(defun t:run-test (suite-name test / name fn r em is-fail start secs)
   (setq name (car test))
   (setq fn   (cadr test))
 
+  (setq start (t:millisecs))
   (setq r (vl-catch-all-apply fn nil))
+  (setq secs (t:elapsed start))
 
+  ;; Résultat : (STATUT SUITE NOM MESSAGE DURÉE-EN-SECONDES).
   (cond
     ((vl-catch-all-error-p r)
      ;; distinguish FAIL (our t:fail uses error with prefix) from ERROR
      (setq em (vl-catch-all-error-message r))
      (setq is-fail (and em (wcmatch em "TEST-FAIL:*")))
      (if is-fail
-       (list :fail suite-name name em)
-       (list :error suite-name name em)))
+       (list :fail suite-name name em secs)
+       (list :error suite-name name em secs)))
     (t
-     (list :ok suite-name name nil))))
+     (list :ok suite-name name nil secs))))
 
 (defun t:print-result (res / status suite name msg)
   (setq status (car res))
@@ -215,7 +234,7 @@
     (t
      (t:emit-err (strcat "ERROR [" suite "] " name " -- " msg)))))
 
-(defun run-suite (suite-name / cell tests total ok fail err res)
+(defun run-suite (suite-name / cell tests test total ok fail err res results start)
   (setq cell (assoc suite-name *t:suites*))
   (if (null cell)
     (progn
@@ -227,10 +246,13 @@
       (setq ok 0)
       (setq fail 0)
       (setq err 0)
+      (setq results nil)
+      (setq start (t:millisecs))
 
       (foreach test tests
         (setq total (1+ total))
         (setq res (t:run-test suite-name test))
+        (setq results (cons res results))
         (t:print-result res)
         (cond
           ((eq (car res) :ok)    (setq ok (1+ ok)))
@@ -246,6 +268,7 @@
       (setq *t:last-ok* (+ *t:last-ok* ok))
       (setq *t:last-fail* (+ *t:last-fail* fail))
       (setq *t:last-error* (+ *t:last-error* err))
+      (t:junit-record suite-name (reverse results) (t:elapsed start))
       (list :suite suite-name :total total :ok ok :fail fail :error err))))
 
 (defun run-all (/ s summaries)
@@ -253,7 +276,151 @@
   (setq *t:last-ok* 0)
   (setq *t:last-fail* 0)
   (setq *t:last-error* 0)
+  (setq *t:junit-suites* nil)
   (setq summaries nil)
   (foreach s *t:suites*
     (setq summaries (cons (run-suite (car s)) summaries)))
   (reverse summaries))
+
+;; -----------------------------
+;; Rapport JUnit (GitLab, etc.)
+;; -----------------------------
+
+;; Facultatif : si la variable d'environnement AUTOLISP_TEST_JUNIT — ou, à
+;; défaut, la variable AutoLISP *t:junit-file* — nomme un fichier, chaque
+;; run-suite (ré)écrit ce fichier au format JUnit XML avec TOUTES les suites
+;; exécutées depuis le dernier run-all (ou depuis le chargement). La sortie
+;; console est inchangée. Aucun appel de clôture n'est nécessaire : le
+;; fichier est complet après chaque suite.
+;;
+;; Les chaînes sont écrites telles quelles (seuls les caractères spéciaux XML
+;; et les caractères de contrôle sont échappés) et l'en-tête déclare UTF-8,
+;; l'encodage des fichiers écrits par clautolisp. Sur une CAO qui écrit dans
+;; une page de codes, seuls les caractères non ASCII seraient mal décodés.
+
+(defun t:junit-path (/ v)
+  (setq v (getenv "AUTOLISP_TEST_JUNIT"))
+  (cond
+    ((and v (/= v "")) v)
+    ((and *t:junit-file* (/= *t:junit-file* "")) *t:junit-file*)
+    (t nil)))
+
+(defun t:xml-escape (x / s out i n c code)
+  (setq s (cond ((null x) "")
+                ((= (type x) 'STR) x)
+                (t (t:str x))))
+  (setq out "")
+  (setq i 1)
+  (setq n (strlen s))
+  (while (<= i n)
+    (setq c (substr s i 1))
+    (setq code (ascii c))
+    (setq out
+          (strcat out
+                  (cond
+                    ((= c "&")  "&amp;")
+                    ((= c "<")  "&lt;")
+                    ((= c ">")  "&gt;")
+                    ((= c "\"") "&quot;")
+                    ((= c "'")  "&apos;")
+                    ;; tabulation et fins de ligne : références de caractère,
+                    ;; pour survivre à la normalisation des attributs.
+                    ((= code 9)  "&#9;")
+                    ((= code 10) "&#10;")
+                    ((= code 13) "&#13;")
+                    ;; autres caractères de contrôle : interdits en XML 1.0.
+                    ((< code 32) "?")
+                    (t c))))
+    (setq i (1+ i)))
+  out)
+
+(defun t:junit-time (secs)
+  (rtos (if (numberp secs) secs 0.0) 2 3))
+
+(defun t:junit-count (results status / n r)
+  (setq n 0)
+  (foreach r results
+    (if (eq (car r) status)
+      (setq n (1+ n))))
+  n)
+
+(defun t:junit-attr (name value)
+  (strcat " " name "=\"" (t:xml-escape value) "\""))
+
+(defun t:junit-write-testcase (f res / status suite name msg head tag)
+  (setq status (car res))
+  (setq suite  (if (cadr res)   (cadr res)   "?"))
+  (setq name   (if (caddr res)  (caddr res)  "?"))
+  (setq msg    (if (cadddr res) (cadddr res) ""))
+  (setq head (strcat "    <testcase"
+                     (t:junit-attr "classname" suite)
+                     (t:junit-attr "name" name)
+                     (t:junit-attr "time" (t:junit-time (nth 4 res)))))
+  (if (eq status :ok)
+    (write-line (strcat head "/>") f)
+    (progn
+      (setq tag (if (eq status :fail) "failure" "error"))
+      (write-line (strcat head ">") f)
+      (write-line (strcat "      <" tag
+                          (t:junit-attr "message" msg)
+                          (t:junit-attr "type" tag)
+                          ">" (t:xml-escape msg) "</" tag ">")
+                  f)
+      (write-line "    </testcase>" f))))
+
+(defun t:junit-write (path / f suites entry results res total fail err secs)
+  (setq f (open path "w"))
+  (if (null f)
+    (progn
+      (t:emit-err (strcat "[autolisp-test] cannot write JUnit report: " path))
+      nil)
+    (progn
+      (setq suites (reverse *t:junit-suites*))
+      (setq total 0)
+      (setq fail 0)
+      (setq err 0)
+      (setq secs 0.0)
+      (foreach entry suites
+        (setq results (caddr entry))
+        (setq total (+ total (length results)))
+        (setq fail  (+ fail (t:junit-count results :fail)))
+        (setq err   (+ err  (t:junit-count results :error)))
+        (setq secs  (+ secs (cadr entry))))
+      (write-line "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" f)
+      (write-line (strcat "<testsuites"
+                          (t:junit-attr "tests" (itoa total))
+                          (t:junit-attr "failures" (itoa fail))
+                          (t:junit-attr "errors" (itoa err))
+                          (t:junit-attr "time" (t:junit-time secs))
+                          ">")
+                  f)
+      (foreach entry suites
+        (setq results (caddr entry))
+        (write-line (strcat "  <testsuite"
+                            (t:junit-attr "name" (car entry))
+                            (t:junit-attr "tests" (itoa (length results)))
+                            (t:junit-attr "failures" (itoa (t:junit-count results :fail)))
+                            (t:junit-attr "errors" (itoa (t:junit-count results :error)))
+                            (t:junit-attr "skipped" "0")
+                            (t:junit-attr "time" (t:junit-time (cadr entry)))
+                            ">")
+                    f)
+        (foreach res results
+          (t:junit-write-testcase f res))
+        (write-line "  </testsuite>" f))
+      (write-line "</testsuites>" f)
+      (close f)
+      path)))
+
+;; Point d'entrée public pour les exécuteurs maison (qui n'appellent pas
+;; run-suite) : RESULTS est une liste d'enregistrements
+;; (STATUT SUITE NOM MESSAGE DURÉE-EN-SECONDES), STATUT valant :ok, :fail ou
+;; :error. Ajoute la suite au rapport et le réécrit s'il est demandé.
+(defun t:junit-record (suite-name results secs / path)
+  (setq *t:junit-suites*
+        (cons (list suite-name (if (numberp secs) secs 0.0) results)
+              *t:junit-suites*))
+  (setq path (t:junit-path))
+  (if path
+    (t:junit-write path))
+  suite-name)

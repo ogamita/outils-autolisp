@@ -105,7 +105,14 @@ build:clautolisp:fabrik:
     matrix:
       - SUBPROJECT: [autolisp-algetypes, autolisp-vector, autolisp-hash-table, autolisp-json, autolisp-doc, autolisp-misc]
   script:
-    - 'make -C "$SUBPROJECT" test-clautolisp'
+    - 'make -C "$SUBPROJECT" test-clautolisp JUNIT_DIR="$CI_PROJECT_DIR/junit"'
+  # Rapport JUnit (onglet « Tests » du pipeline et widget de la MR). La sortie
+  # console reste inchangée ; autolisp-misc (harnais shell) n'en produit pas.
+  artifacts:
+    when: always
+    reports:
+      junit: junit/*.xml
+    expire_in: 30 days
 
 linux:clautolisp:
   extends: .linux-clautolisp
@@ -173,13 +180,23 @@ macos:clautolisp:
   extends: .on-release-or-manual
   tags: [macos, shell]
   script:
-    - make test-clautolisp
+    - 'make test-clautolisp JUNIT_DIR="$CI_PROJECT_DIR/junit"'
+  artifacts:
+    when: always
+    reports:
+      junit: junit/*.xml
+    expire_in: 30 days
 
 macos:bricscad:
   extends: .on-release-or-manual
   tags: [macos, shell]
   script:
-    - make test-bricscad
+    - 'make test-bricscad JUNIT_DIR="$CI_PROJECT_DIR/junit"'
+  artifacts:
+    when: always
+    reports:
+      junit: junit/*.xml
+    expire_in: 30 days
 
 windows:clautolisp:
   extends: .on-release-or-manual

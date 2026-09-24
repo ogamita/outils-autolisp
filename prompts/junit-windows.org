@@ -1,0 +1,118 @@
+#+TITLE: Rapports JUnit d'autolisp-test sous Windows — prompt de reprise
+#+LANGUAGE: fr
+
+* Rôle et contexte
+
+Tu reprends, sur le poste Windows (MSYS2 + BricsCAD + AutoCAD + clautolisp
+natif), un travail commencé sous macOS dans le dépôt =outils-autolisp=.
+Lis d'abord =AGENTS.md= / les consignes du dépôt (encodage UTF-8, CRLF pour
+=*.lsp= / =*.org=, LF pour les scripts et Makefiles, textes français
+accentués, pas de conversion de format rétroactive).
+
+Objectif global : le framework de test =autolisp-test= produit, *en plus*
+de sa sortie console (inchangée), un rapport JUnit XML que GitLab affiche
+(onglet « Tests » du pipeline, widget des MR).
+
+* Ce qui est déjà fait (macOS, vérifié sous clautolisp)
+
+- =autolisp-test/test-framework.lsp= : si la variable d'environnement
+  =AUTOLISP_TEST_JUNIT= (ou, à défaut, la variable AutoLISP
+  =*t:junit-file*=) nomme un fichier, chaque =run-suite= le réécrit en
+  entier (JUnit XML, toutes les suites depuis le dernier =run-all=). Durées
+  via =(getvar "MILLISECS")=. Point d'entrée pour les exécuteurs maison :
+  =(t:junit-record suite results secondes)=, utilisé par
+  =autolisp-formatter/tests/run-tests.lsp=.
+- =makefiles/common.mk= et =autolisp-introspection/Makefile= : variable
+  =JUNIT_DIR= ; chaque cible =test-<moteur>= préfixe sa commande par
+  =mkdir -p "$(JUNIT_DIR)" && AUTOLISP_TEST_JUNIT="$(JUNIT_DIR)/$(TEST_SUITE)-<moteur>.xml"=
+  (macro =junit-env=). Le =Makefile= racine rend =JUNIT_DIR= absolu
+  (=$(abspath …)=) et le transmet aux sous-makes.
+- =autolisp-introspection/Makefile= : =--host mock= remplacé par
+  =--host cador= (les hôtes clautolisp s'appellent désormais =cador=,
+  =cadtui=, =nihil=).
+- =.gitlab-ci.yml= : =JUNIT_DIR="$CI_PROJECT_DIR/junit"= et
+  =artifacts:reports:junit: junit/*.xml= (=when: always=) sur
+  =linux:clautolisp*=, =macos:clautolisp=, =macos:bricscad=. *Pas* sur les
+  jobs Windows.
+- Documentation : =autolisp-test/docs/autolisp-test--manual.org=
+  (section « Rapport JUnit (GitLab) ») et =autolisp-test.md=.
+- =.gitignore= : =junit/=.
+
+Vérifie d'abord que ces modifications sont bien présentes dans ta copie
+(=git log=, =grep -n junit makefiles/common.mk=). Si elles n'y sont pas,
+arrête-toi et signale-le : elles doivent être poussées depuis le Mac.
+
+* Ce qu'il reste à faire sous Windows
+
+** 1. clautolisp natif lancé depuis MSYS2
+
+- Lancer, depuis un shell MSYS2 :
+  #+begin_src sh
+  make -C autolisp-json test-clautolisp JUNIT_DIR="$PWD/junit"
+  make test-clautolisp JUNIT_DIR=junit
+  #+end_src
+- Point à vérifier : =JUNIT_DIR= vaut un chemin POSIX (=/c/…=). La
+  commande =mkdir -p= (MSYS2) le comprend, mais clautolisp est un
+  exécutable Windows natif : la variable =AUTOLISP_TEST_JUNIT= lui
+  arrive-t-elle convertie en =C:/…= ? Si non, corriger dans
+  =makefiles/common.mk= (et =autolisp-introspection/Makefile=), par
+  exemple en passant le chemin par =cygpath -m= quand =uname -s= commence
+  par =MINGW= / =MSYS= — sans rien changer au comportement Linux / macOS.
+- Contrôler chaque =junit/*.xml= : bien formé (=xmllint --noout= si
+  disponible, sinon PowerShell =[xml](Get-Content -Raw …)=), comptes
+  cohérents avec la sortie console.
+
+** 2. BricsCAD et AutoCAD via alfe
+
+- Lancer =make -C autolisp-json test-bricscad JUNIT_DIR=…= puis
+  =test-autocad= (et les cibles racine =test-bricscad= / =test-autocad=).
+- Point à vérifier : la variable d'environnement =AUTOLISP_TEST_JUNIT=
+  atteint-elle le =(getenv …)= de la CAO lancée par alfe ? (Sous AutoCAD,
+  =getenv= lit aussi le registre.) Si non, solution de repli dans les
+  Makefiles : injecter la variable AutoLISP, par exemple
+  =-x '(setq *t:junit-file* "C:/…/x.xml")'= avant =$(TEST_MAIN)= —
+  attention au chemin Windows et à l'échappement dans une chaîne AutoLISP.
+- Encodage : écrire un test dont le nom contient des accents (=é=, =à=)
+  et regarder les octets du XML produit par chaque CAO. L'en-tête déclare
+  =UTF-8= ; si la CAO écrit en cp1252, le fichier est invalide pour GitLab.
+  Choisir une correction propre et la vérifier : par exemple échapper les
+  caractères non ASCII en références =&#N;= quand on tourne sous une CAO
+  (vérifier ce que rend =ascii= pour ces caractères), ou déclarer
+  l'encodage réellement utilisé. Ne pas dégrader le cas clautolisp, déjà
+  correct en UTF-8 en dialectes strict et lax.
+
+** 3. Jobs Windows de la CI
+
+Dans =.gitlab-ci.yml=, les jobs =windows:clautolisp=, =windows:bricscad=,
+=windows:autocad= bouclent en PowerShell sur les sous-projets
+(=make -C $d test-<moteur>=). Leur ajouter :
+- =JUNIT_DIR= absolu, avec des =/= (par ex.
+  =$j = "$env:CI_PROJECT_DIR/junit" -replace '\\','/'=), passé à chaque
+  =make= ;
+- =artifacts: when: always, reports: junit: junit/*.xml, expire_in: 30 days=
+  (même forme que les jobs macOS).
+Valider le YAML. Ne lancer un job de pipeline qu'après accord explicite.
+
+** 4. Validation finale
+
+- Suites complètes sous clautolisp, BricsCAD et AutoCAD, avec et sans
+  =JUNIT_DIR= : sans lui, aucun fichier écrit et sortie console identique à
+  avant.
+- Codes de sortie inchangés (un échec doit toujours faire échouer =make=).
+- Fins de ligne conservées (=file= / =git diff --stat=, pas de
+  conversion massive CRLF ↔ LF).
+- Mettre à jour la section « Rapport JUnit (GitLab) » du manuel si le
+  comportement Windows diffère (chemins, encodage sous CAO, jobs CI).
+
+* Contraintes
+
+- Ne pas modifier =VERSION=, =*.alpm= ni =autolisp-test/VERSION.TXT= :
+  les versions sont posées à la release.
+- Ne pas committer ni pousser sans accord ; proposer un message de commit
+  en français.
+- Toute divergence de comportement entre BricsCAD / AutoCAD et clautolisp
+  rencontrée en chemin (=getenv=, =open=, encodage, =MILLISECS=, =rtos=)
+  est à signaler comme un problème de clautolisp, pas à contourner en
+  silence.
+- Rendre compte à la fin : ce qui a été vérifié sur chaque moteur, ce qui
+  a été modifié, ce qui reste ouvert.
