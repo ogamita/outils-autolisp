@@ -558,6 +558,9 @@ collect:release:
   stage: collect
   image: debian:bookworm
   tags: [linux, amd64, docker]
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends make bzip2 zip
   rules:
     - if: '$CI_SERVER_HOST == "fabrik.sncf.fr"'
       when: never
@@ -577,9 +580,10 @@ collect:release:
     - "release:programs:windows:x86-64"
   script:
     - ls -l dist/
+    - make collect-artefacts
     - 'echo "--- artefacts de la release $CI_COMMIT_TAG ---"'
-    - 'ls dist/ | sort'
+    - 'ls dist/combined/ | sort'
   artifacts:
     name: "outils-autolisp-$CI_COMMIT_TAG-release"
-    paths: [dist/]
+    paths: [dist/combined/]
     expire_in: 90 days

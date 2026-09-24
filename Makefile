@@ -128,7 +128,7 @@ MANIFEST_ENV = MANIFEST_PROJECT=$(PROJECT) \
 	stage stage-libraries stage-programs stage-documentation \
 	install install-libraries install-programs install-documentation \
 	release release-libraries release-programs release-documentation \
-	release-sources uninstall check-versions \
+	release-sources collect-artefacts uninstall check-versions \
 	test test-ci test-clautolisp test-bricscad test-autocad benchmark \
 	docs-pdf clean
 
@@ -251,7 +251,13 @@ stage-programs:  ## Dispose bin/ sous $(STAGE)/programs/.
 	$(MAKE) build-programs
 	rm -rf $(STAGE)/programs
 	install -d $(STAGE)/programs/bin
-	install -m 755 dwg-identifier/bin/dwg-identify $(STAGE)/programs/bin/dwg-identify
+	@if [ -f dwg-identifier/bin/dwg-identify.exe ]; then \
+	  install -m 755 dwg-identifier/bin/dwg-identify.exe \
+	                 $(STAGE)/programs/bin/dwg-identify.exe ; \
+	else \
+	  install -m 755 dwg-identifier/bin/dwg-identify \
+	                 $(STAGE)/programs/bin/dwg-identify ; \
+	fi
 	@$(call stage-manifest,$(STAGE)/programs,programs)
 	@echo "staged: $(STAGE)/programs"
 
@@ -432,6 +438,74 @@ release-sources:  ## Empaquette les sources suivies par git (+ manifest-sources.
 	@rm -rf build/zip build/sources.tar
 	@echo "$(DIST)/$(PROJECT)-$(VERSION)-sources.tar.bz2"
 	@echo "$(DIST)/$(PROJECT)-$(VERSION)-sources.zip"
+
+# Phase de collecte CI : réunit les artefacts produits par les différentes
+# lanes dans un jeu de release unique. Comme dans clautolisp, l'archive
+# « all » est l'union DÉBALLÉE des artefacts et non une archive d'archives.
+#
+# Les phases portables ont toutes la forme de l'arbre installé et peuvent
+# donc être superposées directement. En revanche, chaque archive programs
+# installe bin/dwg-identify : les superposer écraserait toutes les cibles
+# sauf la dernière. Leurs exécutables sont donc rangés directement sous
+# libexec/<cible>/, ce qui conserve chaque exécutable sans prétendre produire
+# un préfixe installable multi-plate-forme (contrairement à clautolisp, qui
+# possède un dispatcher).
+COLLECT_IN  ?= $(DIST)
+COLLECT_OUT ?= $(DIST)/combined
+
+collect-artefacts:  ## Réunit les artefacts de COLLECT_IN dans une archive combinée sous COLLECT_OUT.
+	@set -e; ver="$(VERSION)"; in="$(COLLECT_IN)"; out="$(COLLECT_OUT)"; \
+	mkdir -p "$$out"; \
+	out=$$(cd "$$out" && pwd); in=$$(cd "$$in" && pwd); \
+	stage=$$(mktemp -d); trap 'rm -rf "$$stage"' EXIT HUP INT TERM; n=0; \
+	for t in "$$in"/$(PROJECT)-$$ver-libraries.tar.bz2 \
+	         "$$in"/$(PROJECT)-$$ver-documentation.tar.bz2 \
+	         "$$in"/$(PROJECT)-$$ver-sources.tar.bz2; do \
+	  [ -f "$$t" ] || continue; \
+	  echo "all: union $$(basename "$$t")"; \
+	  tar -C "$$stage" -xjf "$$t"; n=$$((n+1)); \
+	done; \
+	for t in "$$in"/$(PROJECT)-$$ver-programs-*.tar.bz2; do \
+	  [ -f "$$t" ] || continue; \
+	  name=$$(basename "$$t"); target=$${name#$(PROJECT)-$$ver-programs-}; \
+	  target=$${target%.tar.bz2}; \
+	  echo "all: union $$name as libexec/$$target/"; \
+	  mkdir -p "$$stage/libexec/$$target"; \
+	  rm -rf "$$stage/.collect-program"; mkdir "$$stage/.collect-program"; \
+	  tar -C "$$stage/.collect-program" -xjf "$$t"; \
+	  if [ -f "$$stage/.collect-program/bin/dwg-identify.exe" ]; then \
+	    install -m 755 "$$stage/.collect-program/bin/dwg-identify.exe" \
+	                   "$$stage/libexec/$$target/dwg-identify.exe"; \
+	  elif [ -f "$$stage/.collect-program/bin/dwg-identify" ]; then \
+	    install -m 755 "$$stage/.collect-program/bin/dwg-identify" \
+	                   "$$stage/libexec/$$target/dwg-identify"; \
+	  else \
+	    echo "ERROR: $$name ne contient ni bin/dwg-identify.exe ni bin/dwg-identify" >&2; \
+	    exit 1; \
+	  fi; \
+	  rm -rf "$$stage/.collect-program"; n=$$((n+1)); \
+	done; \
+	if [ "$$n" -eq 0 ]; then \
+	  echo "ERROR: aucun artefact à réunir dans $$in" >&2; exit 1; \
+	fi; \
+	command -v zip >/dev/null 2>&1 || { \
+	  echo "ERROR: zip est requis pour produire l'archive combinée Windows" >&2; exit 1; \
+	}; \
+	tar -C "$$stage" --exclude='._*' --owner=0 --group=0 --numeric-owner \
+	    -cjf "$$out/$(PROJECT)-$$ver-all.tar.bz2" .; \
+	( cd "$$stage" && zip -qr "$$out/$(PROJECT)-$$ver-all.zip" . -x '._*' '*/._*' ); \
+	echo "wrote $$out/$(PROJECT)-$$ver-all.tar.bz2 (union de $$n artefact(s))"; \
+	echo "wrote $$out/$(PROJECT)-$$ver-all.zip (même union, pour Windows)"; \
+	for f in "$$in"/$(PROJECT)-$$ver-*.tar.bz2 \
+	         "$$in"/$(PROJECT)-$$ver-*.zip; do \
+	  [ -f "$$f" ] || continue; \
+	  cp "$$f" "$$out"/; echo "artefact $$(basename "$$f")"; \
+	done; \
+	( cd "$$out" && ls -1 | grep -v '^manifest-release-assets.txt$$' ) \
+	  > "$$out/manifest-release-assets.txt"; \
+	echo "wrote $$out/manifest-release-assets.txt"; \
+	trap - EXIT HUP INT TERM; rm -rf "$$stage"; \
+	echo "--- jeu de release combiné ($$out) ---"; ls -l "$$out"
 
 check-versions:  ## Vérifie les invariants de version-rules.md sur les refs git.
 	sh scripts/check-versions.sh
