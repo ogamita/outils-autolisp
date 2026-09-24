@@ -55,9 +55,16 @@ BENCH_OUTFILE ?= $(CURDIR)/benchmark.txt
 
 JUNIT_DIR ?=
 
-# $(call junit-env,<moteur>) : préfixe de commande shell qui crée JUNIT_DIR et
-# exporte AUTOLISP_TEST_JUNIT ; vide si JUNIT_DIR n'est pas défini.
-junit-env = $(if $(JUNIT_DIR),mkdir -p "$(JUNIT_DIR)" && AUTOLISP_TEST_JUNIT="$(JUNIT_DIR)/$(TEST_SUITE)-$(1).xml")
+# $(call junit-env,<moteur>) : préfixe de commande shell qui expose le dossier
+# du sous-projet et, si demandé, crée JUNIT_DIR puis exporte le rapport JUnit.
+# AUTOLISP_TEST_PROJECT_DIR permet aux tests exécutés par un CAD natif de
+# retrouver leurs fixtures sans dépendre du répertoire courant du processus.
+junit-env = $(if $(JUNIT_DIR),mkdir -p "$(JUNIT_DIR)" && )AUTOLISP_TEST_PROJECT_DIR="$(CURDIR)" $(if $(JUNIT_DIR),AUTOLISP_TEST_JUNIT="$(JUNIT_DIR)/$(TEST_SUITE)-$(1).xml")
+
+# accoreconsole résout les -l relatifs depuis son propre répertoire et alfe
+# 2.2.80 ne signale pas l'échec du LOAD. Les chemins absolus sont portables
+# aussi pour BricsCAD et évitent ce faux succès AutoCAD.
+CAD_TEST_SOURCES = $(subst -l ,-l $(CURDIR)/,$(TEST_SOURCES))
 
 .PHONY: test-ci test test-clautolisp test-bricscad test-autocad benchmark
 
@@ -66,13 +73,13 @@ test-ci: test
 test: $(TEST_TARGETS)
 
 test-clautolisp:
-	$(call junit-env,clautolisp) $(CLAUTOLISP) --dialect $(CLAUTOLISP_DIALECT) -q $(TEST_SOURCES) $(TEST_MAIN) -x '(quit)'
+	$(call junit-env,clautolisp) $(CLAUTOLISP) -norc --dialect $(CLAUTOLISP_DIALECT) -q $(TEST_SOURCES) $(TEST_MAIN) -x '(quit)'
 
 test-bricscad:
-	$(call junit-env,bricscad) $(ALFE) -norc --bricscad --mode batch $(TEST_SOURCES) $(TEST_MAIN) -q
+	$(call junit-env,bricscad) $(ALFE) -norc --bricscad --mode batch -Esource UTF-8 $(CAD_TEST_SOURCES) $(TEST_MAIN) -q
 
 test-autocad:
-	$(call junit-env,autocad) $(ALFE) -norc --autocad --mode batch $(TEST_SOURCES) $(TEST_MAIN) -q
+	$(call junit-env,autocad) $(ALFE) -norc --autocad --mode batch -Esource UTF-8 $(CAD_TEST_SOURCES) $(TEST_MAIN) -q
 
 ifeq ($(BACKEND),clautolisp)
 BENCH_CMD = $(CLAUTOLISP) --dialect $(BENCH_DIALECT) -q $(BENCH_SOURCES) -x '(C:BENCH)' -x '(quit)'

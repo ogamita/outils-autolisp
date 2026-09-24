@@ -2,6 +2,22 @@
 #+LANGUAGE: fr
 #+OPTIONS: toc:2 num:nil
 
+* 1.9.4
+
+Corrections de portabilité et de validation sous les trois moteurs AutoLISP.
+
+- Les suites peuvent produire des rapports JUnit sous clautolisp,
+  BricsCAD et AutoCAD. Les jobs Windows conservent ces rapports comme
+  artefacts GitLab, y compris en cas d'échec.
+- Les lancements de tests utilisent des chemins absolus, un encodage de
+  source explicite et un environnement vierge. Les rapports XML restent
+  strictement valides quelle que soit la page de codes employée par la CAO.
+- La référence AutoLISP générée est maintenant construite par morceaux.
+  Elle contourne à la fois la limite de taille des formes d'AutoCAD et le
+  temps de chargement pathologique des grandes formes sous BricsCAD.
+- Les tests JSON et formatter ne dépendent plus du répertoire courant ni
+  du mode Unicode d'AutoCAD.
+
 * 1.9.3
 
 Corrections du manifeste de provenance. Aucun changement visible par

@@ -15,6 +15,7 @@
 ;; Résultats accumulés pour le rapport JUnit : liste, en ordre inverse, de
 ;; (NOM-DE-SUITE DURÉE-EN-SECONDES RÉSULTATS). Voir « Rapport JUnit » plus bas.
 (setq *t:junit-suites* nil)
+(setq *t:junit-file* nil)
 
 ;; AutoLISP has no real keywords: :foo is just a symbol named ":FOO" that
 ;; evaluates to NIL by default on every engine (BricsCAD, AutoCAD,
@@ -293,10 +294,10 @@
 ;; console est inchangée. Aucun appel de clôture n'est nécessaire : le
 ;; fichier est complet après chaque suite.
 ;;
-;; Les chaînes sont écrites telles quelles (seuls les caractères spéciaux XML
-;; et les caractères de contrôle sont échappés) et l'en-tête déclare UTF-8,
-;; l'encodage des fichiers écrits par clautolisp. Sur une CAO qui écrit dans
-;; une page de codes, seuls les caractères non ASCII seraient mal décodés.
+;; Le rapport ne contient que des octets ASCII : outre les caractères spéciaux
+;; XML et les caractères de contrôle, les caractères non ASCII sont écrits sous
+;; forme de références numériques. L'en-tête UTF-8 reste donc exact aussi bien
+;; avec clautolisp que sous une CAO qui écrit dans une page de codes locale.
 
 (defun t:junit-path (/ v)
   (setq v (getenv "AUTOLISP_TEST_JUNIT"))
@@ -330,6 +331,10 @@
                     ((= code 13) "&#13;")
                     ;; autres caractères de contrôle : interdits en XML 1.0.
                     ((< code 32) "?")
+                    ;; Les CAO Windows peuvent écrire en page de codes locale
+                    ;; malgré l'en-tête UTF-8. Les références numériques gardent
+                    ;; le rapport ASCII et donc valide dans tous les moteurs.
+                    ((> code 127) (strcat "&#" (itoa code) ";"))
                     (t c))))
     (setq i (1+ i)))
   out)

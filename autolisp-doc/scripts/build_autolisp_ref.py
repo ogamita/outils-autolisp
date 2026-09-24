@@ -25,6 +25,8 @@ SCRIPT_PATH = Path(__file__).resolve()
 PROJECT_ROOT = SCRIPT_PATH.parents[2]
 DEFAULT_OUTPUT = PROJECT_ROOT / "autolisp-doc" / "src" / "autolisp-ref.lsp"
 SOURCE_LABEL_RE = re.compile(r"^(?P<name>.+?) \((?P<source>AutoLISP(?:/[^)]+)?)\)$")
+REFERENCE_FORM_MAX_CHARS = 1_800
+REFERENCE_STRING_CHUNK_MAX_CHARS = 900
 
 
 def fetch(url: str, cache_dir: Path) -> str:
@@ -444,28 +446,103 @@ def emit_arguments(arguments: list[tuple[str, str]]) -> str:
     return "(" + "\n                     ".join(entries) + ")"
 
 
-def emit_entry(name: str, data: dict[str, object]) -> str:
-    feature_groups = sorted(set(data.get("feature-groups", [])))
-    alphabetic_group = data.get("alphabetic-group")
-    lines = [
-        f"({lisp_string(name)} .",
-        "    ((name . " + emit_string_or_nil(data.get("name")) + ")",
-        "     (title . " + emit_string_or_nil(data.get("title")) + ")",
-        "     (summary . " + emit_string_or_nil(data.get("summary")) + ")",
-        "     (source-kind . " + emit_string_or_nil(data.get("source-kind")) + ")",
-        "     (alphabetic-group . " + emit_string_or_nil(alphabetic_group) + ")",
-        "     (feature-groups . " + emit_string_list(feature_groups) + ")",
-        "     (supported-platforms . " + emit_string_or_nil(data.get("supported-platforms")) + ")",
-        "     (signature . " + emit_string_or_nil(data.get("signature")) + ")",
-        "     (arguments . " + emit_arguments(data.get("arguments", [])) + ")",
-        "     (return-values . " + emit_string_or_nil(data.get("return-values")) + ")",
-        "     (release-information . " + emit_string_or_nil(data.get("release-information")) + ")",
-        "     (history . " + emit_string_or_nil(data.get("history")) + ")",
-        "     (examples . " + emit_string_or_nil(data.get("examples")) + ")",
-        "     (url . " + emit_string_or_nil(data.get("url")) + ")",
-        "     (guid . " + emit_string_or_nil(data.get("guid")) + ")))",
+def entry_fields(data: dict[str, object]) -> list[tuple[str, object]]:
+    return [
+        ("name", data.get("name")),
+        ("title", data.get("title")),
+        ("summary", data.get("summary")),
+        ("source-kind", data.get("source-kind")),
+        ("alphabetic-group", data.get("alphabetic-group")),
+        ("feature-groups", sorted(set(data.get("feature-groups", [])))),
+        ("supported-platforms", data.get("supported-platforms")),
+        ("signature", data.get("signature")),
+        ("arguments", data.get("arguments", [])),
+        ("return-values", data.get("return-values")),
+        ("release-information", data.get("release-information")),
+        ("history", data.get("history")),
+        ("examples", data.get("examples")),
+        ("url", data.get("url")),
+        ("guid", data.get("guid")),
     ]
+
+
+def emit_entry(name: str, data: dict[str, object]) -> str:
+    lines = [f"({lisp_string(name)} ."]
+    for index, (field, value) in enumerate(entry_fields(data)):
+        indent = "    ((" if index == 0 else "     ("
+        if field == "feature-groups":
+            emitted = emit_string_list(value)
+        elif field == "arguments":
+            emitted = emit_arguments(value)
+        else:
+            emitted = emit_string_or_nil(value)
+        suffix = ")))" if index == len(entry_fields(data)) - 1 else ")"
+        lines.append(indent + field + " . " + emitted + suffix)
     return "\n".join(lines)
+
+
+def lisp_string_chunks(text: str) -> list[str]:
+    chunks: list[str] = []
+    chunk: list[str] = []
+    chunk_chars = 0
+    for char in text:
+        if char == "\\":
+            escaped = "\\\\"
+        elif char == '"':
+            escaped = '\\"'
+        elif char == "\n":
+            escaped = "\\n"
+        else:
+            escaped = char
+        if chunk and chunk_chars + len(escaped) > REFERENCE_STRING_CHUNK_MAX_CHARS:
+            chunks.append('"' + "".join(chunk) + '"')
+            chunk = []
+            chunk_chars = 0
+        chunk.append(escaped)
+        chunk_chars += len(escaped)
+    chunks.append('"' + "".join(chunk) + '"')
+    return chunks
+
+
+def emit_string_builder(variable: str, text: str) -> list[str]:
+    chunks = lisp_string_chunks(text)
+    forms = [f"(setq {variable} {chunks[0]})"]
+    for chunk in chunks[1:]:
+        forms.append(f"(setq {variable} (strcat {variable} {chunk}))")
+    return forms
+
+
+def emit_incremental_entry(name: str, data: dict[str, object]) -> list[str]:
+    entry_var = "*autolisp-reference-entry*"
+    value_var = "*autolisp-reference-value*"
+    string_var = "*autolisp-reference-string*"
+    forms = [f"(setq {entry_var} nil)"]
+
+    for field, value in reversed(entry_fields(data)):
+        if field == "feature-groups":
+            expression = "nil" if not value else "'" + emit_string_list(value)
+            forms.append(f"(setq {value_var} {expression})")
+        elif field == "arguments":
+            forms.append(f"(setq {value_var} nil)")
+            for argument_name, description in reversed(value):
+                forms.extend(emit_string_builder(string_var, description))
+                forms.append(
+                    f"(setq {value_var} (cons (cons {lisp_string(argument_name)} {string_var}) {value_var}))"
+                )
+        elif value:
+            forms.extend(emit_string_builder(value_var, str(value)))
+        else:
+            forms.append(f"(setq {value_var} nil)")
+        forms.append(
+            f"(setq {entry_var} (cons (cons '{field} {value_var}) {entry_var}))"
+        )
+
+    forms.append(
+        "(setq *autolisp-reference-parts* "
+        f"(cons (list (cons {lisp_string(name)} {entry_var})) "
+        "*autolisp-reference-parts*))"
+    )
+    return forms
 
 
 def build_reference(cache_dir: Path) -> dict[str, dict[str, object]]:
@@ -549,14 +626,46 @@ def write_lisp(reference: dict[str, dict[str, object]], output_path: Path) -> No
         ";;; Source: https://help.autodesk.com/view/OARX/2023/ENU/?guid=GUID-4CEE5072-8817-4920-8A2D-7060F5E16547",
         ";;; Generated by autolisp-doc/scripts/build_autolisp_ref.py",
         "",
-        "(setq *autolisp-reference*",
-        "  '(",
+        "(setq *autolisp-reference-parts* nil)",
     ]
-    body = []
-    for name in sorted(reference, key=lambda item: item.lower()):
-        body.append("    " + emit_entry(name, reference[name]).replace("\n", "\n    "))
+    body: list[str] = []
+    names = sorted(reference, key=lambda item: item.lower())
+    for name in names:
+        entry = emit_entry(name, reference[name])
+        direct_form = "\n".join(
+            [
+                "(setq *autolisp-reference-parts*",
+                "  (cons",
+                "    '(" + entry.replace("\n", "\n      ") + ")",
+                "    *autolisp-reference-parts*))",
+            ]
+        )
+        forms = (
+            [direct_form]
+            if len(direct_form) <= REFERENCE_FORM_MAX_CHARS
+            else emit_incremental_entry(name, reference[name])
+        )
+        for form in forms:
+            if len(form) > REFERENCE_FORM_MAX_CHARS:
+                raise ValueError(
+                    f"generated form for {name!r} has {len(form)} characters"
+                )
+            body.extend(["", form])
     footer = [
-        "  ))",
+        "",
+        "(defun autolisp-build-reference ( / entry part parts result)",
+        "  (setq parts (reverse *autolisp-reference-parts*))",
+        "  (setq *autolisp-reference-parts* nil)",
+        "  (setq *autolisp-reference-entry* nil)",
+        "  (setq *autolisp-reference-value* nil)",
+        "  (setq *autolisp-reference-string* nil)",
+        "  (setq result nil)",
+        "  (foreach part parts",
+        "    (foreach entry part",
+        "      (setq result (cons entry result))))",
+        "  (reverse result))",
+        "",
+        "(setq *autolisp-reference* (autolisp-build-reference))",
         "",
         "(princ)",
         "",

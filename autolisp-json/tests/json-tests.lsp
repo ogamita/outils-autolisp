@@ -38,7 +38,7 @@
       (is-equal "a\\b" (aj-decode "\"a\\\\b\"") "antislash échappé")
       (is-equal (chr 10) (aj-decode "\"\\n\"") "saut de ligne")
       (is-equal (chr 9)  (aj-decode "\"\\t\"") "tabulation")
-      (is-equal "é" (aj-decode "\"\\u00e9\"") "échappement unicode BMP"))))
+      (is-equal (chr 233) (aj-decode "\"\\u00e9\"") "échappement unicode BMP"))))
 
 ;;; ------------------------------------------------------------------
 ;;; Décodage des structures
@@ -176,9 +176,11 @@
   (function
     (lambda (/ *aj-escape-non-ascii*)
       (setq *aj-escape-non-ascii* T)
-      (is-equal "\"\\u00e9\"" (aj-encode "é") "é échappé")
+      (is-equal "\"\\u00e9\"" (aj-encode (chr 233)) "é échappé")
       (setq *aj-escape-non-ascii* nil)
-      (is-equal "\"é\"" (aj-encode "é") "é brut"))))
+      (is-equal (strcat "\"" (chr 233) "\"")
+                (aj-encode (chr 233))
+                "é brut"))))
 
 ;;; ------------------------------------------------------------------
 ;;; Aller-retour (round-trip)

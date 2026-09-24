@@ -5,6 +5,12 @@
 (defsuite "autolisp-formatter")
 (in-suite "autolisp-formatter")
 
+(defun ft-test-path (path / root)
+  (setq root (getenv "AUTOLISP_TEST_PROJECT_DIR"))
+  (if (and root (/= root ""))
+    (strcat root "/" path)
+    path))
+
 (defun ft-opt (items key)
   (fmt-option (fmt-build-options items) key))
 
@@ -87,19 +93,19 @@
   (function
     (lambda ()
       (is-equal 'CL
-                (ft-opt (list "--config" "tests/fixtures/config-liste.lsp")
+                (ft-opt (list "--config" (ft-test-path "tests/fixtures/config-liste.lsp"))
                         "paren-style")
                 "style lu dans la liste")
       (is-equal 'DOWNCASE
-                (ft-opt (list "--config" "tests/fixtures/config-liste.lsp")
+                (ft-opt (list "--config" (ft-test-path "tests/fixtures/config-liste.lsp"))
                         "symbol-case")
                 "casse lue dans la liste")
       (is-equal 40
-                (ft-opt (list "--config" "tests/fixtures/config-liste.lsp")
+                (ft-opt (list "--config" (ft-test-path "tests/fixtures/config-liste.lsp"))
                         "inline-comment-column")
                 "colonne lue dans la liste")
       (is-equal (list "entree.lsp")
-                (ft-opt (list "--config" "tests/fixtures/config-liste.lsp") "files")
+                (ft-opt (list "--config" (ft-test-path "tests/fixtures/config-liste.lsp")) "files")
                 "fichiers lus dans la liste"))))
 
 (deftest
@@ -107,11 +113,11 @@
   (function
     (lambda ()
       (is-equal 'NAIL
-                (ft-opt (list "--config" "tests/fixtures/config-plat.lsp")
+                (ft-opt (list "--config" (ft-test-path "tests/fixtures/config-plat.lsp"))
                         "paren-style")
                 "style lu a plat")
       (is-equal 'UPCASE
-                (ft-opt (list "--config" "tests/fixtures/config-plat.lsp")
+                (ft-opt (list "--config" (ft-test-path "tests/fixtures/config-plat.lsp"))
                         "symbol-case")
                 "casse lue a plat"))))
 
@@ -120,12 +126,12 @@
   (function
     (lambda ()
       (is-equal 'NAIL
-                (ft-opt (list "--config" "tests/fixtures/config-liste.lsp"
+                (ft-opt (list "--config" (ft-test-path "tests/fixtures/config-liste.lsp")
                               "--style" "nail")
                         "paren-style")
                 "--style nail l'emporte sur :style-parentheses :cl")
       (is-equal 'DOWNCASE
-                (ft-opt (list "--config" "tests/fixtures/config-liste.lsp"
+                (ft-opt (list "--config" (ft-test-path "tests/fixtures/config-liste.lsp")
                               "--style" "nail")
                         "symbol-case")
                 "les autres options du fichier restent actives"))))
@@ -138,7 +144,7 @@
                 (fmt-format-string
                   "(SETQ A 1)\n"
                   (fmt-build-options
-                    (list "--config" "tests/fixtures/config-liste.lsp")))
+                    (list "--config" (ft-test-path "tests/fixtures/config-liste.lsp"))))
                 "la casse du fichier de configuration s'applique"))))
 
 (princ)

@@ -25,6 +25,7 @@ endif
 # Rapport JUnit facultatif : JUNIT_DIR=<répertoire absolu> (cf. makefiles/common.mk).
 JUNIT_DIR ?=
 junit-env = $(if $(JUNIT_DIR),mkdir -p "$(JUNIT_DIR)" && AUTOLISP_TEST_JUNIT="$(JUNIT_DIR)/$(TEST_SUITE)-$(1).xml")
+CAD_TEST_SOURCES = $(subst -l ,-l $(CURDIR)/,$(TEST_SOURCES))
 
 .PHONY: test-ci test test-clautolisp test-bricscad test-autocad docs-pdf clean
 
@@ -43,14 +44,14 @@ test-clautolisp:
 test-bricscad:
 	$(call junit-env,bricscad) EI_CAD_TESTS=1 \
 	$(ALFE) -norc --bricscad --mode batch --timeout 120 \
-		-e UTF-8 -E $(CAD_IO_ENCODING) \
-		$(TEST_SOURCES) $(TEST_MAIN) -q
+		-Efile $(CAD_IO_ENCODING) -Esource UTF-8 \
+		$(CAD_TEST_SOURCES) $(TEST_MAIN) -q
 
 test-autocad:
 	$(call junit-env,autocad) EI_CAD_TESTS=1 \
 	$(ALFE) -norc --autocad --mode batch --timeout 120 \
-		-e UTF-8 -E $(CAD_IO_ENCODING) \
-		$(TEST_SOURCES) $(TEST_MAIN) -q
+		-Efile $(CAD_IO_ENCODING) -Esource UTF-8 \
+		$(CAD_TEST_SOURCES) $(TEST_MAIN) -q
 
 docs-pdf:
 	$(MAKE) -C docs pdf

@@ -21,14 +21,15 @@
   ;; les chemins (le dialecte strict signale « .. » comme non portable
   ;; entre POSIX et Windows). Pour passer le formateur sur un corpus
   ;; d'équipe plus large, utiliser scripts/autolisp-format --check.
-  (list "src/fmt-util.lsp"
-        "src/fmt-scanner.lsp"
-        "src/fmt-parser.lsp"
-        "src/fmt-options.lsp"
-        "src/fmt-printer.lsp"
-        "src/fmt-main.lsp"
-        "tests/printer-tests.lsp"
-        "tests/options-tests.lsp"))
+  (mapcar 'ft-test-path
+          (list "src/fmt-util.lsp"
+                "src/fmt-scanner.lsp"
+                "src/fmt-parser.lsp"
+                "src/fmt-options.lsp"
+                "src/fmt-printer.lsp"
+                "src/fmt-main.lsp"
+                "tests/printer-tests.lsp"
+                "tests/options-tests.lsp")))
 
 ;; Tokens de code seuls : les commentaires sont comparés à part, leur texte
 ;; pouvant perdre des blancs de fin.

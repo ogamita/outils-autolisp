@@ -239,13 +239,22 @@ make -C autolisp-json test-clautolisp JUNIT_DIR=$PWD/junit
 #+end_src
 
 La CI GitLab (=.gitlab-ci.yml=) le fait pour les jobs clautolisp Linux et
-macOS et BricsCAD macOS, et déclare =junit/*.xml= en
-=artifacts:reports:junit=.
+macOS, BricsCAD macOS, ainsi que pour les trois moteurs Windows, et
+déclare =junit/*.xml= en =artifacts:reports:junit=.
 
-L'en-tête XML déclare UTF-8, l'encodage des fichiers écrits par
-clautolisp. Sur une CAO qui écrit ses fichiers dans une page de codes,
-seuls les caractères non ASCII des noms et messages seraient mal
-décodés.
+Sous MSYS2, le chemin POSIX de =JUNIT_DIR= est transmis au processus
+Windows natif sous la forme =C:/...= ; =AUTOLISP_TEST_JUNIT= atteint bien
+=getenv= sous clautolisp, BricsCAD et AutoCAD. Les fichiers chargés par
+=alfe= sont nommés par des chemins absolus, car =accoreconsole= résout
+autrement les chemins relatifs depuis son propre répertoire.
+
+Le rapport ne contient que des octets ASCII : les caractères non ASCII
+des noms et messages sont écrits sous forme de références numériques.
+L'en-tête UTF-8 est ainsi exact même lorsqu'une CAO écrit normalement en
+Windows-1252. Cela ne change pas l'encodage de lecture des sources : sous
+AutoCAD, une source UTF-8 contenant directement des accents exige
+=LISPSYS=1= ou =LISPSYS=2= et un redémarrage de la CAO ; avec =LISPSYS=0=,
+AutoCAD la lit en Windows-1252.
 
 * Assertions d'entités
 

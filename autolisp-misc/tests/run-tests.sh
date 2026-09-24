@@ -33,7 +33,7 @@ run_one() { # name  extra_load_args  script
   echo "autolisp-misc/$name RUN (dialect=$DIALECT)"
   set +e
   # shellcheck disable=SC2086
-  "$CLAUTOLISP" --dialect "$DIALECT" -q $extra "$script" \
+  "$CLAUTOLISP" -norc --dialect "$DIALECT" -q $extra "$script" \
     >"$tmpdir/$name.out" 2>"$tmpdir/$name.err"
   local rc=$?
   set -e
