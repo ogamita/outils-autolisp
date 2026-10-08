@@ -2,6 +2,17 @@
 #+LANGUAGE: fr
 #+OPTIONS: toc:2 num:nil
 
+* 1.9.6
+
+Correction de la cohérence des versions de publication.
+
+- La version racine, les douze systèmes ALPM et les fichiers VERSION.TXT
+  d'autolisp-introspection et d'autolisp-test portent tous la version 1.9.6.
+- La règle locale impose leur synchronisation dans la même modification.
+- La cible =make check-version-coherence= détecte tout écart avant la
+  construction ou le staging des bibliothèques et avant les releases.
+- Les versions propres aux programmes restent indépendantes.
+
 * 1.9.4
 
 Corrections de portabilité et de validation sous les trois moteurs AutoLISP.
