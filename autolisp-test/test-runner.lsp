@@ -1138,7 +1138,7 @@
        msg)))
   nil)
 
-(defun C:RUN-NAMED (suite-name test-name / cell tests cur match fn)
+(defun C:RUN-NAMED (suite-name test-name / cell tests cur match fn *error*)
   (setq cell (assoc suite-name *t:suites*))
   (cond
     ((null cell)
@@ -1229,7 +1229,7 @@
   Exécute toutes les suites, écrit le bilan global et le statut. Un échec,
   une erreur, une interruption ou un échec de chargement rend le statut non nul.
 |;
-(defun C:MAIN (/ total ok fail err abort r load-failures)
+(defun C:MAIN (/ total ok fail err abort r load-failures *error*)
   (setq *error*
     (lambda (msg)
       (if (and msg (wcmatch (strcase msg) "*QUIT*EXIT*ABORT*"))
