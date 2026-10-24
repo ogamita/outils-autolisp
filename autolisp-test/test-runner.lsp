@@ -33,8 +33,9 @@
 ;;
 ;; Chargement : ce fichier doit être chargé par un (load ...) placé au
 ;; premier niveau d'un fichier lui-même chargé par alfe, pour que le lecteur
-;; d'alfe normalise ses formes (sous AutoCAD, (princ) sans argument échoue
-;; sinon). Il charge test-framework.lsp et vlisp-project.lsp de la même façon.
+;; d'alfe normalise ses formes. Les sorties silencieuses passent explicitement
+;; une chaîne vide, compatible avec les sorties ALFE à un argument. Il charge
+;; test-framework.lsp et vlisp-project.lsp de la même façon.
 ;; Il n'est pas listé dans autolisp-test.alpm : il redéfinit C:MAIN et une
 ;; partie du runner de test-framework.lsp.
 ;;
@@ -783,8 +784,10 @@
      (t:trace "t:call-thunk/call" "lambda")
      (eval (list fn)))
     ((not (listp fn))
+     ;; FUNCTION peut produire un objet natif (BricsCAD), pas un symbole.
+     ;; APPLY accepte cet objet ; EVAL ne peut pas le placer en tête de forme.
      (t:trace "t:call-thunk/call" fn)
-     (eval (list fn)))
+     (apply fn nil))
     (t
      (t:trace "t:call-thunk/call" "apply")
      (apply fn nil))))
@@ -1061,7 +1064,7 @@
     (strcat "           === TU-BT-END "   tag " ==="))
   (tu:report-line banner)
   (tu:report-line "")
-  (princ))
+  (princ ""))
 
 (defun tu:tests-error-handler (msg)
   ;; *error* installé par t:run-test autour de chaque thunk de test. La pile
@@ -1075,7 +1078,7 @@
       (if (boundp '*tu:current-test*)  *tu:current-test*  "")
       "error"
       (1+ *tu:error-counter*)))
-  (princ))
+  (princ ""))
 
 (defun tu:logfile-on (/ wd prev)
   ;; Active LOGFILE et renvoie l'ancienne valeur de LOGFILEMODE (0 ou 1).
@@ -1095,7 +1098,7 @@
   (vl-catch-all-apply 'vl-bt nil)
   (princ (strcat "\n=== TU-BT-END "   tag " ===\n"))
   (tu:logfile-restore prev)
-  (princ))
+  (princ ""))
 
 ;; --- Points d'entrée ---------------------------------------------------------
 
@@ -1135,7 +1138,7 @@
        msg)))
   nil)
 
-(defun C:RUN-NAMED (suite-name test-name / cell tests cur match fn)
+(defun C:RUN-NAMED (suite-name test-name / cell tests cur match fn *error*)
   (setq cell (assoc suite-name *t:suites*))
   (cond
     ((null cell)
@@ -1163,11 +1166,11 @@
         (setq *t:throw-value* nil)
         (setq *tu:total-count* (1+ *tu:total-count*))
         (setq *error* tu:trap-error)
-        (eval (list (t:unwrap-thunk fn)))
+        (t:call-thunk fn)
         ;; Atteint seulement si le test est passé sans erreur.
         (setq *tu:ok-count* (1+ *tu:ok-count*))
         (t:emit-out (strcat "OK    [" suite-name "] " test-name))))))
-  (princ))
+  (princ ""))
 
 ;| @Global
   Formate un bilan avec les cinq compteurs.
@@ -1220,21 +1223,21 @@
   (if (or (> *tu:fail-count* 0) (> *tu:error-count* 0))
     (tu:set-status 1)
     (tu:set-status 0))
-  (princ))
+  (princ ""))
 
 ;| @Global
   Exécute toutes les suites, écrit le bilan global et le statut. Un échec,
   une erreur, une interruption ou un échec de chargement rend le statut non nul.
 |;
-(defun C:MAIN (/ total ok fail err abort r load-failures)
+(defun C:MAIN (/ total ok fail err abort r load-failures *error*)
   (setq *error*
     (lambda (msg)
       (if (and msg (wcmatch (strcase msg) "*QUIT*EXIT*ABORT*"))
-        (princ)
+        (princ "")
         (progn
           (tu:report-error "(framework)" "*error*" "error" msg)
           (tu:set-status 1)))
-      (princ)))
+      (princ "")))
 
   (setq r (vl-catch-all-apply 'run-all nil))
   (if (vl-catch-all-error-p r)
@@ -1253,6 +1256,6 @@
   (if (or (vl-catch-all-error-p r) (> (+ fail err abort) 0))
     (tu:set-status 1)
     (tu:set-status 0))
-  (princ))
+  (princ ""))
 
-(princ)
+(princ "")
