@@ -4,7 +4,7 @@
 ;;;;        (alpm-load-system "autolisp-geometry")
 (alpm-define-system 1
  '(name        "autolisp-geometry"
-   version     "1.9.4"
+   version     "1.9.6"
    description "4x4 transformation matrices for AutoLISP (construction, ActiveX conversion, composition, decomposition)."
    encoding    "utf-8"
    pathname    "src"
