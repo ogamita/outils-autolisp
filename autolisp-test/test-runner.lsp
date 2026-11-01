@@ -1231,14 +1231,16 @@
           (tu:summary-line total ok fail err abort)))
 
 ;| @Global
-  Signale chaque échec de chargement mémorisé comme une erreur.
+  Signale chaque échec de chargement mémorisé comme une erreur, aussi en JUnit.
   @Returns int: nombre d'échecs de chargement
 |;
 (defun tu:report-load-failures (/ failure)
   (foreach failure (reverse *tu:load-failures*)
     (t:emit-out (strcat "ERROR [(chargement)] " (car failure)
                         " -- " (cdr failure)))
-    (tu:report-error "(chargement)" (car failure) "error" (cdr failure)))
+    (tu:report-error "(chargement)" (car failure) "error" (cdr failure))
+    (t:junit-record "(chargement)"
+      (list (list :error "(chargement)" (car failure) (cdr failure) 0.0)) 0.0))
   (length *tu:load-failures*))
 
 ;| @Global
