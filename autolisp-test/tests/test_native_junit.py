@@ -5,13 +5,13 @@ Exécution : python3 autolisp-test/tests/test_native_junit.py
 Le moteur clautolisp doit être disponible dans PATH. Les fichiers sont temporaires.
 """
 from pathlib import Path
-import subprocess, tempfile
+import subprocess, tempfile, shutil, os
 r=Path(__file__).resolve().parents[2].as_posix()
 with tempfile.TemporaryDirectory() as t:
  t=Path(t).resolve().as_posix()
  for mode in ('ok','missing-suite','missing-test','failure-handler','error-handler'):
   report=Path(t)/f'{mode}.xml'
-  args=['clautolisp','-norc','--host','cador','--dialect','bricscad-v26','-x',f'(setq *tu:repo-dir* "{t}" *outils-autolisp-root* "{r}")','-l',r+'/autolisp-test/test-runner.lsp','-x',f'(setenv "AUTOLISP_TEST_JUNIT" "{report.as_posix()}")','-x',"(setq *t:suites* (list (list \"native\" (list \"reussi\" '(lambda () T)))))"]
+  args=[os.environ.get('CLAUTOLISP_TEST_BIN') or shutil.which('clautolisp') or 'clautolisp','-norc','--host','cador','--dialect','bricscad-v26','-x',f'(setq *tu:repo-dir* "{t}" *outils-autolisp-root* "{r}")','-l',r+'/autolisp-test/test-runner.lsp','-x',f'(setenv "AUTOLISP_TEST_JUNIT" "{report.as_posix()}")','-x',"(setq *t:suites* (list (list \"native\" (list \"reussi\" '(lambda () T)))))"]
   if mode=='ok':expr='(C:RUN-NAMED "native" "reussi")'
   elif mode=='missing-suite':expr='(C:RUN-NAMED "absente" "reussi")'
   elif mode=='missing-test':expr='(C:RUN-NAMED "native" "absent")'
