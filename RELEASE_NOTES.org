@@ -2,6 +2,21 @@
 #+LANGUAGE: fr
 #+OPTIONS: toc:2 num:nil
 
+* 1.9.8
+
+Correction des résultats JUnit des tests lancés dans AutoCAD et BricsCAD.
+
+- Les tests natifs exécutés par =C:RUN-NAMED= enregistrent désormais leur
+  résultat, leur durée et les échecs dans le rapport JUnit demandé.
+- Une suite ou un test introuvable, une erreur du moteur ou une erreur de
+  chargement sont représentés par une erreur JUnit, pour éviter les
+  rapports incomplets donnant une impression de réussite.
+- La régression couvre les succès, assertions, erreurs et chargements
+  défaillants ; elle fonctionne aussi sous MSYS sur Windows.
+- Les projets consommateurs transmettent explicitement le chemin du
+  rapport à la CAO et vérifient sa présence et sa validité avec le harnais
+  partagé de run-forest-run.
+
 * 1.9.6
 
 Correction de la cohérence des versions de publication.
