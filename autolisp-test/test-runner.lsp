@@ -1104,6 +1104,24 @@
 (setq *tu:fail-count*  0)
 (setq *tu:error-count* 0)
 
+;| @Global
+  Enregistre le résultat JUnit d'un test exécuté par le script natif.
+  @Param status symbol: :ok, :fail ou :error
+  @Param suite string: nom de la suite
+  @Param name string: nom du test
+  @Param message string | nil: diagnostic
+  @Returns nil
+|;
+(defun tu:junit-native-result (status suite name message / elapsed)
+  (setq elapsed (t:elapsed *tu:junit-start*))
+  (t:junit-record suite (list (list status suite name message elapsed)) elapsed)
+  nil)
+
+;| @Global
+  Comptabilise et publie une erreur du test natif courant, y compris en JUnit.
+  @Param msg string: message fourni par le moteur AutoLISP
+  @Returns nil
+|;
 (defun tu:trap-error (msg)
   ;; *error* invoqué par AutoLISP au site de l'erreur, hors
   ;; vl-catch-all-apply : la pile est intacte, vl-bt produit donc un vrai
@@ -1133,16 +1151,28 @@
        (if (boundp '*tu:current-test*) *tu:current-test* "")
        "error"
        msg)))
+  (tu:junit-native-result
+    (if (eq *t:throw-tag* 'fail) :fail :error)
+    *tu:current-suite* *tu:current-test* msg)
   nil)
 
+;| @Global
+  Exécute un test nommé dans un script natif et publie son résultat JUnit.
+  Une erreur rend la main au script CAO ; le gestionnaire publie aussi cet échec.
+  @Param suite-name string: nom de la suite
+  @Param test-name string: nom du test
+  @Returns nil
+|;
 (defun C:RUN-NAMED (suite-name test-name / cell tests cur match fn)
+  (setq *tu:junit-start* (t:millisecs))
   (setq cell (assoc suite-name *t:suites*))
   (cond
     ((null cell)
      (setq *tu:total-count* (1+ *tu:total-count*))
      (setq *tu:error-count* (1+ *tu:error-count*))
      (tu:report-error suite-name test-name "error"
-                      "(suite introuvable)"))
+                      "(suite introuvable)")
+     (tu:junit-native-result :error suite-name test-name "(suite introuvable)"))
     (t
      (setq tests (cdr cell))
      (setq match nil)
@@ -1154,7 +1184,8 @@
         (setq *tu:total-count* (1+ *tu:total-count*))
         (setq *tu:error-count* (1+ *tu:error-count*))
         (tu:report-error suite-name test-name "error"
-                         "(test introuvable)"))
+                         "(test introuvable)")
+        (tu:junit-native-result :error suite-name test-name "(test introuvable)"))
        (t
         (setq fn (cadr match))
         (setq *tu:current-suite* suite-name)
@@ -1166,7 +1197,8 @@
         (eval (list (t:unwrap-thunk fn)))
         ;; Atteint seulement si le test est passé sans erreur.
         (setq *tu:ok-count* (1+ *tu:ok-count*))
-        (t:emit-out (strcat "OK    [" suite-name "] " test-name))))))
+        (t:emit-out (strcat "OK    [" suite-name "] " test-name))
+        (tu:junit-native-result :ok suite-name test-name nil)))))
   (princ))
 
 ;| @Global

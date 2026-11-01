@@ -189,3 +189,13 @@ Les accesseurs sont :
 
 `(vlisp-project-sources alist répertoire)` renvoie les chemins des sources.
 L'API est compatible avec `dev/lisp/make-loader.lsp` de SCHMS+.
+
+### Scripts CAO natifs et JUnit
+
+Le harnais `test-runner.lsp` publie aussi les résultats de `C:RUN-NAMED`,
+y compris les erreurs interceptées par `tu:trap-error` et les noms de tests
+ou de suites introuvables. `AUTOLISP_TEST_JUNIT` doit être configuré dans le
+moteur Lisp avant ces appels ; le transmettre explicitement avec `setenv`
+lorsque le moteur ne reprend pas l'environnement du processus lanceur.
+Le chemin `C:MAIN` continue de publier les suites via `run-suite`.
+Vérification sans CAO : `python3 autolisp-test/tests/test_native_junit.py`.
