@@ -13,6 +13,9 @@ Correction des résultats JUnit des tests lancés dans AutoCAD et BricsCAD.
   rapports incomplets donnant une impression de réussite.
 - La régression couvre les succès, assertions, erreurs et chargements
   défaillants ; elle fonctionne aussi sous MSYS sur Windows.
+- Le XML regroupe les fragments d'une même suite, puis trie les suites et
+  leurs cas par nom (ordre lexicographique sensible à la casse). Ce tri
+  conserve les doublons et ne modifie pas l'ordre d'exécution des tests.
 - Les projets consommateurs transmettent explicitement le chemin du
   rapport à la CAO et vérifient sa présence et sa validité avec le harnais
   partagé de run-forest-run.

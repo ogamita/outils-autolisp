@@ -34,3 +34,18 @@ with tempfile.TemporaryDirectory() as t:
   expected='failure' if mode=='failure-handler' else 'error' if mode!='ok' else None
   assert expected is None or cases[0].find(expected) is not None,(mode,report.read_text())
   print(mode,'OK')
+ # Plusieurs fragments d'une suite et deux résultats homonymes doivent
+ # rester présents, dans un ordre XML stable, sans trier les données du run.
+ report=Path(t)/'sorted.xml'
+ records='(("Zulu" 0.5 ((:ok "Zulu" "a" nil 0.5))) ("Alpha" 0.9 ((:fail "Alpha" "z" "assertion" 0.2) (:ok "Alpha" "a" nil 0.3) (:error "Alpha" "a" "erreur" 0.4))) ("Zulu" 0.2 ((:ok "Zulu" "b" nil 0.1) (:ok "Zulu" "b" nil 0.1))))'
+ args=[os.environ.get('CLAUTOLISP_TEST_BIN') or shutil.which('clautolisp') or 'clautolisp','-norc','--host','cador','--dialect','bricscad-v26','-l',chemin_moteur(r/'autolisp-test/test-framework.lsp'),'-x',f"(setq *t:junit-suites* '{records} original *t:junit-suites*)",'-x',f'(t:junit-write "{chemin_moteur(report)}")','-x','(if (equal original *t:junit-suites*) (princ "ORDER-UNCHANGED") (princ "ORDER-MODIFIED"))','-x','(quit)']
+ result=subprocess.run(args,capture_output=True,text=True)
+ assert 'ORDER-UNCHANGED' in result.stdout,result.stderr
+ root=ET.parse(report).getroot()
+ assert [s.get('name') for s in root]==['Alpha','Zulu'],report.read_text()
+ assert [[c.get('name') for c in s] for s in root]==[['a','a','z'],['a','b','b']],report.read_text()
+ assert [c.tag for c in list(root[0])[0]]==[]
+ assert list(root[0])[1].find('error') is not None
+ assert root.get('tests')=='6' and root.get('failures')=='1' and root.get('errors')=='1'
+ assert abs(float(root.get('time'))-1.6)<0.001
+ print('sorted-suites-cases-preserve-duplicates OK')

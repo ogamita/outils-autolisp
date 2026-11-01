@@ -373,6 +373,56 @@
                   f)
       (write-line "    </testcase>" f))))
 
+;| @Global
+  Trie des enregistrements par nom, puis par position initiale à égalité.
+  La décoration conserve les doublons que vl-sort pourrait sinon éliminer.
+  @Param records list: enregistrements à trier sans les modifier
+  @Param position integer: index du champ contenant le nom
+  @Returns list: copie triée, sensible à la casse, sans suppression de résultat
+|;
+(defun t:junit-sort-by-name (records position / indexed index record name)
+  (setq indexed nil
+        index   0)
+  (foreach record records
+    (setq name (nth position record))
+    (setq indexed (cons (list (if name name "?") index record) indexed)
+          index   (1+ index)))
+  (mapcar 'caddr
+    (vl-sort indexed
+      '(lambda (a b)
+         (if (= (car a) (car b))
+           (< (cadr a) (cadr b))
+           (< (car a) (car b)))))))
+
+;| @Global
+  Regroupe les résultats natifs par suite et trie uniquement la vue XML.
+  Les durées sont additionnées ; les listes d'exécution restent intactes.
+  @Returns list: suites triées par nom, avec leurs cas triés par nom
+|;
+(defun t:junit-export-suites (/ suites entry previous grouped)
+  (setq suites nil)
+  (foreach entry (reverse *t:junit-suites*)
+    (setq previous (assoc (car entry) suites))
+    (if previous
+      (setq suites
+        (subst (list (car entry)
+                     (+ (cadr previous) (cadr entry))
+                     (append (caddr previous) (caddr entry)))
+               previous suites))
+      (setq suites (cons entry suites))))
+  (setq grouped nil)
+  (foreach entry suites
+    (setq grouped
+      (cons (list (car entry) (cadr entry)
+                  (t:junit-sort-by-name (caddr entry) 2)) grouped)))
+  (t:junit-sort-by-name grouped 0))
+
+;| @Global
+  Réécrit le rapport XML en regroupant et triant suites et cas par nom.
+  Ne change ni l'ordre d'exécution ni les compteurs ou résultats conservés.
+  @Param path string: chemin du fichier JUnit
+  @Returns string | nil: chemin écrit, ou nil si l'ouverture échoue
+|;
 (defun t:junit-write (path / f suites entry results res total fail err secs)
   (setq f (open path "w"))
   (if (null f)
@@ -380,7 +430,7 @@
       (t:emit-err (strcat "[autolisp-test] cannot write JUnit report: " path))
       nil)
     (progn
-      (setq suites (reverse *t:junit-suites*))
+      (setq suites (t:junit-export-suites))
       (setq total 0)
       (setq fail 0)
       (setq err 0)
