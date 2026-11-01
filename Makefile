@@ -128,7 +128,7 @@ MANIFEST_ENV = MANIFEST_PROJECT=$(PROJECT) \
 	stage stage-libraries stage-programs stage-documentation \
 	install install-libraries install-programs install-documentation \
 	release release-libraries release-programs release-documentation \
-	release-sources collect-artefacts uninstall check-versions \
+	release-sources collect-artefacts uninstall check-versions check-version-coherence \
 	test test-ci test-clautolisp test-bricscad test-autocad benchmark \
 	docs-pdf clean
 
@@ -206,10 +206,10 @@ endef
 # — de sorte qu'il suffit d'enregistrer $PREFIX/share/autolisp pour que
 # (alpm-load-system "autolisp-vector") fonctionne.
 
-build-libraries:  ## (rien à compiler : les systèmes ALPM sont du source AutoLISP).
+build-libraries: check-version-coherence  ## (rien à compiler : les systèmes ALPM sont du source AutoLISP).
 	@echo "libraries: source AutoLISP, rien à compiler."
 
-stage-libraries:  ## Dispose share/autolisp/<système>/ sous $(STAGE)/libraries/.
+stage-libraries: check-version-coherence  ## Dispose share/autolisp/<système>/ sous $(STAGE)/libraries/.
 	rm -rf $(STAGE)/libraries
 	install -d $(STAGE)/libraries/share/autolisp
 	install -m 644 outils-autolisp.alpm $(STAGE)/libraries/share/autolisp/
@@ -507,7 +507,12 @@ collect-artefacts:  ## Réunit les artefacts de COLLECT_IN dans une archive comb
 	trap - EXIT HUP INT TERM; rm -rf "$$stage"; \
 	echo "--- jeu de release combiné ($$out) ---"; ls -l "$$out"
 
-check-versions:  ## Vérifie les invariants de version-rules.md sur les refs git.
+check-version-coherence:  ## Vérifie la cohérence de VERSION, des .alpm et des VERSION.TXT de publication.
+	sh scripts/check-version-coherence.sh
+
+release-libraries release-programs release-documentation release-sources: check-version-coherence
+
+check-versions: check-version-coherence  ## Vérifie les invariants de version-rules.md sur les refs git.
 	sh scripts/check-versions.sh
 
 # ---------------------------------------------------------------------
